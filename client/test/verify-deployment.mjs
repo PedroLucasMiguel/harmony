@@ -96,7 +96,16 @@ async function run() {
   check('server advertised at least one candidate', ice.candidates.length > 0, `${ice.candidates.length} candidates`);
   check('a candidate pair was nominated', Boolean(ice.selected), ice.selected ?? 'none');
 
-  const live = await (await fetch(`${SERVER}/api/streams`)).json();
+  // Poll rather than asking once. A path is only "ready" on the control server
+  // after MediaMTX has seen media on it AND the once-a-second poll has run, so
+  // a single fetch here races the pipeline and reports a working deployment as
+  // broken -- which it did, while the viewer below decoded the same stream fine.
+  let live = { streams: [] };
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline; ) {
+    live = await (await fetch(`${SERVER}/api/streams`)).json();
+    if (live.streams.some((s) => s.username === USERNAME)) break;
+    await sleep(500);
+  }
   check(
     'the stream is live on the server',
     live.streams.some((s) => s.username === USERNAME),

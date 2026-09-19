@@ -179,9 +179,25 @@ one stream per tile you open.
 
 ## Getting started
 
-**Server:** clone the repo onto any Linux box, run `sudo server/install.sh`, set
-two environment variables, forward port 8189 (UDP **and** TCP). The installer
-picks the right MediaMTX build for your architecture.
+**Server, with Docker:**
+
+```bash
+docker run -d --name harmony \
+  -p 8080:8080 -p 8889:8889 -p 8189:8189/udp -p 8189:8189/tcp \
+  -e MTX_WEBRTCADDITIONALHOSTS=stream.example.com \
+  -e HARMONY_SIGNALING_URL=https://stream.example.com:8444 \
+  pedrolucasmiguel/harmony-server:0.1.0
+```
+
+`linux/amd64` and `linux/arm64`, so the same tag runs on a mini-PC or a
+Raspberry Pi. Compose and `docker run` examples are in [docker/](docker/) —
+read the note there about **not remapping the media ports**, which negotiate
+perfectly and then play nothing.
+
+**Server, without Docker:** clone the repo onto any Linux box, run
+`sudo server/install.sh`, set two environment variables, forward port 8189 (UDP
+**and** TCP). The installer picks the right MediaMTX build for your
+architecture.
 
 **Client:** `cd client && npm install && npm run build` gives you
 `dist/Harmony-0.1.0-portable.exe`.

@@ -1,0 +1,89 @@
+# Harmony server, the usual way.
+#
+#   cp .env.example .env     # edit it, then:
+#   docker compose up -d
+#   docker compose logs -f
+#
+# Both processes -- the control server and MediaMTX -- live in this one
+# container on purpose. They talk to each other over loopback, and MediaMTX's
+# control API can create and delete paths with no authentication, so it is bound
+# to 127.0.0.1 and must stay unreachable from anywhere else. See ./README.md.
+
+services:
+  harmony:
+    image: pedrolucasmiguel/harmony-server:0.1.0
+    # To build from a checkout instead of pulling:
+    # build:
+    #   context: ../server
+    container_name: harmony
+    restart: unless-stopped
+
+    ports:
+      # Control API. Remap the host side freely.
+      - "8080:8080"
+      # WHIP/WHEP signaling. Plain HTTP, so this is the part that can sit behind
+      # a reverse proxy or a tunnel. Remap the host side freely.
+      - "8889:8889"
+      # ---------------------------------------------------------------------
+      # WebRTC media. DO NOT REMAP THESE.
+      #
+      # MediaMTX advertises the port it is listening on inside the container as
+      # an ICE candidate. Publish it as 9000:8189 and clients are told to send
+      # media to 9000 while nothing is listening there, and every stream fails
+      # after a handshake that looked perfectly fine. Change the container side
+      # too (MTX_WEBRTCLOCAL*ADDRESS below) if you need a different port.
+      #
+      # The TCP one is the fallback for clients whose network drops UDP; ICE
+      # only uses it when UDP fails, so it costs nothing when it is not needed.
+      # ---------------------------------------------------------------------
+      - "8189:8189/udp"
+      - "8189:8189/tcp"
+
+    environment:
+      # REQUIRED for anyone outside this machine. The public hostname or IP
+      # clients will reach. Without it MediaMTX only advertises the container's
+      # own address, which is reachable from nowhere.
+      MTX_WEBRTCADDITIONALHOSTS: "${HARMONY_PUBLIC_HOST:?set HARMONY_PUBLIC_HOST in .env}"
+
+      # Where CLIENTS reach the signaling endpoint -- what you put in front of
+      # port 8889, including its public port.
+      HARMONY_SIGNALING_URL: "${HARMONY_SIGNALING_URL:?set HARMONY_SIGNALING_URL in .env}"
+
+      # Optional shared password. Leave it empty and the server is open to
+      # anyone who can reach it.
+      HARMONY_PASSWORD: "${HARMONY_PASSWORD:-}"
+
+      # Wrong-password lockout: 3 tries, then 5/10/30/60 minute waits.
+      # HARMONY_MAX_LOGIN_ATTEMPTS: "3"
+      # HARMONY_LOCKOUT_MINUTES: "5,10,30,60"
+
+      # STUN servers handed to clients.
+      # HARMONY_STUN_URLS: "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
+
+      # A TURN relay, for clients that cannot manage even ICE-TCP. Costs money
+      # per gigabyte -- try the TCP media port first.
+      # HARMONY_TURN_URL: "turn:standard.relay.metered.ca:80?transport=tcp"
+      # HARMONY_TURN_USERNAME: ""
+      # HARMONY_TURN_PASSWORD: ""
+
+    # The image ships a health check that asks the control server whether it can
+    # see MediaMTX, so an unhealthy container means the two have lost each other.
+    healthcheck:
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    # Nothing is written to disk and it runs as an unprivileged user, so it can
+    # be locked down further than most images.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

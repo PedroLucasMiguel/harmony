@@ -74,8 +74,36 @@ will outperform better hardware behind it.
 
 ## 1. Install
 
+Two ways. Docker is the shorter one; `install.sh` gives you systemd units and
+files you can edit in place.
+
+### With Docker
+
 ```bash
-git clone https://github.com/<you>/harmony.git
+docker run -d --name harmony --restart unless-stopped \
+  -p 8080:8080 -p 8889:8889 -p 8189:8189/udp -p 8189:8189/tcp \
+  -e MTX_WEBRTCADDITIONALHOSTS=stream.example.com \
+  -e HARMONY_SIGNALING_URL=https://stream.example.com:8444 \
+  pedrolucasmiguel/harmony-server:0.1.0
+```
+
+Published for `linux/amd64` and `linux/arm64`. Compose and shell examples, plus
+the reasoning, are in [docker/](docker/); the settings below are all passed as
+environment variables. Two things specific to containers:
+
+- **The media ports must be published 1:1.** MediaMTX advertises the port it
+  listens on *inside* the container, so `-p 9000:8189` tells clients to send
+  media where nothing is listening — the handshake succeeds and no picture ever
+  arrives. Change `MTX_WEBRTCLOCALUDPADDRESS`/`..TCPADDRESS` too if you need a
+  different port, or use `--network host` on Linux.
+- **Both processes share one container on purpose.** MediaMTX's control API
+  needs no authentication and is bound to loopback; splitting them would put it
+  on a Docker network where something else could reach it.
+
+### With the installer
+
+```bash
+git clone https://github.com/PedroLucasMiguel/harmony.git
 cd harmony/server
 sudo ./install.sh
 ```

@@ -1,0 +1,15 @@
+# The build installs dependencies itself; a host node_modules would be both
+# stale and possibly built for the wrong platform.
+node_modules/
+
+# Not part of the server image.
+test/
+systemd/
+install.sh
+ip-watch.sh
+.env
+.env.*
+*.md
+
+Dockerfile
+.dockerignore
