@@ -43,37 +43,33 @@ That is the whole interaction model.
 
 ## Demo
 
-<!-- ==========================================================================
-  TO GET A PLAYER EMBEDDED RIGHT HERE (30 seconds, needs a browser):
+<!--
+  This is a GIF, not the .mp4, because GitHub will not play a video committed
+  to a repository: raw.githubusercontent.com serves repo files as
+  `Content-Type: application/octet-stream` with `X-Content-Type-Options:
+  nosniff`, and that header forbids the browser from treating it as video/mp4.
+  A <video> tag pointed at a file in this repo cannot work, relative or
+  absolute. GIFs render inline and have no such problem.
 
-    1. Open https://github.com/PedroLucasMiguel/harmony/issues/new
-    2. Drag media/preview_video.mp4 into the comment box and wait for upload.
-    3. It writes a line like:
-         https://github.com/user-attachments/assets/1a2b3c4d-....
-       Copy that URL. Close the tab WITHOUT submitting the issue.
-    4. Replace the [![...]](...) line below with:
-         <video src="PASTE_URL_HERE" controls muted loop width="100%"></video>
+  Regenerate after replacing preview_video.mp4 (crop removes the pillarbox):
+    ffmpeg -i media/preview_video.mp4 -vf "crop=1592:1080:154:0,fps=15,\
+    scale=1280:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff:\
+    max_colors=232[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:\
+    diff_mode=rectangle" -loop 0 media/preview.gif
+-->
 
-  Why this is the only way: GitHub serves repo files from
-  raw.githubusercontent.com as `Content-Type: application/octet-stream` with
-  `X-Content-Type-Options: nosniff`. That header forbids the browser from
-  guessing it is really video/mp4, so NO browser will play a <video> pointed at
-  a file in this repo -- relative path or absolute, it cannot work. Only the
-  user-attachments CDN serves it with a playable content type.
-=========================================================================== -->
+![Harmony: choosing a screen, setting quality and priority, going live, then watching two other streams side by side in the mosaic](media/preview.gif)
 
-[![Harmony in action — click to open the player](media/streamer_view.png)](media/preview_video.mp4)
-
-**▶ [Watch the demo](media/preview_video.mp4)** — 38 seconds, 2 MB, H.264.
-Opens GitHub's own video player on the file's page.
+<sub>38 seconds, no sound. The same clip at full 1080p60 **with** audio:
+[preview_video.mp4](media/preview_video.mp4) (2 MB).</sub>
 
 <p align="center">
   <img src="media/home_screen.png" alt="The connect screen: server address, username, a clipping toggle, and a list of who is live now" width="32%">
-  <img src="media/select_screen.png" alt="The source picker, with tabs for screens, windows and cameras" width="32%">
-  <img src="media/mosaic_view.png" alt="The mosaic: several live streams at once, each tile with its own volume and fullscreen controls" width="32%">
+  <img src="media/streamer_view.png" alt="Broadcasting: live preview with a stats line showing resolution, frame rate, bitrate and encode time" width="32%">
+  <img src="media/mosaic_view.png" alt="The mosaic: two live streams at once, each tile with its own volume slider and fullscreen button" width="32%">
 </p>
 <p align="center">
-  <sub>Connect · pick a source · watch several streams at once</sub>
+  <sub>Connect · broadcast with live stats · watch several streams at once</sub>
 </p>
 
 ```
