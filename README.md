@@ -41,6 +41,30 @@ is no playback buffer to scrub.
 under it. Type a name someone else is already using, and you watch them instead.
 That is the whole interaction model.
 
+## Demo
+
+<!--
+  This links to the committed file, which GitHub plays in its own blob viewer.
+  To get a player embedded directly in this page instead, drag
+  media/preview_video.mp4 into any issue comment (without submitting it), copy
+  the https://github.com/user-attachments/assets/... URL it hands back, and put
+  that URL on a line of its own here. GitHub only streams video from asset URLs
+  it generated itself, so a relative path cannot autoplay inline.
+-->
+
+[![Harmony in action — click to play](media/streamer_view.png)](media/preview_video.mp4)
+
+**▶ [Watch the demo](media/preview_video.mp4)** — 38 seconds, 2 MB, H.264.
+
+<p align="center">
+  <img src="media/home_screen.png" alt="The connect screen: server address, username, a clipping toggle, and a list of who is live now" width="32%">
+  <img src="media/select_screen.png" alt="The source picker, with tabs for screens, windows and cameras" width="32%">
+  <img src="media/mosaic_view.png" alt="The mosaic: several live streams at once, each tile with its own volume and fullscreen controls" width="32%">
+</p>
+<p align="center">
+  <sub>Connect · pick a source · watch several streams at once</sub>
+</p>
+
 ```
 Desktop client (Electron)                    Server (x86-64 or arm64 Linux)
 ┌────────────────────────┐                  ┌──────────────────────────────┐

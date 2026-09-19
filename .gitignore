@@ -39,8 +39,6 @@ mediamtx
 mediamtx.exe
 recordings/
 
-# Clips are written to the user's Videos folder, but not if someone repoints them.
-*.mp4
 
 # ---------------------------------------------------------------------------
 # Editors, OS and logs
