@@ -43,18 +43,29 @@ That is the whole interaction model.
 
 ## Demo
 
-<!--
-  This links to the committed file, which GitHub plays in its own blob viewer.
-  To get a player embedded directly in this page instead, drag
-  media/preview_video.mp4 into any issue comment (without submitting it), copy
-  the https://github.com/user-attachments/assets/... URL it hands back, and put
-  that URL on a line of its own here. GitHub only streams video from asset URLs
-  it generated itself, so a relative path cannot autoplay inline.
--->
+<!-- ==========================================================================
+  TO GET A PLAYER EMBEDDED RIGHT HERE (30 seconds, needs a browser):
 
-[![Harmony in action — click to play](media/streamer_view.png)](media/preview_video.mp4)
+    1. Open https://github.com/PedroLucasMiguel/harmony/issues/new
+    2. Drag media/preview_video.mp4 into the comment box and wait for upload.
+    3. It writes a line like:
+         https://github.com/user-attachments/assets/1a2b3c4d-....
+       Copy that URL. Close the tab WITHOUT submitting the issue.
+    4. Replace the [![...]](...) line below with:
+         <video src="PASTE_URL_HERE" controls muted loop width="100%"></video>
+
+  Why this is the only way: GitHub serves repo files from
+  raw.githubusercontent.com as `Content-Type: application/octet-stream` with
+  `X-Content-Type-Options: nosniff`. That header forbids the browser from
+  guessing it is really video/mp4, so NO browser will play a <video> pointed at
+  a file in this repo -- relative path or absolute, it cannot work. Only the
+  user-attachments CDN serves it with a playable content type.
+=========================================================================== -->
+
+[![Harmony in action — click to open the player](media/streamer_view.png)](media/preview_video.mp4)
 
 **▶ [Watch the demo](media/preview_video.mp4)** — 38 seconds, 2 MB, H.264.
+Opens GitHub's own video player on the file's page.
 
 <p align="center">
   <img src="media/home_screen.png" alt="The connect screen: server address, username, a clipping toggle, and a list of who is live now" width="32%">
