@@ -6,10 +6,28 @@ directories:
   output: dist
   buildResources: build
 
+# LZMA at its slowest. Costs about a minute of build time and takes a double-
+# digit percentage off the download, which is the right trade for something
+# people re-download whenever it is updated.
+compression: maximum
+
+# Chromium ships 55 locale files, ~49 MB of them, and Harmony's UI is English
+# only -- so 54 of them are pure weight. This is the single biggest saving
+# available, and it is a supported option rather than a trick.
+electronLanguages:
+  - en-US
+
+# Deletes runtime pieces Harmony does not use; see the file for what and why.
+afterPack: scripts/after-pack.js
+
 files:
   - src/**/*
   - package.json
   - '!**/*.map'
+  # Nothing in the app tree needs these, and they travel with dependencies.
+  - '!**/{test,tests,__tests__,example,examples,docs,doc}/**'
+  - '!**/*.{md,markdown,ts,flow,patch,log}'
+  - '!**/{.editorconfig,.nycrc,.prettierrc,.eslintrc,tsconfig.json,CMakeLists.txt}'
 
 # `loopback-capture` resolves its .node binary from the filesystem via the
 # `bindings` package, which cannot see inside an asar archive. Unpacking it is

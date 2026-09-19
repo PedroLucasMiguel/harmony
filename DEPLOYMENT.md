@@ -106,6 +106,60 @@ Two settings actually matter; the rest have working defaults.
 | --- | --- |
 | **`HARMONY_SIGNALING_URL`** | Where **clients** reach MediaMTX's WHIP/WHEP endpoint, e.g. `https://stream.example.com:8444`. May point at a reverse proxy or a tunnel. |
 | **`MTX_WEBRTCADDITIONALHOSTS`** | Your public hostname or static IP. MediaMTX advertises this as an ICE candidate. **Without it, nobody outside your LAN can connect** — remote viewers only ever see the server's private address. |
+| **`HARMONY_PASSWORD`** | A shared password for the whole server. Leave it unset and the server is open to anyone who can reach it. See below. |
+
+### Setting a password
+
+```bash
+# In /etc/harmony/harmony.env
+HARMONY_PASSWORD=something-long-and-boring
+```
+
+Restart with `sudo systemctl restart harmony-server`. The log says which mode it
+came up in:
+
+```
+[harmony] password required — 3 tries, then 5/10/30/60 minute lockouts
+[harmony] NO PASSWORD SET — anyone who can reach this server can use it
+```
+
+The client discovers this on its own: `/api/health` is deliberately the one
+endpoint outside the gate, so the app can ask *"does this server want a
+password?"* and show the field only when the answer is yes. Nothing else is
+readable until the password is right.
+
+**Wrong answers are rate limited, and the penalty escalates.** Three wrong
+passwords from one address buys a 5-minute wait, the next three 10 minutes, then
+30, then 60, and it stays at 60. The ladder is what matters: a flat 5-minute
+penalty still permits ~860 guesses a day, while this caps a single address at 72.
+A correct password clears the count and the escalation. Tune it if you like:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `HARMONY_MAX_LOGIN_ATTEMPTS` | `3` | Wrong answers allowed before a lockout |
+| `HARMONY_LOCKOUT_MINUTES` | `5,10,30,60` | The ladder; the last value repeats forever |
+
+Three things worth knowing about how far this goes:
+
+- **The media is covered too.** A password on the API alone would be a front door
+  with the back door open, because MediaMTX listens on its own port and anyone
+  who guessed a username could watch by going straight to WHEP. So when a
+  password is set, watch URLs carry a token the control server generates at
+  startup, and the auth hook refuses reads without it. Restarting the server
+  invalidates outstanding watch URLs, which costs viewers a reconnect.
+- **It is keyed on the client's IP**, which is only as trustworthy as
+  `trust proxy`. Harmony trusts loopback only, so the address comes from the
+  proxy on the same machine rather than from a header the client wrote. Someone
+  with many source addresses is not slowed down by this; a shared password is
+  not the right control for that threat.
+- **A request carrying no password at all does not spend an attempt** — only a
+  wrong one does. The client polls the stream list from the moment it opens, and
+  counting that would let someone lock themselves out of their own server in
+  three refreshes without ever mistyping anything.
+
+The password is stored in the clear in `harmony.env` (mode `0640`, `root:harmony`)
+and, on the client, in `settings.json` under the user's app-data directory. It is
+a shared room password, not a credential that protects anything else.
 
 <details>
 <summary>The rest of the settings</summary>
@@ -118,6 +172,8 @@ Two settings actually matter; the rest have working defaults.
 | `HARMONY_POLL_INTERVAL_MS` | `1000` | How often liveness is re-read from MediaMTX |
 | `HARMONY_CLAIM_TTL_MS` | `30000` | How long a username stays reserved before publishing starts |
 | `HARMONY_STUN_URLS` | Google + Cloudflare | Comma-separated STUN servers handed to clients |
+| `HARMONY_MAX_LOGIN_ATTEMPTS` | `3` | Wrong passwords allowed before a lockout |
+| `HARMONY_LOCKOUT_MINUTES` | `5,10,30,60` | Escalating lockout ladder, in minutes |
 | `HARMONY_TURN_URL` / `_USERNAME` / `_PASSWORD` | unset | Optional TURN relay — see [When a client still cannot connect](#when-a-client-still-cannot-connect) |
 | `MTX_WEBRTCLOCALUDPADDRESS` | `:8189` | UDP media port |
 | `MTX_WEBRTCLOCALTCPADDRESS` | `:8189` | TCP media port (ICE-TCP fallback) |
@@ -275,7 +331,7 @@ actually decides whether outsiders can connect.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/health` | Control server and MediaMTX status |
+| `GET` | `/api/health` | Status, and whether a password is required. The only endpoint outside the password gate |
 | `GET` | `/api/streams` | Who is live, viewer counts, watch URLs, ICE servers |
 | `POST` | `/api/session` | Claim a username; returns a broadcaster token or a watch URL |
 | `POST` | `/api/session/heartbeat` | Hold a claim while setting up |
@@ -326,10 +382,22 @@ npm run build        # -> dist/Harmony-<version>-portable.exe
 npm run build:all    # additionally a Linux AppImage and a macOS dmg
 ```
 
-`npm run build` produces a **single portable .exe**: no installer, no admin
-rights, nothing written outside `%TEMP%` at runtime. `unpackDirName: Harmony`
-keeps the extraction directory stable, so Windows Firewall rules and the saved
-server address survive an upgrade.
+`npm run build` produces a **single portable .exe of about 82 MB**: no installer,
+no admin rights, nothing written outside `%TEMP%` at runtime. `unpackDirName:
+Harmony` keeps the extraction directory stable, so Windows Firewall rules and the
+saved server address survive an upgrade.
+
+Essentially all of that size is the Chromium runtime — the app itself is under a
+megabyte. The build trims it by shipping only the `en-US` locale (Chromium
+carries 55, ~48 MB), deleting `dxcompiler.dll` and `dxil.dll` (27 MB of DirectX
+shader compilation for WebGPU, which Harmony does not use), and compressing at
+maximum. If a trimmed file ever turns out to be needed on some machine, the list
+is one array in [client/scripts/after-pack.js](client/scripts/after-pack.js).
+Verify any change to it against a packaged build, not just `npm start`:
+
+```bash
+HARMONY_BIN=client/dist/win-unpacked/Harmony.exe npm --prefix client test
+```
 
 Cross-building has the usual limits: a Windows `.exe` builds anywhere, a macOS
 `.dmg` really wants macOS, and an AppImage wants Linux.
@@ -360,10 +428,10 @@ only types a name.
 ## Tests
 
 ```bash
-npm --prefix server test    # reservation logic + auth hook  (15 checks)
-npm --prefix client test    # launches the app, drives it over CDP  (13 checks)
+npm --prefix server test    # reservation, password gate, lockout  (38 checks)
+npm --prefix client test    # launches the app, drives it over CDP  (16 checks)
 
-MEDIAMTX_BIN=/path/to/mediamtx npm --prefix client run test:e2e   # (82 checks)
+MEDIAMTX_BIN=/path/to/mediamtx npm --prefix client run test:e2e   # (93 checks)
 ```
 
 The e2e suite is the real thing: it starts MediaMTX and the control server, then
@@ -395,6 +463,9 @@ clears it for the processes it spawns.
 | Every WebRTC session fails, log says `netlinkrib: address family not supported` | Systemd sandboxing blocked netlink, which MediaMTX needs to enumerate interfaces | `RestrictAddressFamilies` must include `AF_NETLINK` (the shipped unit does) |
 | MediaMTX exits at startup complaining about a config key | Version mismatch — keys are added and removed between releases | Use the pinned version; `MEDIAMTX_VERSION` in `install.sh` |
 | `403` on publish | The username is live and held by someone else | By design: `overridePublisher: no` plus the control server's token claim |
+| `401` on everything, client shows a password box | The server has `HARMONY_PASSWORD` set | Enter it. `/api/health` still answers, and says `passwordRequired` |
+| `429` with a `Retry-After` | Three wrong passwords from your address | Wait it out; the correct password is refused too until it expires |
+| Viewers get `401` from the media server after a restart | Watch tokens are generated per process | Reconnect; the client picks up a fresh URL from `/api/streams` |
 | Caddy will not start, port 80 in use | It binds 80 for redirects even on a high-port site | `auto_https disable_redirects` |
 | Certificate stops renewing | DNS token expired | Replace it in `/etc/letsencrypt/cloudflare.ini`, then `sudo certbot renew --dry-run` |
 | Everything works, then breaks hours later | Public IP moved | Check `harmony-ip-watch.timer` is active and your DDNS is current |
@@ -422,8 +493,10 @@ usually faster than guessing.
 
 ## Security notes
 
-- **There are no accounts.** Anyone who can reach the server can claim any free
-  username. That is the design; do not expose it where that is not acceptable.
+- **There are still no accounts.** `HARMONY_PASSWORD` is one shared secret for
+  everyone, not per-user identity: it decides *whether* you are in, never *who*
+  you are. Anyone who knows it can claim any free username and watch anyone.
+  Without it the server is open to whoever can reach it.
 - **Keep secrets out of the repo.** `.gitignore` covers `.env`, `*.key`,
   `*.pem`, `*.crt`, `cloudflare.ini` and `*.local.md`. Note that running
   MediaMTX from a checkout makes it drop a self-signed `auto.key` in the working

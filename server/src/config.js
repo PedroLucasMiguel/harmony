@@ -6,6 +6,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+import { newMediaToken } from './auth.js';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const envFile = resolve(here, '..', '.env');
 if (existsSync(envFile) && typeof process.loadEnvFile === 'function') {
@@ -32,7 +34,30 @@ const signalingBase = (
   process.env.HARMONY_SIGNALING_URL ?? 'http://localhost:8889'
 ).replace(/\/+$/, '');
 
+/**
+ * The shared password, or '' for an open server.
+ *
+ * Empty means every existing deployment keeps working untouched, which is why
+ * the default is open rather than a generated secret nobody would find.
+ */
+const password = process.env.HARMONY_PASSWORD ?? '';
+
+// Generated per process, and only when it is actually needed. See auth.js.
+const mediaToken = password ? newMediaToken() : '';
+
 export const config = {
+  password,
+  mediaToken,
+
+  // Wrong answers allowed before the lockout ladder starts.
+  maxLoginAttempts: num(process.env.HARMONY_MAX_LOGIN_ATTEMPTS, 3),
+
+  // Minutes locked out after each successive group of failures; the last value
+  // repeats forever.
+  lockoutMinutes: list(process.env.HARMONY_LOCKOUT_MINUTES, ['5', '10', '30', '60'])
+    .map((m) => Number.parseInt(m, 10))
+    .filter((m) => Number.isFinite(m) && m > 0),
+
   // Harmony control server (this process).
   port: num(process.env.HARMONY_PORT, 8080),
   host: process.env.HARMONY_HOST ?? '0.0.0.0',
@@ -71,8 +96,14 @@ export function whipUrl(username, token) {
   return `${config.signalingBase}/${encodeURIComponent(username)}/whip?token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * On a password-protected server the watch URL carries a token of its own,
+ * because MediaMTX is reachable directly and would otherwise serve anyone who
+ * guessed a username. On an open server it stays a plain URL.
+ */
 export function whepUrl(username) {
-  return `${config.signalingBase}/${encodeURIComponent(username)}/whep`;
+  const base = `${config.signalingBase}/${encodeURIComponent(username)}/whep`;
+  return config.mediaToken ? `${base}?token=${encodeURIComponent(config.mediaToken)}` : base;
 }
 
 export function iceServers() {

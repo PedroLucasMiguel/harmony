@@ -79,6 +79,14 @@ p {
 
 button {
   font: inherit;
+  /*
+   * `font: inherit` does NOT bring the colour with it, and a <button> defaults
+   * to the UA's ButtonText -- black on this dark UI. Every styled button here
+   * sets its own colour and so never showed the problem, but the source picker's
+   * tiles are plain `.source` buttons, and their labels were black-on-charcoal
+   * and close to unreadable. The variants below still override this.
+   */
+  color: inherit;
   font-weight: 500;
   border-radius: 8px;
   border: 1px solid transparent;
@@ -132,6 +140,7 @@ button:disabled {
 }
 
 input[type='text'],
+input[type='password'],
 select {
   width: 100%;
   font: inherit;
@@ -144,6 +153,7 @@ select {
   user-select: text;
 }
 input[type='text']:focus,
+input[type='password']:focus,
 select:focus {
   border-color: var(--accent);
 }
@@ -174,6 +184,11 @@ select:focus {
   width: auto;
 }
 
+/* A field the server has just rejected. */
+.field.bad input {
+  border-color: var(--danger);
+}
+
 .error {
   color: var(--danger);
   font-size: 13px;
@@ -194,6 +209,8 @@ select:focus {
 .connect-card {
   width: 420px;
   max-width: calc(100vw - 48px);
+  /* Never taller than the window: the live list inside it scrolls instead. */
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -205,9 +222,17 @@ select:focus {
   margin-top: 4px;
 }
 
+/*
+ * With a dozen people live, the list used to push the form off the top of the
+ * window and scroll the whole page -- so the thing you came to type in was the
+ * thing that disappeared. Now only the list scrolls, and the form stays put.
+ */
 .live-list {
   border-top: 1px solid var(--border);
   padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .live-list h2 {
   font-size: 12px;
@@ -223,6 +248,13 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow-y: auto;
+  /* Enough for about five rows, so it is obviously a list you scroll rather
+     than a list that was cut off. */
+  max-height: 260px;
+  min-height: 0;
+  /* Room for the scrollbar so it never sits on top of the viewer counts. */
+  padding-right: 2px;
 }
 .live-list li {
   display: flex;
@@ -382,6 +414,7 @@ select:focus {
 }
 .source .meta .label {
   font-size: 13px;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

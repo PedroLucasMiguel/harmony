@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('harmony', {
 
   // Every network request goes through main -- see src/main/api.js.
   api: {
+    setPassword: invoke('api:password'),
     health: invoke('api:health'),
     streams: invoke('api:streams'),
     session: invoke('api:session'),

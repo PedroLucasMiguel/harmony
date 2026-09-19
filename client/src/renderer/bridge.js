@@ -49,6 +49,7 @@ export const harmony = {
   },
 
   api: {
+    setPassword: lift(raw.api.setPassword),
     health: lift(raw.api.health),
     streams: lift(raw.api.streams),
     session: lift(raw.api.session),

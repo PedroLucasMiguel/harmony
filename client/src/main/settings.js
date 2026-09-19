@@ -11,6 +11,11 @@ const FILE = path.join(app.getPath('userData'), 'settings.json');
 const DEFAULTS = {
   serverUrl: '',
   username: '',
+  // Only used when the server is configured to want one. Stored in the clear in
+  // this file, like every other setting -- it is a shared room password, not a
+  // credential that protects anything else, and the alternative (retyping it on
+  // every launch) is what makes people pick a worse password.
+  password: '',
   quality: 'balanced',
   // 'sharp' keeps resolution and drops frames; 'smooth' does the opposite.
   priority: 'sharp',

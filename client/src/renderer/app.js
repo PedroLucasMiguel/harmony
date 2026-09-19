@@ -50,6 +50,8 @@ const $ = (id) => document.getElementById(id);
 const el = {
   views: document.querySelectorAll('.view'),
   serverUrl: $('server-url'),
+  passwordField: $('password-field'),
+  password: $('server-password'),
   username: $('username'),
   continue: $('continue'),
   connectError: $('connect-error'),
@@ -126,6 +128,26 @@ const el = {
   watchStats: $('watch-stats'),
 };
 
+/**
+ * A blank mosaic.
+ *
+ * `selection` null means "show whatever is live"; a Set means the user picked
+ * specific streams and new ones should not barge in. `closed` holds names the
+ * user dismissed by hand, which is what stops the next sync from cheerfully
+ * reopening them three seconds later. `maximized` is one tile filling the grid
+ * -- still inside the window, unlike fullscreen.
+ */
+function freshMosaic() {
+  return {
+    tiles: new Map(),
+    selection: null,
+    closed: new Set(),
+    maximized: null,
+    master: { volume: 1, muted: false },
+    iceServers: null,
+  };
+}
+
 /** Everything mutable about the current session. */
 const state = {
   settings: null,
@@ -147,13 +169,11 @@ const state = {
   server: '', // control server base URL, valid outside a session too
   session: null, // server response for the current username
 
-  /**
-   * Mosaic mode: one WHEP connection per tile.
-   *
-   * `selection` null means "show whatever is live"; a Set means the user picked
-   * specific streams and new ones should not barge in.
-   */
-  mosaic: { tiles: new Map(), selection: null, master: { volume: 1, muted: false }, iceServers: null },
+  /** Set once the server says it wants a password. */
+  passwordRequired: false,
+
+  /** Mosaic mode: one WHEP connection per tile. See freshMosaic(). */
+  mosaic: freshMosaic(),
 
   // Last publish token this client was issued, so a retry on the same name
   // reclaims it instead of being told the name is taken by itself.
@@ -218,6 +238,10 @@ async function boot() {
   state.settings = await harmony.settings.get();
   el.serverUrl.value = state.settings.serverUrl;
   el.username.value = state.settings.username;
+  el.password.value = state.settings.password ?? '';
+  // Main holds the password for every request it makes; hand back what was
+  // saved before anything asks the server for anything.
+  await harmony.api.setPassword(el.password.value);
   el.fallback.value = state.settings.windowAudioFallback;
   state.clips.enabled = Boolean(state.settings.clipsEnabled);
   el.clipsEnabled.checked = state.clips.enabled;
@@ -246,7 +270,31 @@ async function boot() {
   state.audioAvailable = availability.available;
   state.audioUnavailableReason = availability.reason;
 
-  if (state.settings.serverUrl) refreshLiveList();
+  if (state.settings.serverUrl) {
+    await probeServer();
+    refreshLiveList();
+  }
+}
+
+/**
+ * Ask the server whether it wants a password, and show the field if it does.
+ *
+ * /api/health is the one endpoint outside the password gate, precisely so this
+ * question can be asked before the user is prompted. A server that is simply
+ * unreachable leaves the field as it is rather than hiding a password the user
+ * already typed.
+ */
+async function probeServer() {
+  const server = el.serverUrl.value.trim();
+  if (!server) return;
+  try {
+    const health = await harmony.api.health(server);
+    el.passwordField.hidden = !health.passwordRequired;
+    state.passwordRequired = Boolean(health.passwordRequired);
+  } catch {
+    // Unreachable, or an older server with no passwordRequired field. Either
+    // way, do not change what the user can see.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +304,12 @@ async function boot() {
 async function refreshLiveList() {
   const server = el.serverUrl.value.trim();
   if (!server) return;
+  // Nothing to show until there is a password to show it with, and asking
+  // anyway would only produce a 401 on every poll.
+  if (state.passwordRequired && !el.password.value) {
+    el.liveList.hidden = true;
+    return;
+  }
 
   try {
     const { streams } = await harmony.api.streams(server);
@@ -265,6 +319,7 @@ async function refreshLiveList() {
       el.liveList.hidden = true;
       return;
     }
+    el.passwordField.classList.remove('bad');
 
     for (const stream of streams) {
       const li = document.createElement('li');
@@ -288,8 +343,15 @@ async function refreshLiveList() {
       el.liveItems.append(li);
     }
     el.liveList.hidden = false;
-  } catch {
+  } catch (err) {
     el.liveList.hidden = true;
+    // A password problem is the one failure here worth surfacing: without it
+    // the list just silently stays empty and looks like "nobody is streaming".
+    if (err.code === 'bad_password' || err.code === 'locked_out') {
+      el.passwordField.hidden = false;
+      el.passwordField.classList.add('bad');
+      showError(err.message);
+    }
   }
 }
 
@@ -305,12 +367,17 @@ async function startSession() {
   el.continue.textContent = 'Connecting…';
 
   try {
+    // Before anything else reaches the server, so the very first request of the
+    // session already carries it.
+    await harmony.api.setPassword(el.password.value);
+
     const held = state.lastClaim?.username === username ? state.lastClaim.token : undefined;
     const session = await harmony.api.session(server, username, held);
     state.session = { ...session, server };
     if (session.token) state.lastClaim = { username, token: session.token };
+    el.passwordField.classList.remove('bad');
 
-    await harmony.settings.set({ serverUrl: server, username });
+    await harmony.settings.set({ serverUrl: server, username, password: el.password.value });
     state.settings = await harmony.settings.get();
 
     if (session.role === 'broadcaster') {
@@ -320,6 +387,12 @@ async function startSession() {
     }
   } catch (err) {
     showError(err.message);
+    if (err.code === 'bad_password' || err.code === 'locked_out') {
+      el.passwordField.hidden = false;
+      el.passwordField.classList.add('bad');
+      el.password.focus();
+      el.password.select();
+    }
   } finally {
     el.continue.disabled = false;
     el.continue.textContent = 'Continue';
@@ -1119,11 +1192,27 @@ const GRID_GAP = 12;
  * stretched into letterboxes.
  */
 function layoutMosaic() {
-  const count = state.mosaic.tiles.size;
+  const { maximized, tiles } = state.mosaic;
+
+  // One tile filling the grid is just the one-column case with everything else
+  // hidden, so the same fitting code covers it.
+  for (const [username, entry] of tiles) {
+    entry.el.hidden = Boolean(maximized) && username !== maximized;
+  }
+
+  const count = maximized && tiles.has(maximized) ? 1 : tiles.size;
   if (!count) return;
 
-  const width = el.mosaicGrid.clientWidth || window.innerWidth;
-  const height = el.mosaicGrid.clientHeight || window.innerHeight;
+  // clientWidth includes the grid's own padding, but the tiles are laid out in
+  // the content box inside it. Measuring the wrong box made every layout up to
+  // 2 x 12px too wide, which is exactly enough to raise a horizontal scrollbar
+  // on a grid that was otherwise a perfect fit.
+  const style = getComputedStyle(el.mosaicGrid);
+  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+
+  const width = (el.mosaicGrid.clientWidth || window.innerWidth) - padX;
+  const height = (el.mosaicGrid.clientHeight || window.innerHeight) - padY;
   if (width < 2 || height < 2) return; // not laid out yet
 
   let best = null;
@@ -1165,12 +1254,8 @@ async function enterMosaic(usernames = null) {
   if (!server) return showError('Enter the address of your Harmony server.');
 
   state.server = server;
-  state.mosaic = {
-    tiles: new Map(),
-    selection: usernames ? new Set(usernames) : null,
-    master: { volume: 1, muted: false },
-    iceServers: null,
-  };
+  state.mosaic = freshMosaic();
+  state.mosaic.selection = usernames ? new Set(usernames) : null;
   el.mosaicLeave.textContent = isBroadcasting() ? 'Back to my stream' : 'Leave';
   el.mosaicGrid.replaceChildren();
   el.mosaicVolume.value = '100';
@@ -1194,8 +1279,11 @@ async function syncMosaic() {
   }
   if (iceServers) state.mosaic.iceServers = iceServers;
 
-  const { selection } = state.mosaic;
+  const { selection, closed } = state.mosaic;
   const wanted = streams.filter((s) => {
+    // Closing a tile has to stick. Without this the next sync -- three seconds
+    // later -- sees the stream still live and opens it straight back up.
+    if (closed.has(s.username)) return false;
     if (selection) return selection.has(s.username);
     // Watching everything while broadcasting should not include a second copy
     // of your own stream -- the preview already shows it, and pulling it back
@@ -1218,7 +1306,13 @@ async function syncMosaic() {
   const empty = el.mosaicGrid.querySelector('.empty');
   if (!count && !empty) {
     el.mosaicGrid.replaceChildren(
-      message(selection ? 'None of the chosen streams are live.' : 'Nobody is streaming right now.'),
+      message(
+        closed.size
+          ? 'No streams open. Use + Add stream to bring one back.'
+          : selection
+            ? 'None of the chosen streams are live.'
+            : 'Nobody is streaming right now.',
+      ),
     );
   } else if (count && empty) {
     empty.remove();
@@ -1231,6 +1325,8 @@ async function addStreamToMosaic(username) {
 
   if (state.mosaic.tiles.size || document.getElementById('view-mosaic').hasAttribute('data-active')) {
     // Already in the mosaic: widen the selection and let the next sync open it.
+    // Asking for it explicitly also overrides an earlier dismissal.
+    state.mosaic.closed.delete(username);
     if (state.mosaic.selection) state.mosaic.selection.add(username);
     await syncMosaic();
     return;
@@ -1294,12 +1390,29 @@ function openTile({ username, whepUrl }) {
   volume.value = '100';
   volume.title = `Volume for ${username}`;
 
+  // Maximize fills the mosaic with this one stream but stays inside the window,
+  // so the rest of the app -- and everything else on the desktop -- is still
+  // visible. Fullscreen, next to it, covers the screen.
+  const maxBtn = document.createElement('button');
+  maxBtn.className = 'tile-btn';
+  maxBtn.type = 'button';
+  maxBtn.dataset.role = 'maximize';
+  maxBtn.innerHTML = '&#10530;';
+  maxBtn.title = `Maximize ${username}`;
+
   const fsBtn = document.createElement('button');
   fsBtn.className = 'tile-btn';
   fsBtn.type = 'button';
   fsBtn.dataset.role = 'fullscreen';
   fsBtn.innerHTML = '&#9974;';
   fsBtn.title = 'Fullscreen';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'tile-btn';
+  closeBtn.type = 'button';
+  closeBtn.dataset.role = 'close';
+  closeBtn.innerHTML = '&#10005;';
+  closeBtn.title = `Close ${username}`;
 
   const clipBtn = document.createElement('button');
   clipBtn.className = 'tile-btn';
@@ -1309,7 +1422,7 @@ function openTile({ username, whepUrl }) {
   clipBtn.title = `Save the last ${CLIP_SECONDS} seconds`;
   clipBtn.hidden = true;
 
-  controls.append(muteBtn, volume, clipBtn, fsBtn);
+  controls.append(muteBtn, volume, clipBtn, maxBtn, fsBtn, closeBtn);
   bar.append(dot, name, meta, controls);
 
   tile.append(video, status, bar);
@@ -1323,6 +1436,8 @@ function openTile({ username, whepUrl }) {
     meta,
     muteBtn,
     fsBtn,
+    maxBtn,
+    closeBtn,
     clipBtn,
     clips: null,
     pc: null,
@@ -1360,6 +1475,16 @@ function openTile({ username, whepUrl }) {
     saveClip(entry.clips, username, clipBtn);
   });
 
+  maxBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleMaximized(username);
+  });
+
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeTile(username);
+  });
+
   fsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleFullscreen(tile);
@@ -1391,10 +1516,51 @@ function openTile({ username, whepUrl }) {
     });
 }
 
+/**
+ * Dismiss one stream from the mosaic.
+ *
+ * The connection is torn down, not just hidden -- a tile you cannot see should
+ * not still be costing you a decoder and the bandwidth of a 1080p stream. The
+ * name is remembered so the periodic sync does not reopen it; + Add stream is
+ * the way back.
+ */
+function closeTile(username) {
+  const { mosaic } = state;
+  mosaic.closed.add(username);
+  mosaic.selection?.delete(username);
+  if (mosaic.maximized === username) mosaic.maximized = null;
+  removeTile(username);
+
+  const count = mosaic.tiles.size;
+  el.mosaicCount.textContent = `${count} ${count === 1 ? 'stream' : 'streams'}`;
+  layoutMosaic();
+
+  if (!count) {
+    el.mosaicGrid.replaceChildren(
+      message('No streams open. Use + Add stream to bring one back.'),
+    );
+  }
+}
+
+/** Fill the grid with one stream, without leaving the window. */
+function toggleMaximized(username) {
+  const { mosaic } = state;
+  mosaic.maximized = mosaic.maximized === username ? null : username;
+
+  for (const [name, entry] of mosaic.tiles) {
+    const on = mosaic.maximized === name;
+    entry.maxBtn.innerHTML = on ? '&#10529;' : '&#10530;';
+    entry.maxBtn.title = on ? 'Back to the grid' : `Maximize ${name}`;
+  }
+  layoutMosaic();
+}
+
 function removeTile(username) {
   const entry = state.mosaic.tiles.get(username);
   if (!entry) return;
   state.mosaic.tiles.delete(username);
+  // A maximized stream that ends must not leave the grid stuck showing nothing.
+  if (state.mosaic.maximized === username) state.mosaic.maximized = null;
   entry.clips?.detach();
   // If this tile was filling the screen, do not leave the user stranded there.
   if (document.fullscreenElement === entry.el) document.exitFullscreen().catch(() => {});
@@ -1428,7 +1594,7 @@ async function leaveMosaic() {
   clearTimers('mosaic');
   if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
   for (const username of [...state.mosaic.tiles.keys()]) removeTile(username);
-  state.mosaic = { tiles: new Map(), selection: null, master: { volume: 1, muted: false }, iceServers: null };
+  state.mosaic = freshMosaic();
 
   if (isBroadcasting()) {
     showView('view-broadcast');
@@ -1454,6 +1620,7 @@ function toggleFullscreen(element) {
   }
 }
 
+// Escape backs out of exactly one thing at a time, outermost first.
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   if (document.fullscreenElement) {
@@ -1461,6 +1628,9 @@ document.addEventListener('keydown', (event) => {
     document.exitFullscreen().catch(() => {});
   } else if (!el.addStream.hidden) {
     closeAddStream();
+  } else if (state.mosaic.maximized) {
+    event.preventDefault();
+    toggleMaximized(state.mosaic.maximized);
   }
 });
 
@@ -1572,7 +1742,17 @@ async function teardown() {
 el.continue.addEventListener('click', startSession);
 el.username.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
 el.serverUrl.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
-el.serverUrl.addEventListener('change', refreshLiveList);
+el.password.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
+el.serverUrl.addEventListener('change', async () => {
+  // A different server may have a different answer about passwords.
+  await probeServer();
+  refreshLiveList();
+});
+// Typing a new password is a reason to retry the list that just failed.
+el.password.addEventListener('change', async () => {
+  await harmony.api.setPassword(el.password.value);
+  refreshLiveList();
+});
 
 el.tabs.forEach((tab) => {
   tab.addEventListener('click', () => {

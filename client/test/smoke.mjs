@@ -72,6 +72,77 @@ async function run() {
   );
   check('clip buffer and its muxer load', clipModule === 'ok:30', clipModule);
 
+  // The source picker's tiles are plain <button>s. `font: inherit` does not
+  // carry colour, so they fell back to the UA's ButtonText -- black on a
+  // charcoal card, and barely readable. Build the same DOM the picker builds
+  // and read what the stylesheet actually resolves to.
+  const labelColour = await cdp.evaluate(`
+    const btn = document.createElement('button');
+    btn.className = 'source';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = 'Screen 1 · 2560x1440';
+    meta.append(label); btn.append(meta);
+    document.getElementById('source-grid').append(btn);
+    const rgb = getComputedStyle(label).color.match(/\\d+/g).map(Number);
+    btn.remove();
+    // Relative luminance, the same measure WCAG contrast is built on.
+    const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+    return { rgb, lum: +lum.toFixed(3) };
+  `);
+  check(
+    'source labels are legible on the dark card',
+    labelColour.lum > 0.5,
+    `rgb(${labelColour.rgb.join(',')}), luminance ${labelColour.lum}`,
+  );
+
+  // The live list used to grow the page instead of scrolling itself, pushing
+  // the username box off the top of the window.
+  const liveList = await cdp.evaluate(`
+    const ul = document.getElementById('live-items');
+    const s = getComputedStyle(ul);
+    return { overflowY: s.overflowY, maxHeight: s.maxHeight };
+  `);
+  check(
+    'the live list scrolls on its own rather than the page',
+    liveList.overflowY === 'auto' && liveList.maxHeight !== 'none',
+    `overflow-y: ${liveList.overflowY}, max-height: ${liveList.maxHeight}`,
+  );
+
+  // The field must follow the server, not a fixed default: shown when the
+  // configured server says it wants a password, hidden when it does not. This
+  // machine may or may not have a server saved, so assert the relationship
+  // rather than a particular outcome.
+  const passwordUi = await cdp.evaluate(`
+    const { harmony } = await import('./bridge.js');
+    const server = document.getElementById('server-url').value.trim();
+    let required = null;
+    if (server) {
+      try { required = Boolean((await harmony.api.health(server)).passwordRequired); }
+      catch { required = null; }  // unreachable: the field should be left alone
+    } else {
+      required = false;
+    }
+    return {
+      hasField: !!document.getElementById('server-password'),
+      hidden: document.getElementById('password-field').hidden,
+      required,
+      canSet: typeof harmony.api.setPassword === 'function',
+      server: server || '(none configured)',
+    };
+  `);
+  check(
+    'the password field follows what the server asks for',
+    passwordUi.hasField &&
+      passwordUi.canSet &&
+      (passwordUi.required === null || passwordUi.hidden === !passwordUi.required),
+    passwordUi.required === null
+      ? `${passwordUi.server} unreachable, field left as-is`
+      : `${passwordUi.server} ${passwordUi.required ? 'requires a password -> field shown' : 'is open -> field hidden'}`,
+  );
+
   const worklet = await cdp.evaluate(
     "const c = new AudioContext({ sampleRate: 48000 }); try { await c.audioWorklet.addModule('pcm-worklet.js'); return 'ok'; } catch (e) { return e.message; } finally { c.close(); }",
   );

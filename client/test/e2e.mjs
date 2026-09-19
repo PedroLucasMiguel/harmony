@@ -906,6 +906,7 @@ async function run() {
         tiles: tiles.length,
         reachable: hits.filter(Boolean).length,
         overflowY: grid.scrollHeight > grid.clientHeight + 2,
+        overflowX: grid.scrollWidth > grid.clientWidth,
         cols: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
       };
     `);
@@ -920,8 +921,10 @@ async function run() {
     const r = await controlsReachable(w, h);
     check(
       `tile controls are reachable at ${w}x${h} (${label})`,
-      r.reachable === r.tiles && !r.overflowY,
-      `${r.reachable}/${r.tiles} reachable in ${r.cols} cols${r.overflowY ? ', GRID OVERFLOWS' : ''}`,
+      r.reachable === r.tiles && !r.overflowY && !r.overflowX,
+      `${r.reachable}/${r.tiles} reachable in ${r.cols} cols` +
+        (r.overflowY ? ', GRID OVERFLOWS VERTICALLY' : '') +
+        (r.overflowX ? ', HORIZONTAL SCROLLBAR' : ''),
     );
   }
   await vwCdp.clearViewport();
@@ -1102,6 +1105,136 @@ async function run() {
     "await new Promise(r => setTimeout(r, 4000)); return document.querySelectorAll('.tile').length;",
   );
   check('a hand-picked mosaic does not absorb other live streams', stayedPicked === 2, `${stayedPicked} tiles`);
+
+  // ---------------- the reported horizontal scrollbar ----------------
+  //
+  // Two tiles at the default window size raised a horizontal scrollbar on a
+  // grid that had just been sized to fit. The cause was measuring
+  // `clientWidth`, which includes the grid's own padding, and then laying the
+  // tiles out in the content box inside it -- so the layout came out up to
+  // 2 x 12px too wide, which is exactly enough to overflow.
+  const fits = async (w, h) => {
+    await vwCdp.setViewport(w, h);
+    await sleep(800);
+    return vwCdp.evaluate(`
+      const g = document.getElementById('mosaic-grid');
+      return {
+        overflowX: g.scrollWidth > g.clientWidth,
+        overflowY: g.scrollHeight > g.clientHeight + 2,
+        cols: getComputedStyle(g).gridTemplateColumns.split(' ').length,
+        pageScroll: document.documentElement.scrollWidth > window.innerWidth + 2,
+      };
+    `);
+  };
+
+  for (const [w, h, label] of [
+    [1180, 800, 'the default window'],
+    [1600, 900, 'wide'],
+    [1280, 720, 'medium'],
+    [900, 700, 'narrow'],
+  ]) {
+    const r = await fits(w, h);
+    check(
+      `two tiles fit without a horizontal scrollbar at ${w}x${h} (${label})`,
+      !r.overflowX && !r.overflowY && !r.pageScroll,
+      r.overflowX || r.pageScroll
+        ? 'HORIZONTAL SCROLLBAR'
+        : `2 tiles in ${r.cols} cols, fits both ways`,
+    );
+  }
+  await vwCdp.clearViewport();
+  await sleep(700);
+
+  // ---------------- maximize one tile, without fullscreen ----------------
+  const maximized = await vwCdp.evaluate(`
+    const first = document.querySelector('.tile');
+    const who = first.dataset.user;
+    first.querySelector('.tile-btn[data-role="maximize"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    const tiles = [...document.querySelectorAll('.tile')];
+    const shown = tiles.filter(t => !t.hidden);
+    return {
+      who,
+      shown: shown.length,
+      showsTheRightOne: shown.length === 1 && shown[0].dataset.user === who,
+      stillConnected: tiles.length,
+      fullscreen: !!document.fullscreenElement,
+      biggerThanBefore: shown[0]?.getBoundingClientRect().width > 0,
+      cols: getComputedStyle(document.getElementById('mosaic-grid')).gridTemplateColumns.split(' ').length,
+    };
+  `);
+  check(
+    'maximizing a tile fills the grid with just that stream',
+    maximized.showsTheRightOne && maximized.cols === 1,
+    `${maximized.shown}/${maximized.stillConnected} visible in ${maximized.cols} col`,
+  );
+  check(
+    'maximize does not go fullscreen',
+    maximized.fullscreen === false,
+    'the window chrome and the rest of the desktop stay visible',
+  );
+
+  const backToGrid = await vwCdp.evaluate(`
+    document.querySelector('.tile:not([hidden]) .tile-btn[data-role="maximize"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    return [...document.querySelectorAll('.tile')].filter(t => !t.hidden).length;
+  `);
+  check('the same button restores the grid', backToGrid === 2, `${backToGrid} tiles back`);
+
+  // Escape is the other way out, and must not be swallowed by fullscreen
+  // handling that is not active.
+  const escaped = await vwCdp.evaluate(`
+    document.querySelector('.tile .tile-btn[data-role="maximize"]').click();
+    await new Promise(r => setTimeout(r, 300));
+    const whileMax = [...document.querySelectorAll('.tile')].filter(t => !t.hidden).length;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise(r => setTimeout(r, 300));
+    return { whileMax, after: [...document.querySelectorAll('.tile')].filter(t => !t.hidden).length };
+  `);
+  check('Escape leaves a maximized tile', escaped.whileMax === 1 && escaped.after === 2, JSON.stringify(escaped));
+
+  // ---------------- close one stream from the mosaic ----------------
+  const closed = await vwCdp.evaluate(`
+    const first = document.querySelector('.tile');
+    const who = first.dataset.user;
+    first.querySelector('.tile-btn[data-role="close"]').click();
+    await new Promise(r => setTimeout(r, 500));
+    return {
+      who,
+      remaining: [...document.querySelectorAll('.tile')].map(t => t.dataset.user),
+      count: document.getElementById('mosaic-count').textContent,
+    };
+  `);
+  check(
+    'closing a tile removes that stream from the mosaic',
+    closed.remaining.length === 1 && !closed.remaining.includes(closed.who),
+    `closed ${closed.who}, left with ${closed.remaining.join(', ') || 'nothing'} (${closed.count})`,
+  );
+
+  // The important half: the periodic sync runs every 3s and must not cheerfully
+  // reopen what the user just dismissed.
+  const stayedClosed = await vwCdp.evaluate(`
+    await new Promise(r => setTimeout(r, 5000));
+    return [...document.querySelectorAll('.tile')].map(t => t.dataset.user);
+  `);
+  check(
+    'a closed stream stays closed across a sync',
+    stayedClosed.length === 1 && !stayedClosed.includes(closed.who),
+    `after 5s: ${stayedClosed.join(', ') || 'nothing'}`,
+  );
+
+  // ...and + Add stream is the way back, overriding the dismissal.
+  const reopened = await vwCdp.evaluate(`
+    document.getElementById('mosaic-add').click();
+    await new Promise(r => setTimeout(r, 600));
+    return { offered: [...document.querySelectorAll('#add-stream-items li .who')].map(w => w.textContent) };
+  `);
+  check(
+    'a closed stream is offered again by + Add stream',
+    reopened.offered.includes(closed.who),
+    `offered: ${reopened.offered.join(', ') || 'none'}`,
+  );
+  await vwCdp.evaluate("document.getElementById('add-stream-close').click(); return true;");
 
   await vwCdp.evaluate("document.getElementById('mosaic-leave').click(); return true;");
   await sleep(1000);

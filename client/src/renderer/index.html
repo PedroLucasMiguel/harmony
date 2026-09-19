@@ -29,6 +29,11 @@
           />
         </label>
 
+        <label class="field" id="password-field" hidden>
+          <span>Server password</span>
+          <input id="server-password" type="password" autocomplete="off" placeholder="Required by this server" />
+        </label>
+
         <label class="field">
           <span>Username</span>
           <input
@@ -219,7 +224,10 @@
           <input id="mosaic-volume" type="range" min="0" max="100" value="100" />
           <span class="muted" id="mosaic-volume-label">100%</span>
         </div>
-        <p class="stats" id="mosaic-hint">Each tile has its own volume. Double-click a tile for fullscreen.</p>
+        <p class="stats" id="mosaic-hint">
+          Each tile has its own volume. &#10530; maximizes, &#9974; or double-click goes fullscreen,
+          &#10005; closes.
+        </p>
       </footer>
     </section>
 

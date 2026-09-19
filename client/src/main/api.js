@@ -9,6 +9,23 @@
 const REQUEST_TIMEOUT_MS = 10_000;
 const SDP_TIMEOUT_MS = 20_000;
 
+/**
+ * The server password, if the server asks for one.
+ *
+ * Held here rather than passed through every call: it belongs to the server
+ * address, not to any one request, and threading it through six signatures
+ * would mean six chances to forget it on the call that matters. The renderer
+ * sets it once, before anything else talks to the server.
+ *
+ * Media URLs are not covered by this -- they carry a token the control server
+ * puts in them, so the password itself never reaches MediaMTX.
+ */
+let password = '';
+const setPassword = (value) => {
+  password = String(value ?? '');
+  return { ok: true };
+};
+
 class ApiError extends Error {
   constructor(message, { status = 0, code = 'request_failed' } = {}) {
     super(message);
@@ -28,9 +45,13 @@ async function requestJson(serverUrl, pathname, { method = 'GET', body } = {}) {
   const url = `${normalizeBase(serverUrl)}${pathname}`;
   let res;
   try {
+    const headers = {};
+    if (body) headers['Content-Type'] = 'application/json';
+    if (password) headers['X-Harmony-Password'] = password;
+
     res = await fetch(url, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -118,6 +139,7 @@ async function deleteResource(resourceUrl) {
 
 module.exports = {
   ApiError,
+  setPassword,
   health: (s) => requestJson(s, '/api/health'),
   streams: (s) => requestJson(s, '/api/streams'),
   // `token` is sent only when reclaiming a username this client already holds.

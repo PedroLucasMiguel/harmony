@@ -16,10 +16,11 @@
 >
 > **Before you put this anywhere that matters, know what it does not have:**
 >
-> - **No authentication whatsoever.** Anyone who can reach the server can claim
->   any free username and broadcast, or watch anyone who is live. This is the
->   design, not an oversight — but it means the server must not be exposed to
->   anyone you would not hand a key to.
+> - **One shared password at best, and no accounts at all.** A server password is
+>   optional and off by default; without it, anyone who can reach the server can
+>   broadcast or watch. Even with it, the password decides *whether* you are in,
+>   never *who* you are — everyone who knows it can claim any free username and
+>   watch anyone. Do not hand it to people you would not hand a house key.
 > - **No security review, no audit, no fuzzing.** Untrusted input reaches a
 >   media server and a native Windows audio module. Nobody has attacked this on
 >   purpose.
@@ -138,8 +139,14 @@ one stream per tile you open.
   fits tiles to the window in both directions and reflows as people come and go.
 - **Independent audio per tile**, each with its own mute and volume, scaled by a
   master slider in the footer. Nothing is exclusive.
+- **Maximize one tile** (⤢) to fill the grid with a single stream while staying
+  inside the window — so the rest of your desktop is still there. **Esc** or the
+  same button goes back.
 - **Fullscreen any tile** with the ⛶ button or a double-click; **Esc** or ✕ to
   leave. It is the real Fullscreen API, so it covers the taskbar.
+- **Close a stream** (✕) you are not interested in. The connection is torn down
+  rather than hidden, and it stays closed — the grid will not quietly reopen it
+  three seconds later.
 - **Broadcast and watch at the same time.** Your own stream is left out of the
   grid — the preview already shows it, and pulling it back down would spend the
   bandwidth twice.
@@ -156,12 +163,17 @@ one stream per tile you open.
 
 ### Connecting
 
+- **An optional server password.** Off by default. Set one and nothing but the
+  health check answers without it — including the media, since watch URLs then
+  carry a token of their own. Wrong guesses are rate limited on an escalating
+  ladder: three costs 5 minutes, then 10, 30, 60. The client asks the server
+  whether a password is wanted and only shows the box if it is.
 - **Works on networks that block UDP**, via an ICE-TCP fallback on the same port —
   no TURN relay, no third party, no per-gigabyte bill.
 - **A connection test** on the connect screen walks health → session → STUN → SDP
   → media and tells you which step failed.
-- **One portable .exe**, no installer and no admin rights. Enter a server address
-  once and it is remembered.
+- **One portable .exe** of about 82 MB, no installer and no admin rights. Enter a
+  server address once and it is remembered.
 
 ---
 
@@ -293,6 +305,28 @@ list of checkboxes — not a simplification.
 </details>
 
 <details>
+<summary><b>Almost all of the 82 MB download is Chromium, not this app</b></summary>
+
+Harmony's own code plus its two runtime dependencies is under a megabyte, so
+shrinking the build means shrinking what Electron ships. Three measures took the
+portable .exe from 95.7 MB to 82.2 MB:
+
+| Change | Saved (uncompressed) |
+| --- | --- |
+| `electronLanguages: [en-US]` — Chromium ships 55 locale files | ~48 MB |
+| Dropping `dxcompiler.dll` + `dxil.dll` — DirectX shader compilation for WebGPU, which this app has no use for | 27 MB |
+| `compression: maximum` | — |
+
+The 20 MB `LICENSES.chromium.html` stays: it is a licence-compliance
+requirement, and it is text, so it compresses to almost nothing. `vk_swiftshader.dll`
+also stays — it is only 6 MB, and it is what renders on a machine with no usable
+GPU driver.
+
+If a removal ever breaks a machine, the list is one array in
+[client/scripts/after-pack.js](client/scripts/after-pack.js).
+</details>
+
+<details>
 <summary><b>Fit tiles to the window in both dimensions, not just width</b></summary>
 
 The mosaic tries every column count and keeps whichever makes each 16:9 tile
@@ -337,8 +371,9 @@ and must end up decoding that video over WHEP. Nothing is mocked.
 ## Known limits
 
 - **One stream per username.** That is the design, not a bug.
-- **No accounts.** Anyone who can reach the server can claim any free username.
-  Do not expose it where that is not acceptable.
+- **No accounts.** The optional server password is one shared secret, not
+  identity: anyone who knows it can claim any free username. Without it, so can
+  anyone who can reach the server.
 - **No recording on the server.** MediaMTX can do it without re-encoding
   (`record: yes` in `pathDefaults`) but it is off — partly because an SD card is a
   poor place for video, partly because writing to disk is the one thing that

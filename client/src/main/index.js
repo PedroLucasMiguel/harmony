@@ -223,6 +223,7 @@ handle('audio:stop', () => {
   return true;
 });
 
+handle('api:password', (_e, value) => api.setPassword(value));
 handle('api:health', (_e, server) => api.health(server));
 handle('api:streams', (_e, server) => api.streams(server));
 handle('api:session', (_e, server, username, token) => api.session(server, username, token));
