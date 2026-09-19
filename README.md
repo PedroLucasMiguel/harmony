@@ -128,6 +128,10 @@ one stream per tile you open.
   Quality and encoder priority are live too.
 - **Hear your own outgoing audio** with the 🎧 button, for capture cards and
   microphones.
+- **Hide the preview** while staying live. Drawing your own screen back at you
+  is GPU work on top of whatever you are sharing, which is what makes a game
+  feel stuttery at a high frame rate. It also detaches automatically while the
+  window is minimised.
 - **Four quality presets**, from 720p30/3 Mbps to native-resolution 60 fps at
   25 Mbps, and a **priority** switch deciding what the encoder sacrifices when the
   budget runs out — *Sharp* keeps resolution so text stays readable, *Smooth*
@@ -322,6 +326,60 @@ something else.
 `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE` takes a single target. That
 platform limit is why the audio-exclusion picker is single-select rather than a
 list of checkboxes — not a simplification.
+</details>
+
+<details>
+<summary><b>"My game reports 200 fps but feels like 20" while streaming</b></summary>
+
+High frame rate with bad *pacing* is a different problem from low frame rate,
+and on Windows it usually is not the encoder. Three things stack up:
+
+**1. Mixed refresh rates are the big one, and it is not Harmony's doing.**
+When a second monitor runs at a different refresh rate, DWM can tie desktop
+composition to the lower of the two, and anything animating on the slow monitor
+— a video preview, for instance — drags the game's presentation with it. The
+frame counter stays high because frames are still being produced; they are just
+delivered on someone else's schedule. The fixes that actually work are at the OS
+level: match the refresh rates, run the game **borderless** rather than
+exclusive fullscreen, or move the second display to the integrated GPU.
+
+**2. Harmony keeps painting when a normal app would stop — deliberately.**
+The three anti-throttling switches that keep the encoder alive while you look at
+the game (see below) also stop Chromium from backing off when its window is
+covered or parked on another monitor. So the preview kept being composited at
+full rate, forever, on the same GPU as the game.
+
+That part is fixed: **Hide preview** detaches the video element, and the window
+detaches it automatically while minimised. Both keep streaming — detaching
+`srcObject` stops the painting, while the sender holds the track independently
+of anything displaying it. Verified end to end: the server received
+**+1220 KB while the preview was hidden**. Mosaic tiles pause while minimised
+for the same reason.
+
+**3. On a two-GPU laptop, Harmony lands on the same GPU as the game — and
+Chromium cannot composite across GPUs on Windows.** So if Harmony renders on the
+discrete GPU while its window sits on a display wired to the integrated one,
+every frame is copied between adapters. Measured on a hybrid laptop mid-game:
+
+| Process | Adapter | Engine | % |
+| --- | --- | --- | --- |
+| The game | NVIDIA | 3d | 22.8 |
+| **desktop compositor** | **Intel** | 3d | **13.3** |
+| Harmony | NVIDIA | videoencode | 13.0 |
+| **desktop compositor** | **NVIDIA** | 3d | **8.9** |
+| Harmony | NVIDIA | 3d + videodecode + copy | 7.0 |
+
+The compositor alone cost as much as the game. Harmony now detects this and
+offers to move itself to the integrated GPU — one click, one restart. Quick Sync
+encodes H.264 just as well as NVENC, so nothing is lost, and ~20% of the
+discrete GPU goes back to the game.
+
+Worth ruling out first: minimise Harmony entirely. If the stutter goes away, it
+was compositing (1 and 2). If it does not, it is contention (3).
+
+**It is not a canvas.** The preview is a `<video>` element fed the capture
+stream directly — the only canvas in the client is a 160×90 test pattern used by
+*Test my connection*.
 </details>
 
 <details>
