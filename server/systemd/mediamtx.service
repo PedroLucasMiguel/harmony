@@ -1,0 +1,35 @@
+[Unit]
+Description=MediaMTX (Harmony media relay)
+Documentation=https://mediamtx.org/
+After=network-online.target harmony-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=harmony
+Group=harmony
+# MTX_-prefixed variables in this file override keys in mediamtx.yml.
+EnvironmentFile=/etc/harmony/harmony.env
+ExecStart=/usr/local/bin/mediamtx /etc/harmony/mediamtx.yml
+Restart=always
+RestartSec=2
+
+# A relay handles a lot of concurrent sockets.
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# AF_NETLINK is required: MediaMTX enumerates local interfaces via netlink to
+# build its ICE candidates (webrtcIPsFromInterfaces). Without it every WebRTC
+# session fails with "netlinkrib: address family not supported by protocol".
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mediamtx
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check every few minutes whether the public IP has moved
+
+[Timer]
+OnBootSec=3min
+# ddclient's own default is 5 minutes, so there is no point checking faster.
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

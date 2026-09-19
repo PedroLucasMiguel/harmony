@@ -1,0 +1,13 @@
+{
+  "name": "harmony",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Low-latency screen sharing: a relay-only WebRTC server for Raspberry Pi and an Electron client",
+  "scripts": {
+    "install:all": "npm --prefix ./server install && npm --prefix ./client install",
+    "server": "npm --prefix ./server start",
+    "client": "npm --prefix ./client start",
+    "build:client": "npm --prefix ./client run build"
+  },
+  "license": "MIT"
+}

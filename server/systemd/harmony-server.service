@@ -1,0 +1,35 @@
+[Unit]
+Description=Harmony control server (username reservation + MediaMTX auth hook)
+Documentation=https://github.com/your-org/harmony
+After=network-online.target
+Wants=network-online.target
+# MediaMTX calls this service for every publish/read, so it should be up first.
+Before=mediamtx.service
+
+[Service]
+Type=simple
+User=harmony
+Group=harmony
+WorkingDirectory=/opt/harmony
+EnvironmentFile=/etc/harmony/harmony.env
+ExecStart=/usr/bin/node /opt/harmony/src/index.js
+Restart=always
+RestartSec=2
+
+# Hardening -- this process reads config and speaks HTTP, nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=harmony-server
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,839 @@
+:root {
+  --bg: #0f1116;
+  --surface: #171a21;
+  --surface-2: #1f232c;
+  --border: #2a2f3a;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --accent: #5b8cff;
+  --accent-hover: #6f9bff;
+  --danger: #e05561;
+  --live: #3fd07f;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * The `hidden` attribute must win over any `display` a class sets.
+ *
+ * The browser's own `[hidden] { display: none }` comes from the UA stylesheet,
+ * so any class rule here -- `.waiting { display: flex }`, `.field { display:
+ * flex }` -- outranks it, and setting `el.hidden = true` then does nothing.
+ * That produced a viewer stuck behind an opaque "Connecting..." overlay: the
+ * video played underneath with sound, but nothing was visible.
+ */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 'Segoe UI', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+}
+h1 {
+  font-size: 30px;
+  letter-spacing: -0.5px;
+}
+h2 {
+  font-size: 17px;
+}
+
+p {
+  margin: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---------- view switching ---------- */
+
+.view {
+  display: none;
+  height: 100vh;
+  flex-direction: column;
+}
+.view[data-active] {
+  display: flex;
+}
+
+/* ---------- controls ---------- */
+
+button {
+  font: inherit;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.danger {
+  background: var(--danger);
+  color: #fff;
+}
+.danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.ghost {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border);
+}
+.ghost:hover:not(:disabled) {
+  background: #272c37;
+}
+
+.ghost.small {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.ghost.icon {
+  padding: 8px 12px;
+  min-width: 42px;
+}
+/* A toggle that is currently on, e.g. audio monitoring. */
+.ghost.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+input[type='text'],
+select {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  outline: none;
+  user-select: text;
+}
+input[type='text']:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field > span {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.field small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.field.inline select {
+  width: auto;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  background: rgba(224, 85, 97, 0.1);
+  border: 1px solid rgba(224, 85, 97, 0.3);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+
+/* ---------- connect view ---------- */
+
+#view-connect {
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+}
+
+.connect-card {
+  width: 420px;
+  max-width: calc(100vw - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 32px 0;
+}
+
+.brand p {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.live-list {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.live-list h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.live-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.live-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.live-list li:hover {
+  border-color: var(--accent);
+}
+.live-list li .who {
+  flex: 1;
+  font-weight: 600;
+}
+
+/* ---------- bars ---------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* The broadcast bar carries two selects and four buttons; let it wrap onto a
+     second line rather than crushing everything or overflowing. */
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.bar.bottom {
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.bar h2 + p {
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  min-width: 0;
+}
+
+.live-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.dot.live {
+  background: var(--live);
+  box-shadow: 0 0 0 0 rgba(63, 208, 127, 0.6);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  70% {
+    box-shadow: 0 0 0 7px rgba(63, 208, 127, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(63, 208, 127, 0);
+  }
+}
+
+.pill {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- source picker ---------- */
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px 0;
+  flex: none;
+}
+.tab {
+  background: none;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 6px 4px;
+  margin-right: 10px;
+}
+.tab[data-active] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.tabs .ghost.small {
+  margin-left: auto;
+}
+
+.source-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+  padding: 16px 20px 20px;
+  align-content: start;
+}
+
+.source {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+}
+.source:hover {
+  border-color: #3b4252;
+}
+.source[data-selected] {
+  border-color: var(--accent);
+}
+.source img.thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #0a0c10;
+  display: block;
+}
+.source .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  min-width: 0;
+}
+.source .meta img {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.source .meta .label {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--muted);
+  padding: 48px 0;
+}
+
+.audio-note {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 380px;
+  text-align: right;
+}
+.audio-note[data-warn] {
+  color: #e8b45a;
+}
+
+/* ---------- stage ---------- */
+
+.stage {
+  flex: 1;
+  position: relative;
+  background: #07090d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+.stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #07090d;
+}
+
+.waiting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: #07090d;
+  color: var(--muted);
+}
+.spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stats {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- mosaic ---------- */
+
+.live-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.live-head-row h2 {
+  margin: 0;
+}
+
+.mosaic {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  /* Both set from JS, which fits the tiles to the box in both directions.
+     Explicit widths (rather than 1fr) keep every tile exactly 16:9, and
+     centring stops them drifting to one side when they do not fill the row. */
+  grid-template-columns: repeat(var(--cols, 2), var(--tile-w, 1fr));
+  justify-content: center;
+  align-content: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.tile {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #07090d;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer;
+  min-width: 0;
+}
+.tile:hover {
+  border-color: #3b4252;
+}
+/* The one tile you can actually hear. */
+.tile[data-focused] {
+  border-color: var(--accent);
+}
+
+.tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #07090d;
+}
+
+.tile-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+  /* The bar itself must not swallow clicks meant for the tile; its own
+     controls opt back in below. */
+  pointer-events: none;
+}
+.tile-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile-meta {
+  color: #b9c0d0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tile-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+.tile-btn {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.tile-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.tile-volume {
+  width: 64px;
+  height: 3px;
+}
+/* A small tile has no room for a slider; the buttons still fit. */
+.tile.compact .tile-volume,
+.tile.compact .tile-meta {
+  display: none;
+}
+
+/* ---------- fullscreen ---------- */
+
+.tile:fullscreen,
+.stage:fullscreen {
+  aspect-ratio: auto;
+  border: none;
+  border-radius: 0;
+  background: #000;
+}
+.tile:fullscreen video,
+.stage:fullscreen video {
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+}
+/* Give the controls somewhere to sit once the tile fills the screen. */
+.tile:fullscreen .tile-bar {
+  padding: 18px 24px;
+  font-size: 15px;
+}
+.tile:fullscreen .tile-volume {
+  width: 120px;
+}
+
+/* ---------- modal picker ---------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.modal-card {
+  width: 380px;
+  max-width: calc(100vw - 48px);
+  max-height: 70vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.modal-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.modal-card li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.modal-card li:hover {
+  border-color: var(--accent);
+}
+.modal-card li .who {
+  flex: 1;
+  font-weight: 600;
+}
+
+/* ---------- connection diagnostic ---------- */
+
+.diag-list li {
+  align-items: flex-start;
+  cursor: default;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.diag-list li:hover {
+  border-color: var(--border);
+}
+.diag-mark {
+  flex: none;
+  font-weight: 700;
+}
+.diag-mark.good {
+  color: var(--live);
+}
+.diag-mark.bad {
+  color: var(--danger);
+}
+#diag-verdict {
+  font-size: 13px;
+  line-height: 1.5;
+}
+#diag-verdict.bad {
+  color: #e8b45a;
+}
+
+/* ---------- checkbox + toast ---------- */
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.check input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex: none;
+}
+.check small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(560px, calc(100vw - 48px));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 16px;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.toast.clickable {
+  cursor: pointer;
+  border-color: var(--accent);
+}
+
+.tile-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  background: #07090d;
+}
+.tile-status .spinner {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+/* ---------- volume ---------- */
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 130px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+#volume-label {
+  min-width: 42px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   Narrow windows
+
+   The app is usable in a corner of the screen while something else has focus,
+   which is how a second monitor gets used in practice. These rules trade the
+   labels and the fixed widths away before they trade away the picture.
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .bar,
+  .bar.bottom {
+    padding: 12px 14px;
+  }
+
+  .source-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    padding: 12px 14px 14px;
+    gap: 10px;
+  }
+
+  .tabs {
+    padding: 12px 14px 0;
+    flex-wrap: wrap;
+  }
+
+  /* Uppercase field labels are the first thing worth losing; the selects
+     themselves still say what they are. */
+  .field.inline > span {
+    display: none;
+  }
+
+  .audio-note {
+    max-width: 100%;
+    text-align: left;
+  }
+
+  input[type='range'] {
+    width: 90px;
+  }
+}
+
+@media (max-width: 680px) {
+  h1 {
+    font-size: 24px;
+  }
+  h2 {
+    font-size: 15px;
+  }
+
+  .bar {
+    /* Below this the two sides cannot share a line at all. */
+    justify-content: flex-start;
+  }
+
+  .bar.bottom .stats,
+  .bar.bottom .audio-note {
+    width: 100%;
+  }
+
+  button {
+    padding: 8px 12px;
+  }
+
+  .mosaic {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  input[type='range'] {
+    width: 70px;
+  }
+}
+
+/* Short windows: give the picture the vertical space instead of the chrome. */
+@media (max-height: 560px) {
+  .bar {
+    padding: 8px 14px;
+  }
+  .brand p,
+  .field small {
+    display: none;
+  }
+  .connect-card {
+    gap: 12px;
+    padding: 16px 0;
+  }
+}

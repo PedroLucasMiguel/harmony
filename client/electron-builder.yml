@@ -1,0 +1,45 @@
+appId: com.harmony.client
+productName: Harmony
+copyright: Copyright © 2026
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - '!**/*.map'
+
+# `loopback-capture` resolves its .node binary from the filesystem via the
+# `bindings` package, which cannot see inside an asar archive. Unpacking it is
+# what makes per-application audio work in a packaged build.
+asarUnpack:
+  - node_modules/loopback-capture/**
+
+win:
+  # `portable` produces one self-contained .exe -- no installer, no admin
+  # rights, nothing written outside %TEMP% at runtime.
+  target:
+    - portable
+  artifactName: Harmony-${version}-portable.exe
+
+portable:
+  # Keeps the extraction directory stable so Windows Firewall rules and the
+  # saved server address survive an upgrade.
+  unpackDirName: Harmony
+
+linux:
+  target:
+    - AppImage
+  category: Network
+  artifactName: Harmony-${version}-${arch}.AppImage
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.social-networking
+  # Screen and audio capture need these on macOS 10.15+.
+  extendInfo:
+    NSCameraUsageDescription: Harmony can share a webcam or capture card as your video source.
+    NSMicrophoneUsageDescription: Harmony captures audio so viewers can hear your shared screen or window.

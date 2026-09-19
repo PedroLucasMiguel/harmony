@@ -1,0 +1,25 @@
+{
+  "name": "@harmony/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harmony desktop client: share a screen or window, or watch someone else's",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/smoke.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "build": "electron-builder --win portable",
+    "build:all": "electron-builder --win portable --linux AppImage --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3"
+  },
+  "optionalDependencies": {
+    "loopback-capture": "^3.0.2"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "mp4-muxer": "^5.2.2"
+  }
+}

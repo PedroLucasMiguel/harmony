@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# Secrets and per-host configuration -- never commit these
+# ---------------------------------------------------------------------------
+
+# Real configuration. server/.env.example is the committed template.
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
+# TLS material. MediaMTX writes auto.crt / auto.key beside itself the first
+# time it needs a self-signed certificate, so running it from a checkout drops
+# a private key straight into the repo root.
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+cloudflare.ini
+
+# Notes about one specific installation -- hostnames, LAN addresses, which
+# ports are open. DEPLOYMENT.md is the generic guide and IS committed.
+*.local.md
+
+# Personal tool state.
+.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# Build output and dependencies
+# ---------------------------------------------------------------------------
+node_modules/
+dist/
+out/
+*.tsbuildinfo
+
+# MediaMTX is fetched by server/install.sh at the pinned version.
+mediamtx
+mediamtx.exe
+recordings/
+
+# Clips are written to the user's Videos folder, but not if someone repoints them.
+*.mp4
+
+# ---------------------------------------------------------------------------
+# Editors, OS and logs
+# ---------------------------------------------------------------------------
+*.log
+npm-debug.log*
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

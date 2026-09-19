@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self'; script-src 'self'"
+    />
+    <title>Harmony</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- ================= Connect ================= -->
+    <section class="view" id="view-connect" data-active>
+      <div class="connect-card">
+        <header class="brand">
+          <h1>Harmony</h1>
+          <p>Share a screen, or watch someone else's.</p>
+        </header>
+
+        <label class="field">
+          <span>Server address</span>
+          <input
+            id="server-url"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="https://stream.example.com or 192.168.1.50:8080"
+          />
+        </label>
+
+        <label class="field">
+          <span>Username</span>
+          <input
+            id="username"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            maxlength="24"
+            placeholder="your-name"
+          />
+          <small
+            >Free name &rarr; you start streaming. Name already live &rarr; you join and
+            watch.</small
+          >
+        </label>
+
+        <label class="check">
+          <input type="checkbox" id="clips-enabled" />
+          <span>
+            Keep the last 30 seconds for clipping
+            <small
+              >Buffers already-compressed video in memory, so it costs little CPU. Roughly 30 MB per
+              stream at 1080p.</small
+            >
+          </span>
+        </label>
+
+        <button class="primary" id="continue">Continue</button>
+        <button class="ghost small" id="test-connection">Test my connection</button>
+        <p class="error" id="connect-error" hidden></p>
+
+        <div class="live-list" id="live-list" hidden>
+          <div class="live-head-row">
+            <h2>Live now</h2>
+            <button class="ghost small" id="watch-all">Watch all</button>
+          </div>
+          <ul id="live-items"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Source picker ================= -->
+    <section class="view" id="view-picker">
+      <header class="bar">
+        <div>
+          <h2>Choose what to share</h2>
+          <p class="muted">
+            Streaming as <strong id="picker-username"></strong>. The name is yours until you stop.
+          </p>
+        </div>
+        <button class="ghost" id="picker-back">Cancel</button>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab" data-kind="screen" data-active>Screens</button>
+        <button class="tab" data-kind="window">Windows</button>
+        <button class="tab" data-kind="camera">Cameras &amp; capture cards</button>
+        <button class="ghost small" id="picker-refresh">Refresh</button>
+      </nav>
+
+      <div class="source-grid" id="source-grid"></div>
+
+      <footer class="bar bottom">
+        <div class="controls">
+          <label class="field inline">
+            <span>Quality</span>
+            <select id="quality"></select>
+          </label>
+          <label class="field inline">
+            <span>Priority</span>
+            <select id="priority"></select>
+          </label>
+          <label class="field inline" id="fallback-field" hidden>
+            <span>If per-app audio is unavailable</span>
+            <select id="window-audio-fallback">
+              <option value="silent">Share silently</option>
+              <option value="system">Use system audio</option>
+            </select>
+          </label>
+          <label class="field inline" id="exclude-field" hidden>
+            <span>Exclude audio from</span>
+            <select id="exclude-app"></select>
+          </label>
+          <label class="field inline" id="audio-input-field" hidden>
+            <span>Audio input</span>
+            <select id="audio-input"></select>
+          </label>
+        </div>
+        <div class="controls">
+          <p class="audio-note" id="audio-note"></p>
+          <button class="primary" id="start-stream" disabled>Start streaming</button>
+        </div>
+      </footer>
+    </section>
+
+    <!-- ================= Broadcasting ================= -->
+    <section class="view" id="view-broadcast">
+      <header class="bar">
+        <div class="live-head">
+          <span class="dot live"></span>
+          <h2 id="broadcast-title">Live</h2>
+          <span class="pill" id="viewer-count">0 watching</span>
+        </div>
+        <div class="controls">
+          <label class="field inline">
+            <span>Quality</span>
+            <select id="live-quality"></select>
+          </label>
+          <label class="field inline">
+            <span>Priority</span>
+            <select id="live-priority"></select>
+          </label>
+          <button class="ghost" id="change-source">Change source</button>
+          <button class="ghost" id="broadcast-watch">Watch others</button>
+          <button class="ghost icon" id="monitor-toggle" title="Hear my own audio">&#127911;</button>
+          <button class="ghost" id="broadcast-clip" hidden>&#9986; Clip</button>
+          <button class="danger" id="stop-stream">Stop streaming</button>
+        </div>
+      </header>
+
+      <div class="stage">
+        <video id="preview" autoplay muted playsinline></video>
+      </div>
+
+      <footer class="bar bottom">
+        <div class="controls">
+          <p class="stats" id="broadcast-stats">Connecting&hellip;</p>
+          <p class="audio-note" id="broadcast-limit" hidden></p>
+        </div>
+        <p class="audio-note" id="broadcast-audio-note"></p>
+      </footer>
+    </section>
+
+    <!-- ================= Watching ================= -->
+    <section class="view" id="view-watch">
+      <header class="bar">
+        <div class="live-head">
+          <span class="dot" id="watch-dot"></span>
+          <h2 id="watch-title">Watching</h2>
+        </div>
+        <div class="controls">
+          <button class="ghost" id="watch-add">+ Add stream</button>
+          <button class="ghost" id="leave-stream">Leave</button>
+        </div>
+      </header>
+
+      <div class="stage">
+        <video id="remote" autoplay playsinline></video>
+        <div class="waiting" id="watch-waiting" hidden>
+          <div class="spinner"></div>
+          <p id="watch-waiting-text">Waiting for the stream to start&hellip;</p>
+        </div>
+      </div>
+
+      <footer class="bar bottom">
+        <div class="controls">
+          <button class="ghost icon" id="toggle-play" title="Pause">&#10074;&#10074;</button>
+          <button class="ghost icon" id="toggle-mute" title="Mute">&#128266;</button>
+          <input id="volume" type="range" min="0" max="100" value="100" />
+          <span class="muted" id="volume-label">100%</span>
+          <button class="ghost icon" id="watch-fullscreen" title="Fullscreen">&#9974;</button>
+          <button class="ghost" id="watch-clip" hidden>&#9986; Clip</button>
+        </div>
+        <p class="stats" id="watch-stats"></p>
+      </footer>
+    </section>
+
+    <!-- ================= Mosaic ================= -->
+    <section class="view" id="view-mosaic">
+      <header class="bar">
+        <div class="live-head">
+          <span class="dot live"></span>
+          <h2>Mosaic</h2>
+          <span class="pill" id="mosaic-count">0 streams</span>
+        </div>
+        <div class="controls">
+          <button class="ghost" id="mosaic-add">+ Add stream</button>
+          <button class="ghost" id="mosaic-leave">Leave</button>
+        </div>
+      </header>
+
+      <div class="mosaic" id="mosaic-grid"></div>
+
+      <footer class="bar bottom">
+        <div class="controls">
+          <span class="muted">All volumes</span>
+          <button class="ghost icon" id="mosaic-mute" title="Mute everything">&#128266;</button>
+          <input id="mosaic-volume" type="range" min="0" max="100" value="100" />
+          <span class="muted" id="mosaic-volume-label">100%</span>
+        </div>
+        <p class="stats" id="mosaic-hint">Each tile has its own volume. Double-click a tile for fullscreen.</p>
+      </footer>
+    </section>
+
+    <!-- ================= Add-stream picker ================= -->
+    <div class="modal" id="add-stream" hidden>
+      <div class="modal-card">
+        <h2>Add a stream</h2>
+        <ul id="add-stream-items"></ul>
+        <p class="muted" id="add-stream-empty" hidden>No other streams are live right now.</p>
+        <button class="ghost" id="add-stream-close">Cancel</button>
+      </div>
+    </div>
+
+    <!-- ================= Connection diagnostic ================= -->
+    <div class="modal" id="diag" hidden>
+      <div class="modal-card">
+        <h2>Connection test</h2>
+        <ul class="diag-list" id="diag-steps"></ul>
+        <p class="muted" id="diag-verdict"></p>
+        <button class="ghost" id="diag-close">Close</button>
+      </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

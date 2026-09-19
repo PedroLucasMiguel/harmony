@@ -1,0 +1,119 @@
+# Harmony media relay.
+#
+# MediaMTX is used strictly as an SFU: packets published by the broadcaster are
+# forwarded to viewers untouched. Nothing here decodes, encodes or transcodes,
+# which is what keeps the server idle under load and the latency under a second.
+# It also means the architecture is irrelevant: x86-64, arm64 and armv7 all cost
+# the same here. (The design was forced by the weakest plausible host -- a
+# Raspberry Pi 5 has no hardware H.264 encoder at all, so transcoding would have
+# been capped at a few frames per second on it.)
+#
+# MediaMTX does NOT interpolate ${VAR} inside this file. Anything that differs
+# per deployment is overridden with an MTX_-prefixed environment variable
+# instead; on a systemd install those live in /etc/harmony/harmony.env.
+# See systemd/mediamtx.service.
+
+logLevel: info
+logDestinations: [stdout]
+
+###############################################################################
+# Control API -- read by the Harmony control server to learn who is live.
+# Bound to loopback only; it is never exposed to the internet.
+###############################################################################
+api: yes
+apiAddress: 127.0.0.1:9997
+
+###############################################################################
+# Protocols we do not use. Turning them off shrinks the attack surface and
+# stops MediaMTX from binding ports the server has no reason to open.
+###############################################################################
+rtsp: no
+rtmp: no
+hls: no
+srt: no
+playback: no
+metrics: no
+pprof: no
+
+# Media over QUIC. Added in MediaMTX 1.16 and on by default, which opens three
+# more listeners (8892 TCP/UDP, 8893 UDP) for a protocol Harmony does not use.
+# This key does not exist before 1.16 -- see MEDIAMTX_VERSION in install.sh.
+moq: no
+
+###############################################################################
+# WebRTC -- the only ingest and egress path.
+###############################################################################
+webrtc: yes
+
+# HTTP endpoint that serves WHIP (publish) and WHEP (watch) signaling.
+# Put a TLS terminator in front of this (Caddy, or a Cloudflare Tunnel) rather
+# than enabling webrtcEncryption -- signaling is plain HTTP, so it is the one
+# part of Harmony a tunnel *can* carry.
+webrtcAddress: :8889
+webrtcEncryption: no
+
+# The media itself. THIS is the port that must be forwarded on your router,
+# as UDP, to this host. A Cloudflare Tunnel cannot carry it: cloudflared has no
+# public UDP support, so WebRTC media would never arrive.
+webrtcLocalUDPAddress: :8189
+
+# The same thing over TCP, for clients whose network blocks UDP outright --
+# plenty of corporate and campus firewalls do, and some mobile carriers.
+# Without this those clients have no working candidate pair at all and the only
+# remaining option is a TURN relay.
+#
+# MediaMTX leaves this off by default because TCP carries real-time media badly:
+# a lost packet stalls everything behind it, so a congested link degrades into
+# growing delay instead of dropped frames. That is the right default for a
+# server where everyone can use UDP, and the wrong one here -- a worse
+# connection beats no connection, and ICE only falls back to it when UDP fails.
+#
+# Forward this as TCP as well as UDP.
+webrtcLocalTCPAddress: :8189
+
+# Gather candidates from the server's own interfaces (LAN viewers connect directly,
+# without leaving the network).
+webrtcIPsFromInterfaces: yes
+
+# ...and advertise the public address as well, so remote viewers have a
+# reachable candidate. Left empty here because it is deployment-specific:
+# set it with the environment variable
+#
+#   MTX_WEBRTCADDITIONALHOSTS=stream.example.com
+#
+# (comma-separated for several). Without this, remote viewers only ever see the
+# server's LAN address and the connection will fail outside your network.
+webrtcAdditionalHosts: []
+
+webrtcSTUNGatherTimeout: 5s
+webrtcHandshakeTimeout: 10s
+
+###############################################################################
+# Authentication is delegated to the Harmony control server, which owns the
+# username reservation logic. MediaMTX POSTs every publish/read attempt to it.
+###############################################################################
+authMethod: http
+authHTTPAddress: http://127.0.0.1:8080/mediamtx/auth
+
+# The control API is already loopback-only, so exempt it from the round trip.
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+###############################################################################
+# Path defaults. Every username becomes a path, created on demand.
+###############################################################################
+pathDefaults:
+  source: publisher
+
+  # The hard half of username reservation. MediaMTX defaults this to `yes`,
+  # which lets a new publisher kick the current one off the path -- exactly the
+  # hijack we must prevent. With `no`, a second publisher on a live username is
+  # refused by the media server itself, independently of the control server.
+  overridePublisher: no
+
+  record: no
+
+paths:
+  all_others:

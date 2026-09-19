@@ -1,0 +1,20 @@
+{
+  "name": "@harmony/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harmony control server: username reservation + MediaMTX auth hook",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/reservation.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "license": "MIT"
+}

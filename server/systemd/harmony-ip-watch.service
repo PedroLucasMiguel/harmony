@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart MediaMTX when the advertised public IP changes
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/harmony-ip-watch.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=harmony-ip-watch
