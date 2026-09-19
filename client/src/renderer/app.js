@@ -86,6 +86,8 @@ const el = {
   broadcastLimit: $('broadcast-limit'),
   broadcastAudioNote: $('broadcast-audio-note'),
   broadcastWatch: $('broadcast-watch'),
+  togglePreview: $('toggle-preview'),
+  previewOff: $('preview-off'),
 
   watchAll: $('watch-all'),
   mosaicGrid: $('mosaic-grid'),
@@ -104,6 +106,11 @@ const el = {
   clipsEnabled: $('clips-enabled'),
   hwEncoding: $('hw-encoding'),
   hwEncodingNote: $('hw-encoding-note'),
+  gpuPreferenceField: $('gpu-preference-field'),
+  gpuPreference: $('gpu-preference'),
+  gpuHint: $('gpu-hint'),
+  gpuHintText: $('gpu-hint-text'),
+  gpuHintApply: $('gpu-hint-apply'),
   broadcastClip: $('broadcast-clip'),
   watchClip: $('watch-clip'),
 
@@ -167,6 +174,14 @@ const state = {
 
   /** Live broadcast: what we are sending and the senders to swap it on. */
   live: { videoSender: null, videoTrack: null, rawStream: null, source: null, audioMode: null },
+
+  /**
+   * Whether the preview is being painted.
+   *
+   * `hiddenByUser` is a deliberate choice and survives minimise/restore;
+   * `windowVisible` is the automatic half.
+   */
+  preview: { hiddenByUser: false, windowVisible: true },
 
   server: '', // control server base URL, valid outside a session too
   session: null, // server response for the current username
@@ -298,8 +313,38 @@ async function refreshGpuStatus() {
     state.gpu = null;
     return;
   }
-  const { encodeAccelerated, decodeAccelerated, preference, videoEncode } = state.gpu;
+  const { encodeAccelerated, decodeAccelerated, preference, videoEncode, adapters } = state.gpu;
   el.hwEncoding.checked = preference !== 'off';
+
+  // Only worth offering where there is a second GPU to move to.
+  const multiGpu = (adapters?.length ?? 0) > 1;
+  const active = adapters?.find((a) => a.active)?.vendor ?? null;
+  el.gpuPreferenceField.hidden = !multiGpu;
+  if (multiGpu) {
+    el.gpuPreference.value = state.gpu.adapterPreference ?? 'auto';
+    el.gpuPreferenceField.querySelector('small').textContent =
+      `Currently on ${active ?? 'an unknown GPU'}, of ${adapters.map((a) => a.vendor).join(' + ')}. ` +
+      'Harmony shares that GPU with whatever you are playing; the integrated one leaves the other free.';
+  }
+
+  /*
+   * Say so unprompted, because nobody would think to look for this setting.
+   *
+   * The reason it matters is not obvious: Chromium cannot composite across GPUs
+   * on Windows, so when Harmony renders on the discrete GPU while its window
+   * sits on a display wired to the integrated one, every frame has to be copied
+   * between adapters. Measured on a hybrid laptop, Harmony was taking ~20% of
+   * the same GPU a game was using, and the desktop compositor another ~22%.
+   */
+  const onDiscrete = multiGpu && active && active !== 'Intel';
+  const showHint = onDiscrete && (state.gpu.adapterPreference ?? 'auto') === 'auto';
+  el.gpuHint.hidden = !showHint;
+  if (showHint) {
+    el.gpuHintText.textContent =
+      `Harmony is running on your ${active} GPU — the one games use. Laptops with two GPUs ` +
+      'usually stream more smoothly with Harmony on the integrated GPU instead, which encodes ' +
+      'video just as well and leaves the other card alone.';
+  }
 
   if (preference === 'off') {
     el.hwEncodingNote.textContent =
@@ -864,7 +909,7 @@ async function startBroadcast() {
     // caches the answer, so this is free once it has settled.
     refreshGpuStatus();
 
-    el.preview.srcObject = stream;
+    applyPreviewVisibility();
     el.broadcastTitle.textContent = `Live as ${state.session.username}`;
     el.broadcastAudioNote.textContent = audioNote;
     el.broadcastStats.textContent = 'Connecting…';
@@ -890,6 +935,37 @@ async function startBroadcast() {
     el.startStream.disabled = false;
     el.startStream.textContent = 'Start streaming';
   }
+}
+
+/**
+ * Paint the preview, or stop painting it.
+ *
+ * Detaching `srcObject` is what actually saves the work: the video element
+ * stops being composited, while the MediaStreamTrack behind it carries on being
+ * captured and encoded, because the RTCRtpSender holds that track independently
+ * of any element displaying it. Hiding with CSS would not do this -- the frames
+ * would still arrive and still be painted.
+ *
+ * Why it matters here more than in an ordinary app: Harmony disables Chromium's
+ * occlusion and background throttling so the encoder keeps running while the
+ * broadcaster looks at what they are sharing. That same setting means a preview
+ * sitting on a second monitor, or behind a fullscreen game, is composited
+ * forever at full rate -- on the very GPU the game is using.
+ */
+function applyPreviewVisibility() {
+  const on = !state.preview.hiddenByUser && state.preview.windowVisible;
+
+  if (on) {
+    if (state.localStream && el.preview.srcObject !== state.localStream) {
+      el.preview.srcObject = state.localStream;
+    }
+  } else if (el.preview.srcObject) {
+    el.preview.srcObject = null;
+  }
+
+  el.previewOff.hidden = on;
+  el.togglePreview.textContent = state.preview.hiddenByUser ? 'Show preview' : 'Hide preview';
+  el.togglePreview.classList.toggle('active', state.preview.hiddenByUser);
 }
 
 /** Plain-language version of WebRTC's qualityLimitationReason. */
@@ -1080,11 +1156,10 @@ async function changeLiveSource(source) {
   state.live.audioMode = audio.mode;
   el.broadcastAudioNote.textContent = audio.note ?? '';
 
-  el.preview.srcObject = new MediaStream([
-    track,
-    ...state.localStream.getAudioTracks(),
-  ]);
-  state.localStream = el.preview.srcObject;
+  state.localStream = new MediaStream([track, ...state.localStream.getAudioTracks()]);
+  // Respects a hidden preview: switching source must not silently turn the
+  // painting back on.
+  applyPreviewVisibility();
 
   await applyLiveQuality();
   updateMonitorButton();
@@ -1841,6 +1916,56 @@ el.changeSource.addEventListener('click', async () => {
   showView('view-picker');
   await loadSources();
   updateAudioNote();
+});
+
+/** Chromium reads the adapter switch once, at startup, so this needs a restart. */
+async function setGpuPreference(value, { restart = false } = {}) {
+  await harmony.settings.set({ gpuPreference: value });
+  state.settings = await harmony.settings.get();
+  el.gpuPreference.value = value;
+  el.gpuHint.hidden = true;
+
+  if (restart && !isBroadcasting()) {
+    await harmony.relaunch().catch(() => {});
+    return;
+  }
+  toast(
+    isBroadcasting()
+      ? 'Saved. It applies next time Harmony starts — restarting now would end your stream.'
+      : 'Saved. Restart Harmony to apply it — click here to restart now.',
+  );
+  const node = document.getElementById('toast');
+  if (node && !isBroadcasting()) {
+    node.classList.add('clickable');
+    node.onclick = () => harmony.relaunch().catch(() => {});
+  }
+}
+
+el.gpuPreference.addEventListener('change', () => setGpuPreference(el.gpuPreference.value));
+el.gpuHintApply.addEventListener('click', () => setGpuPreference('integrated', { restart: true }));
+
+el.togglePreview.addEventListener('click', () => {
+  state.preview.hiddenByUser = !state.preview.hiddenByUser;
+  applyPreviewVisibility();
+  if (state.preview.hiddenByUser) {
+    toast('Preview hidden. You are still live — this only stops Harmony drawing it.');
+  }
+});
+
+// Minimising is the other half: the window is gone, so painting it is pure
+// waste. Automatic, and it does not overwrite a deliberate choice.
+harmony.onWindowVisibility((visible) => {
+  state.preview.windowVisible = visible;
+  applyPreviewVisibility();
+
+  // Mosaic tiles too. Each one is a decoder feeding a composited element, and a
+  // minimised window shows none of it. Pausing leaves the connection up, so
+  // restoring resumes at live rather than reconnecting. The single-stream view
+  // is left alone on purpose -- it has a pause button the user owns.
+  for (const entry of state.mosaic.tiles.values()) {
+    if (visible) entry.video.play().catch(() => {});
+    else entry.video.pause();
+  }
 });
 
 el.monitorToggle.addEventListener('click', () => {

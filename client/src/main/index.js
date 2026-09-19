@@ -28,6 +28,11 @@ if (gpu.applyEncodingPreference(settings.read().hardwareEncoding)) {
   console.warn('[gpu] hardware video encoding disabled by user setting');
 }
 
+// On a two-GPU laptop, which one Harmony runs on decides whether it competes
+// with the game for the same adapter. See gpu.js.
+const adapter = gpu.applyAdapterPreference(settings.read().gpuPreference);
+if (adapter) console.log(`[gpu] preferring the ${adapter} GPU`);
+
 // The UI is served over a custom scheme rather than file://, because a file://
 // document is an opaque origin: ES modules and AudioWorklet.addModule() both
 // fail CORS there. Marking the scheme secure also makes it a secure context,
@@ -102,6 +107,26 @@ function createWindow() {
 
   win.once('ready-to-show', () => win.show());
   win.loadURL('harmony://app/index.html');
+
+  /**
+   * Tell the renderer when the window is out of sight.
+   *
+   * Chromium would normally stop painting a minimised window by itself, but the
+   * three anti-throttling switches at the top of this file deliberately stop it
+   * doing that -- they are what keeps the encoder running while the broadcaster
+   * is looking at the thing they are sharing. The cost is that the preview keeps
+   * being composited forever, at full rate, on a machine that is usually also
+   * running a game. So take responsibility for it explicitly: the renderer
+   * detaches the preview here and reattaches on restore, while the capture and
+   * the encoder carry on untouched.
+   */
+  const sendVisibility = (visible) => {
+    if (!win?.isDestroyed()) win.webContents.send('window:visibility', visible);
+  };
+  win.on('minimize', () => sendVisibility(false));
+  win.on('restore', () => sendVisibility(true));
+  win.on('show', () => sendVisibility(true));
+  win.on('hide', () => sendVisibility(false));
 
   // In a dev run, renderer errors would otherwise vanish into DevTools nobody
   // has open. Warnings and errors only -- this is not a console mirror.
@@ -235,6 +260,7 @@ handle('audio:stop', () => {
 handle('gpu:status', async () => ({
   ...(await gpu.status()),
   preference: settings.read().hardwareEncoding,
+  adapterPreference: settings.read().gpuPreference,
 }));
 
 // Changing the encoder preference means changing a Chromium switch, which is

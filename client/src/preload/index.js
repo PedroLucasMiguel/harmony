@@ -24,6 +24,16 @@ contextBridge.exposeInMainWorld('harmony', {
 
   relaunch: invoke('app:relaunch'),
 
+  /**
+   * Fires when the window is minimised or restored.
+   * @param {(visible: boolean) => void} handler
+   */
+  onWindowVisibility(handler) {
+    const listener = (_event, visible) => handler(visible);
+    ipcRenderer.on('window:visibility', listener);
+    return () => ipcRenderer.removeListener('window:visibility', listener);
+  },
+
   sources: {
     list: invoke('sources:list'),
     processes: invoke('sources:processes'),

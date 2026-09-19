@@ -98,17 +98,79 @@ async function run() {
     `rgb(${labelColour.rgb.join(',')}), luminance ${labelColour.lum}`,
   );
 
-  // The live list used to grow the page instead of scrolling itself, pushing
-  // the username box off the top of the window.
-  const liveList = await cdp.evaluate(`
-    const ul = document.getElementById('live-items');
-    const s = getComputedStyle(ul);
-    return { overflowY: s.overflowY, maxHeight: s.maxHeight };
+  // The connect form has to fit the REAL window, with every optional field
+  // showing. Checking this at an emulated 1180x800 passed while the actual app
+  // clipped its buttons, because the window is 1180x800 *outside* -- the title
+  // bar takes ~39px and the page only gets 761. So measure the window the app
+  // actually opens, with no viewport override in play.
+  const natural = await cdp.evaluate(`
+    document.getElementById('password-field').hidden = false;
+    document.getElementById('gpu-preference-field').hidden = false;
+    document.querySelector('.options').open = false;
+    await new Promise(r => setTimeout(r, 250));
+    const card = document.querySelector('.connect-card');
+    const inView = (id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= window.innerHeight;
+    };
+    return {
+      size: window.innerWidth + 'x' + window.innerHeight,
+      cardScrolls: card.scrollHeight > card.clientHeight + 2,
+      formHeight: Math.round(card.scrollHeight),
+      available: card.clientHeight,
+      continueVisible: inView('continue'),
+      testVisible: inView('test-connection'),
+    };
   `);
   check(
-    'the live list scrolls on its own rather than the page',
-    liveList.overflowY === 'auto' && liveList.maxHeight !== 'none',
-    `overflow-y: ${liveList.overflowY}, max-height: ${liveList.maxHeight}`,
+    'the connect form fits the real window without scrolling',
+    !natural.cardScrolls && natural.continueVisible && natural.testVisible,
+    `${natural.formHeight}px of form in ${natural.available}px at ${natural.size}` +
+      (natural.cardScrolls ? ' — SCROLLS' : '') +
+      (natural.testVisible ? '' : ', "Test my connection" CLIPPED'),
+  );
+
+  // The live list used to grow the page instead of scrolling itself, pushing
+  // the username box off the top of the window. Assert the behaviour rather
+  // than the mechanism: fill it with more people than could ever fit, and check
+  // the page itself still does not scroll -- at a wide window, where the list
+  // sits beside the form, and a narrow one, where it drops underneath.
+  const crowd = async (w, h) => {
+    await cdp.setViewport(w, h);
+    await sleep(500);
+    return cdp.evaluate(`
+      const list = document.getElementById('live-list');
+      const ul = document.getElementById('live-items');
+      list.hidden = false;
+      ul.replaceChildren(...Array.from({ length: 30 }, (_, i) => {
+        const li = document.createElement('li');
+        const who = document.createElement('span'); who.className = 'who'; who.textContent = 'person' + i;
+        li.append(who); return li;
+      }));
+      await new Promise(r => setTimeout(r, 250));
+      const form = document.getElementById('username').getBoundingClientRect();
+      return {
+        pageScrolls: document.documentElement.scrollHeight > window.innerHeight + 2,
+        listScrolls: ul.scrollHeight > ul.clientHeight + 2,
+        usernameVisible: form.top >= 0 && form.bottom <= window.innerHeight,
+        beside: list.getBoundingClientRect().left > form.right,
+      };
+    `);
+  };
+
+  for (const [w, h, label] of [[1180, 800, 'default'], [760, 620, 'narrow']]) {
+    const r = await crowd(w, h);
+    check(
+      `30 live users do not push the form off screen at ${w}x${h} (${label})`,
+      !r.pageScrolls && r.listScrolls && r.usernameVisible,
+      `${r.beside ? 'list beside the form' : 'list below the form'}, ` +
+        `list scrolls: ${r.listScrolls}, page scrolls: ${r.pageScrolls}, username visible: ${r.usernameVisible}`,
+    );
+  }
+  await cdp.clearViewport();
+  await sleep(400);
+  await cdp.evaluate(
+    "document.getElementById('live-items').replaceChildren(); document.getElementById('live-list').hidden = true; return true;",
   );
 
   // The field must follow the server, not a fixed default: shown when the

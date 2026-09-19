@@ -766,6 +766,57 @@ async function run() {
     survived?.ready ? 'still live after closing the mosaic' : 'DROPPED',
   );
 
+  // ---------------- hiding the preview ----------------
+  //
+  // Painting the preview is GPU work piled on top of whatever is being shared,
+  // which on a gaming machine is the thing that makes a high frame rate feel
+  // low. Detaching srcObject stops that work -- and the whole point is that it
+  // must NOT stop the stream, because the sender holds the track independently
+  // of any element showing it.
+  // The server is the witness here rather than local stats: what matters is
+  // that media keeps arriving at MediaMTX, not merely that the sender claims to
+  // be encoding.
+  const bytesBefore = (await mtxPaths()).find((p) => p.name === selfName)?.bytesReceived ?? 0;
+
+  const hidden = await vwCdp.evaluate(`
+    document.getElementById('toggle-preview').click();
+    await new Promise(r => setTimeout(r, 1000));
+    const v = document.getElementById('preview');
+    return {
+      srcDetached: v.srcObject === null,
+      placeholderShown: !document.getElementById('preview-off').hidden,
+      label: document.getElementById('toggle-preview').textContent.trim(),
+    };
+  `);
+  check(
+    'hiding the preview detaches the video element',
+    hidden.srcDetached === true && hidden.placeholderShown === true && hidden.label === 'Show preview',
+    `srcObject=${hidden.srcDetached ? 'null' : 'STILL ATTACHED'}, button says "${hidden.label}"`,
+  );
+
+  await sleep(4000);
+  const afterHide = (await mtxPaths()).find((p) => p.name === selfName);
+  const gained = (afterHide?.bytesReceived ?? 0) - bytesBefore;
+  check(
+    'hiding the preview does NOT interrupt the stream',
+    Boolean(afterHide?.ready) && gained > 0,
+    afterHide?.ready
+      ? `server received +${(gained / 1024).toFixed(0)} KB while the preview was hidden`
+      : 'DROPPED',
+  );
+
+  const reshown = await vwCdp.evaluate(`
+    document.getElementById('toggle-preview').click();
+    await new Promise(r => setTimeout(r, 1200));
+    const v = document.getElementById('preview');
+    return { attached: !!v.srcObject, playing: v.videoWidth > 0, label: document.getElementById('toggle-preview').textContent.trim() };
+  `);
+  check(
+    'showing it again reattaches the same stream',
+    reshown.attached === true && reshown.playing === true && reshown.label === 'Hide preview',
+    `${reshown.playing ? 'painting again' : 'BLANK'}, button says "${reshown.label}"`,
+  );
+
   // ---------------- responsive layout ----------------
 
   await vwCdp.evaluate("document.getElementById('broadcast-watch').click(); return true;");

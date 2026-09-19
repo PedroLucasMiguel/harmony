@@ -49,6 +49,36 @@ function applyEncodingPreference(preference) {
   return true;
 }
 
+/**
+ * Which GPU Harmony itself should run on, on a laptop that has two.
+ *
+ * This exists because of a measurement. On a machine playing a game on the
+ * discrete GPU while streaming, Harmony's share of that GPU was:
+ *
+ *     videoencode 13.0%   3d 2.7%   videodecode 2.7%   copy 1.6%   = ~20%
+ *
+ * ...on the same adapter the game was using for its 22.8%. Moving Harmony to
+ * the integrated GPU hands all of that back. Intel Quick Sync encodes H.264
+ * perfectly well, so the stream does not suffer for it -- verified: with this
+ * switch the active adapter becomes the iGPU and `video_encode` still reports
+ * `enabled`.
+ *
+ * It is not a free win in every case: capturing a game that renders on the
+ * other GPU means the frames have to cross adapters. Which way round is better
+ * depends on the machine, so this is an option rather than a default.
+ */
+function applyAdapterPreference(preference) {
+  if (preference === 'integrated') {
+    app.commandLine.appendSwitch('force_low_power_gpu');
+    return 'integrated';
+  }
+  if (preference === 'dedicated') {
+    app.commandLine.appendSwitch('force_high_performance_gpu');
+    return 'dedicated';
+  }
+  return null;
+}
+
 function snapshot() {
   let features = {};
   try {
@@ -105,15 +135,45 @@ function watch() {
  */
 async function status({ timeoutMs = SETTLE_TIMEOUT_MS } = {}) {
   cached = snapshot();
-  if (cached.encodeAccelerated) return cached;
-
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-    cached = snapshot();
-    if (cached.encodeAccelerated) break;
+  if (!cached.encodeAccelerated) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      cached = snapshot();
+      if (cached.encodeAccelerated) break;
+    }
   }
-  return cached;
+  return { ...cached, adapters: await adapters() };
 }
 
-module.exports = { status, watch, applyEncodingPreference, isAccelerated };
+const VENDORS = { 0x10de: 'NVIDIA', 0x1002: 'AMD', 0x8086: 'Intel', 0x1414: 'Microsoft' };
+
+/**
+ * The GPUs present, so the UI can offer to move Harmony between them only when
+ * there is somewhere to move it to. Microsoft's Basic Render Driver is filtered
+ * out: it is a software fallback, not a second GPU.
+ */
+let adapterCache = null;
+
+async function adapters() {
+  if (adapterCache) return adapterCache;
+  try {
+    // 'complete' rather than 'basic': only the complete report carries the
+    // `active` flag, and without it we cannot tell which GPU Chromium actually
+    // chose -- which is the entire question worth asking here.
+    const info = await app.getGPUInfo('complete');
+    const list = (info.gpuDevice ?? [])
+      .filter((g) => g.vendorId !== 0x1414) // Microsoft Basic Render Driver
+      .map((g) => ({
+        vendor: VENDORS[g.vendorId] ?? `0x${(g.vendorId ?? 0).toString(16)}`,
+        active: Boolean(g.active),
+      }));
+    // Only worth caching once it is actually informative.
+    if (list.some((a) => a.active)) adapterCache = list;
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+module.exports = { status, watch, applyEncodingPreference, applyAdapterPreference, isAccelerated };

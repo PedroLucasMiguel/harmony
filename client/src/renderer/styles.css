@@ -184,6 +184,62 @@ select:focus {
   width: auto;
 }
 
+/* ---------- collapsed options ---------- */
+
+.options {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.options > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Both are needed to replace the default disclosure triangle: one for
+     Chromium's shadow marker, one for the standard property. */
+  list-style: none;
+}
+.options > summary::-webkit-details-marker {
+  display: none;
+}
+.options > summary::before {
+  content: '▸';
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.options[open] > summary::before {
+  transform: rotate(90deg);
+}
+.options > summary:hover {
+  color: var(--text);
+}
+.options-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 14px;
+}
+
+/* An unprompted suggestion, not an error: quieter than .error, still visible. */
+.hint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  background: rgba(91, 140, 255, 0.08);
+  border: 1px solid rgba(91, 140, 255, 0.35);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
 /* A field the server has just rejected. */
 .field.bad input {
   border-color: var(--danger);
@@ -206,15 +262,40 @@ select:focus {
   overflow-y: auto;
 }
 
+/*
+ * Form on the left, who is live on the right.
+ *
+ * The form grew -- server, password, username, clips, GPU encoding, GPU choice
+ * -- until a list underneath it started below the fold. Beside it, the list is
+ * visible without scrolling past everything else, and the two columns collapse
+ * back to one when the window is too narrow to hold both.
+ */
+.connect-layout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 36px;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 24px;
+  min-height: 0;
+}
+
 .connect-card {
   width: 420px;
-  max-width: calc(100vw - 48px);
-  /* Never taller than the window: the live list inside it scrolls instead. */
+  max-width: 100%;
+  /* Never taller than the window; with every optional field showing (password,
+     GPU choice, the hybrid-GPU hint) it can be, and then it scrolls itself. */
   max-height: 100%;
+  overflow-y: auto;
+  /* Reserve the scrollbar's width whether or not it is there, so the form does
+     not shift sideways the moment an optional field appears. */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 32px 0;
+  gap: 16px;
+  padding: 4px 4px 4px 0;
+  flex: none;
 }
 
 .brand p {
@@ -228,10 +309,15 @@ select:focus {
  * thing that disappeared. Now only the list scrolls, and the form stays put.
  */
 .live-list {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
+  width: 300px;
+  flex: none;
+  align-self: stretch;
+  max-height: 100%;
+  border-left: 1px solid var(--border);
+  padding-left: 32px;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   min-height: 0;
 }
 .live-list h2 {
@@ -248,10 +334,10 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* The list, and only the list, is what scrolls. `min-height: 0` is the part
+     that makes that true inside a flex column -- without it the ul refuses to
+     shrink below its content and pushes the page instead. */
   overflow-y: auto;
-  /* Enough for about five rows, so it is obviously a list you scroll rather
-     than a list that was cut off. */
-  max-height: 260px;
   min-height: 0;
   /* Room for the scrollbar so it never sits on top of the viewer counts. */
   padding-right: 2px;
@@ -319,17 +405,35 @@ select:focus {
   background: var(--muted);
   flex: none;
 }
+/*
+ * The pulse runs for as long as anything is live, so it must not cost a repaint
+ * every frame. Animating `box-shadow` did: box-shadow is a painted property, so
+ * each step re-rasterised the element. A pseudo-element animating only
+ * `transform` and `opacity` is handled by the compositor, which can run it
+ * without touching the main thread -- on a machine that is usually also running
+ * a game, that difference is free to take.
+ */
 .dot.live {
   background: var(--live);
-  box-shadow: 0 0 0 0 rgba(63, 208, 127, 0.6);
+  position: relative;
+}
+.dot.live::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(63, 208, 127, 0.55);
   animation: pulse 2s infinite;
 }
 @keyframes pulse {
-  70% {
-    box-shadow: 0 0 0 7px rgba(63, 208, 127, 0);
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
   }
+  70%,
   100% {
-    box-shadow: 0 0 0 0 rgba(63, 208, 127, 0);
+    transform: scale(2.6);
+    opacity: 0;
   }
 }
 
@@ -795,6 +899,33 @@ input[type='range']::-webkit-slider-thumb {
   .bar,
   .bar.bottom {
     padding: 12px 14px;
+  }
+
+  /* Not enough width for two columns: put the list back underneath, where it
+     was, and cap it so it cannot run away with the page. */
+  .connect-layout {
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .connect-card {
+    max-height: none;
+    overflow-y: visible;
+  }
+  .live-list {
+    width: 420px;
+    max-width: 100%;
+    align-self: auto;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding-left: 0;
+    padding-top: 16px;
+    margin-top: 18px;
+  }
+  .live-list ul {
+    max-height: 260px;
   }
 
   .source-grid {
