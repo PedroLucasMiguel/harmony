@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld('harmony', {
     set: invoke('settings:set'),
   },
 
+  gpu: {
+    status: invoke('gpu:status'),
+  },
+
+  relaunch: invoke('app:relaunch'),
+
   sources: {
     list: invoke('sources:list'),
     processes: invoke('sources:processes'),

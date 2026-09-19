@@ -24,7 +24,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * doing at least once per release, because asar packaging is what breaks native
  * module loading.
  */
-export function launchApp({ port, userDataDir, onStderr }) {
+export function launchApp({ port, userDataDir, onStderr, extraArgs = [] }) {
   const env = { ...process.env };
   // Some shells export this; it would run Electron as plain Node and the app
   // would never start.
@@ -35,6 +35,9 @@ export function launchApp({ port, userDataDir, onStderr }) {
   const args = packaged ? [] : [appDir];
   args.push(`--remote-debugging-port=${port}`);
   if (userDataDir) args.push(`--user-data-dir=${userDataDir}`);
+  // Chromium switches a particular test wants, e.g. forcing software encoding
+  // so a run can be compared against the hardware one.
+  args.push(...extraArgs);
 
   // HARMONY_MAP_HOST=host:ip pins a hostname to an address for this run. Needed
   // to test a public hostname from inside the server's own LAN when the router

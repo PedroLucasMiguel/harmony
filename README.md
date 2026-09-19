@@ -132,6 +132,10 @@ one stream per tile you open.
   25 Mbps, and a **priority** switch deciding what the encoder sacrifices when the
   budget runs out — *Sharp* keeps resolution so text stays readable, *Smooth*
   keeps frame rate so motion stays fluid.
+- **GPU encoding** (NVENC, AMF, Quick Sync) is used automatically where the
+  driver offers it — measured at 18–46% less encode time — with software H.264
+  as the automatic fallback. The stats line says which you are getting, and a
+  toggle forces software if a driver ever produces a corrupt stream.
 
 ### Watching
 
@@ -318,6 +322,60 @@ something else.
 `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE` takes a single target. That
 platform limit is why the audio-exclusion picker is single-select rather than a
 list of checkboxes — not a simplification.
+</details>
+
+<details>
+<summary><b>NVENC, AMF and Quick Sync are already in use — there is nothing to integrate</b></summary>
+
+This gets asked a lot, so it is worth writing down with numbers. On Windows,
+Chromium already routes WebRTC's H.264 encoding through Media Foundation's
+VideoEncodeAccelerator, which is a front end for whichever vendor encoder the
+driver provides: **NVENC** on NVIDIA, **AMF/VCE** on AMD, **Quick Sync** on
+Intel. There is no flag to switch on and no vendor SDK to link against.
+
+Measured here by running the identical encode twice, once with Chromium's
+hardware encoding disabled (1920×1080, H.264, `contentHint: 'detail'`, 8 Mbps
+ceiling):
+
+| Source | GPU | CPU only | Difference |
+| --- | --- | --- | --- |
+| Synthetic canvas, heavy motion | 5.3 ms/frame | 9.9 ms/frame | **−46%** |
+| Real screen share | 8.1 ms/frame | 9.9 ms/frame | **−18%** |
+
+The margin depends on the content — a busy frame is where the GPU pulls ahead.
+Hardware **decoding** is on by default for viewers too.
+
+**Software H.264 is the automatic fallback.** Chromium drops to OpenH264 on the
+CPU when no hardware encoder exists or it fails to initialise, so a machine with
+no usable GPU encoder still streams; it just spends more CPU doing it. Verified
+by forcing the software path and checking it still encodes and sends.
+
+**What Chromium will not tell you is which encoder a given stream ended up on.**
+`encoderImplementation` is in the WebRTC stats spec, but it is absent from this
+Electron build's `outbound-rtp` — confirmed by dumping every field the stats
+object exposes, not by assuming. So the client reports the *capability*, from
+`app.getGPUFeatureStatus()`, and the broadcast stats line ends in `GPU encode` or
+`CPU encode`. A capability is an honest thing to report; a guess is not.
+
+**One trap, which this project fell into before catching it.**
+`getGPUFeatureStatus()` answers `disabled_software` until the GPU process has
+reported, and that takes about 300 ms after the window loads — measured:
+
+```
+  17ms  app ready              video_encode=disabled_software
+  66ms  did-finish-load        video_encode=disabled_software   <- the UI asks here
+ 170ms  +100ms                 video_encode=disabled_software
+ 382ms  +300ms                 video_encode=enabled
+```
+
+The client asks during start-up, which lands in the middle of that, so reading
+once and keeping the answer reported "no GPU encoder" for the entire session on
+a machine that was encoding on its GPU the whole time — Task Manager showing
+18% Video Encode while the app insisted there was none. It now waits for the GPU
+process to report (bounded, since a machine with no hardware encoder never
+flips), caches the settled answer, and re-checks when a broadcast starts.
+
+If you go measuring this yourself, do not trust a single early read.
 </details>
 
 <details>

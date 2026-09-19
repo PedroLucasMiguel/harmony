@@ -61,6 +61,17 @@
           </span>
         </label>
 
+        <label class="check">
+          <input type="checkbox" id="hw-encoding" checked />
+          <span>
+            Encode on the GPU
+            <small id="hw-encoding-note"
+              >Uses NVENC, AMF or Quick Sync when your graphics driver offers one. Turn it off only
+              if your stream looks corrupt to viewers.</small
+            >
+          </span>
+        </label>
+
         <button class="primary" id="continue">Continue</button>
         <button class="ghost small" id="test-connection">Test my connection</button>
         <p class="error" id="connect-error" hidden></p>

@@ -23,6 +23,10 @@ const DEFAULTS = {
   audioInputId: '',
   // Rolling clip buffer. Off by default: it is memory the user did not ask for.
   clipsEnabled: false,
+  // GPU video encoding (NVENC / AMF / Quick Sync). 'auto' leaves Chromium to
+  // use it, which it does by default and which is measurably faster; 'off'
+  // forces software H.264, for a machine whose driver misbehaves.
+  hardwareEncoding: 'auto',
   // What to do when a window is shared but per-application audio is not
   // available (non-Windows, or the native module is missing).
   //   'silent' -- send no audio, never leak other apps' sound

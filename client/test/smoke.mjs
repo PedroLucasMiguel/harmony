@@ -143,6 +143,66 @@ async function run() {
       : `${passwordUi.server} ${passwordUi.required ? 'requires a password -> field shown' : 'is open -> field hidden'}`,
   );
 
+  // Hardware H.264 encoding (NVENC / AMF / Quick Sync) is Chromium's default on
+  // Windows -- there is no vendor SDK to wire up. What matters is that the app
+  // reports the capability honestly and never leaves the user stuck: when no GPU
+  // encoder exists, software H.264 still has to work.
+  const gpuStatus = await cdp.evaluate(`
+    const { harmony } = await import('./bridge.js');
+    const s = await harmony.gpu.status();
+    return { ...s, note: document.getElementById('hw-encoding-note').textContent.slice(0, 80),
+             checked: document.getElementById('hw-encoding').checked };
+  `);
+  check(
+    'GPU encode capability is reported',
+    typeof gpuStatus.encodeAccelerated === 'boolean' && gpuStatus.videoEncode !== 'unknown',
+    `video_encode=${gpuStatus.videoEncode}, video_decode=${gpuStatus.videoDecode}, preference=${gpuStatus.preference}`,
+  );
+  check(
+    'the encoder toggle matches the saved preference',
+    gpuStatus.checked === (gpuStatus.preference !== 'off'),
+    `checkbox=${gpuStatus.checked}, preference=${gpuStatus.preference}`,
+  );
+
+  // The bug this exists to catch: boot() asks about the GPU ~66ms in, but the
+  // GPU process does not report for ~300ms, so a one-shot read returns
+  // "disabled_software" and the UI claimed "no GPU encoder" for the whole
+  // session on a machine that was encoding on its GPU throughout. Compare what
+  // is on screen against a reading taken now, long after things have settled.
+  const settled = await cdp.evaluate(`
+    const { harmony } = await import('./bridge.js');
+    const fresh = await harmony.gpu.status();
+    const note = document.getElementById('hw-encoding-note').textContent;
+    return {
+      fresh: fresh.videoEncode,
+      accelerated: fresh.encodeAccelerated,
+      preference: fresh.preference,
+      claimsNoEncoder: /No GPU encoder available/i.test(note),
+    };
+  `);
+  check(
+    'the UI does not claim "no GPU encoder" on a machine that has one',
+    !(settled.accelerated && settled.claimsNoEncoder),
+    settled.accelerated
+      ? `video_encode=${settled.fresh}, and the connect screen agrees`
+      : `no hardware encoder here (video_encode=${settled.fresh}) — nothing to disagree about`,
+  );
+
+  // H.264 must be offered whatever the GPU situation is -- it is the only codec
+  // the server and every viewer agree on, and the software encoder is the
+  // fallback when hardware is unavailable or turned off.
+  const h264 = await cdp.evaluate(`
+    const caps = RTCRtpSender.getCapabilities('video');
+    const send = caps.codecs.filter(c => c.mimeType === 'video/H264');
+    const recv = RTCRtpReceiver.getCapabilities('video').codecs.filter(c => c.mimeType === 'video/H264');
+    return { send: send.length, recv: recv.length, profiles: [...new Set(send.map(c => c.sdpFmtpLine?.match(/profile-level-id=([0-9a-f]+)/i)?.[1]).filter(Boolean))] };
+  `);
+  check(
+    'H.264 is available to both send and receive',
+    h264.send > 0 && h264.recv > 0,
+    `${h264.send} send / ${h264.recv} receive profiles (${h264.profiles.join(', ')})`,
+  );
+
   const worklet = await cdp.evaluate(
     "const c = new AudioContext({ sampleRate: 48000 }); try { await c.audioWorklet.addModule('pcm-worklet.js'); return 'ok'; } catch (e) { return e.message; } finally { c.close(); }",
   );

@@ -444,6 +444,28 @@ matters for packaging: it resolves its `.node` file from the filesystem via the
 [client/electron-builder.yml](client/electron-builder.yml) is what makes it work
 in a packaged build — if you change that file, keep the entry.
 
+### Hardware encoding
+
+Nothing to configure. On Windows, Chromium routes WebRTC's H.264 encoding
+through Media Foundation, which uses NVENC, AMF or Quick Sync depending on the
+driver — measured at 18–46% less encode time than the software path, with the
+margin depending on how busy the picture is. Hardware decoding is on for viewers
+too.
+
+Software H.264 (OpenH264) is the automatic fallback when no hardware encoder is
+available, so a machine without one still works.
+
+The **Encode on the GPU** checkbox on the connect screen turns it off, for the
+one case that justifies it: a driver that produces a stream looking fine locally
+and corrupt to every viewer. It is a Chromium command-line switch, so it applies
+on restart rather than live, and the app offers the restart.
+
+`encoderImplementation` is absent from this Electron build's WebRTC stats, so
+the app reports the GPU's *capability* rather than claiming to know which
+encoder a given stream used. If you measure this yourself, query
+`getGPUFeatureStatus()` only after a window exists — before that it reports
+`disabled_software` regardless of the truth.
+
 ### First run
 
 The client asks for the control-server address — `https://stream.example.com:8444`,

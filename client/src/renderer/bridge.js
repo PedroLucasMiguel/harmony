@@ -29,6 +29,12 @@ export const harmony = {
     set: lift(raw.settings.set),
   },
 
+  gpu: {
+    status: lift(raw.gpu.status),
+  },
+
+  relaunch: lift(raw.relaunch),
+
   sources: {
     list: lift(raw.sources.list),
     processes: lift(raw.sources.processes),

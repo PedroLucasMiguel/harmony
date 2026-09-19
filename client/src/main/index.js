@@ -7,6 +7,7 @@ const sources = require('./sources');
 const appAudio = require('./app-audio');
 const api = require('./api');
 const clips = require('./clips');
+const gpu = require('./gpu');
 
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
 const MODULES_DIR = path.join(__dirname, '..', '..', 'node_modules');
@@ -19,6 +20,13 @@ const MODULES_DIR = path.join(__dirname, '..', '..', 'node_modules');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
+// GPU H.264 encoding (NVENC / AMF / Quick Sync) is already the default -- see
+// gpu.js. This only ever turns it OFF, for a machine whose driver produces a
+// broken stream. Switches are read once at startup, hence the restart.
+if (gpu.applyEncodingPreference(settings.read().hardwareEncoding)) {
+  console.warn('[gpu] hardware video encoding disabled by user setting');
+}
 
 // The UI is served over a custom scheme rather than file://, because a file://
 // document is an opaque origin: ES modules and AudioWorklet.addModule() both
@@ -121,6 +129,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerProtocol();
+  gpu.watch();
 
   // getDisplayMedia() resolves to whatever the user already chose in our picker.
   // Passing {} denies the request.
@@ -220,6 +229,19 @@ handle('clips:reveal', (_e, file) => clips.reveal(file));
 
 handle('audio:stop', () => {
   appAudio.stop();
+  return true;
+});
+
+handle('gpu:status', async () => ({
+  ...(await gpu.status()),
+  preference: settings.read().hardwareEncoding,
+}));
+
+// Changing the encoder preference means changing a Chromium switch, which is
+// only read at startup.
+handle('app:relaunch', () => {
+  app.relaunch();
+  app.quit();
   return true;
 });
 

@@ -102,6 +102,8 @@ const el = {
   addStreamClose: $('add-stream-close'),
 
   clipsEnabled: $('clips-enabled'),
+  hwEncoding: $('hw-encoding'),
+  hwEncodingNote: $('hw-encoding-note'),
   broadcastClip: $('broadcast-clip'),
   watchClip: $('watch-clip'),
 
@@ -171,6 +173,9 @@ const state = {
 
   /** Set once the server says it wants a password. */
   passwordRequired: false,
+
+  /** GPU encode/decode capability, from the main process. */
+  gpu: null,
 
   /** Mosaic mode: one WHEP connection per tile. See freshMosaic(). */
   mosaic: freshMosaic(),
@@ -270,10 +275,49 @@ async function boot() {
   state.audioAvailable = availability.available;
   state.audioUnavailableReason = availability.reason;
 
+  await refreshGpuStatus();
+
   if (state.settings.serverUrl) {
     await probeServer();
     refreshLiveList();
   }
+}
+
+/**
+ * What the GPU is doing, and what the user has asked for.
+ *
+ * Chromium will not tell us which encoder a given stream ended up on -- the
+ * `encoderImplementation` stat is in the spec but absent from this Electron
+ * build. So report the capability, which is the honest thing we can know, and
+ * say plainly when the user has turned it off themselves.
+ */
+async function refreshGpuStatus() {
+  try {
+    state.gpu = await harmony.gpu.status();
+  } catch {
+    state.gpu = null;
+    return;
+  }
+  const { encodeAccelerated, decodeAccelerated, preference, videoEncode } = state.gpu;
+  el.hwEncoding.checked = preference !== 'off';
+
+  if (preference === 'off') {
+    el.hwEncodingNote.textContent =
+      'Off — encoding on the CPU. Turn this back on unless viewers saw a corrupt picture.';
+  } else if (encodeAccelerated) {
+    el.hwEncodingNote.textContent = `On — your GPU is encoding${
+      decodeAccelerated ? ' and decoding' : ''
+    }. NVENC, AMF or Quick Sync, whichever your driver provides.`;
+  } else {
+    el.hwEncodingNote.textContent = `No GPU encoder available (${videoEncode}) — falling back to software H.264, which is slower but works everywhere.`;
+  }
+}
+
+/** A short label for the stats line. */
+function encoderLabel() {
+  if (!state.gpu) return null;
+  if (state.gpu.preference === 'off') return 'CPU encode';
+  return state.gpu.encodeAccelerated ? 'GPU encode' : 'CPU encode (no GPU encoder)';
 }
 
 /**
@@ -815,6 +859,11 @@ async function startBroadcast() {
     // actually sees us live rather than trusting the 201.
     await confirmLive();
 
+    // Re-read rather than trusting what boot() saw: the GPU process reports
+    // roughly 300ms after the window loads, and boot() runs before that. Main
+    // caches the answer, so this is free once it has settled.
+    refreshGpuStatus();
+
     el.preview.srcObject = stream;
     el.broadcastTitle.textContent = `Live as ${state.session.username}`;
     el.broadcastAudioNote.textContent = audioNote;
@@ -861,6 +910,7 @@ async function updateBroadcastStats() {
     s.rtt != null ? `${s.rtt} ms` : null,
     s.availableKbps ? `link ${(s.availableKbps / 1000).toFixed(1)} Mbps` : null,
     s.encodeMs != null ? `encode ${s.encodeMs.toFixed(1)} ms` : null,
+    encoderLabel(),
   ].filter(Boolean);
   el.broadcastStats.textContent = bits.join('  ·  ') || 'Connecting…';
 
@@ -1832,6 +1882,34 @@ el.clipsEnabled.addEventListener('change', () => {
       ? `Clips on — the last ${CLIP_SECONDS}s of each stream will be kept in memory.`
       : 'Clips off.',
   );
+});
+
+/**
+ * The encoder choice is a Chromium command-line switch, and those are read once
+ * at startup -- so unlike every other setting here, this one cannot apply to
+ * the running process. Say so, and offer the restart rather than leaving the
+ * checkbox looking like it did something.
+ */
+el.hwEncoding.addEventListener('change', async () => {
+  const preference = el.hwEncoding.checked ? 'auto' : 'off';
+  await harmony.settings.set({ hardwareEncoding: preference });
+  state.settings = await harmony.settings.get();
+
+  el.hwEncodingNote.textContent =
+    preference === 'off'
+      ? 'Will encode on the CPU after a restart.'
+      : 'Will use the GPU again after a restart.';
+
+  if (isBroadcasting()) {
+    toast('Saved. It applies next time Harmony starts — restarting now would end your stream.');
+    return;
+  }
+  toast('Saved. Restart Harmony to apply it — click here to restart now.');
+  const node = document.getElementById('toast');
+  if (node) {
+    node.classList.add('clickable');
+    node.onclick = () => harmony.relaunch().catch(() => {});
+  }
 });
 
 el.broadcastClip.addEventListener('click', () =>
