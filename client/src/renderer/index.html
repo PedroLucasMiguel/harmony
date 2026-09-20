@@ -82,6 +82,18 @@
             </label>
 
             <label class="check">
+              <input type="checkbox" id="pause-preview-unfocused" checked />
+              <span>
+                Pause the preview while I am in another window
+                <small
+                  >The preview is the most expensive thing Harmony draws, and it shows the screen
+                  you are already looking at. Pausing it while you are in a game costs you nothing
+                  and gives the frames back. Your stream is unaffected either way.</small
+                >
+              </span>
+            </label>
+
+            <label class="check">
               <input type="checkbox" id="hw-encoding" checked />
               <span>
                 Encode on the GPU
@@ -205,9 +217,9 @@
 
       <div class="stage">
         <video id="preview" autoplay muted playsinline></video>
-        <div class="waiting" id="preview-off" hidden>
-          <p><strong>Preview hidden</strong></p>
-          <p class="muted">
+        <div class="waiting clickable" id="preview-off" hidden>
+          <p><strong id="preview-off-title">Preview hidden</strong></p>
+          <p class="muted" id="preview-off-text">
             You are still live. Drawing the preview costs GPU work on top of the game you are
             sharing, so hiding it is free performance.
           </p>

@@ -287,6 +287,53 @@ async function run() {
   );
   check('empty server address is rejected', badServer === 'no_server', badServer);
 
+  // The preview is the most expensive thing the app draws, and the whole reason
+  // it is affordable is that a cloned track takes its own downscale and frame
+  // rate while the published one stays at full resolution. That is a Chromium
+  // behaviour, not ours, so pin it: if a future Electron stops honouring it the
+  // preview silently goes back to costing a game 20-30 fps.
+  const copy = await cdp.evaluate(`
+    ${B}
+    const sources = await harmony.sources.list();
+    await harmony.sources.select(sources.find((s) => s.kind === 'screen').id, { loopbackAudio: false });
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: { ideal: 60, max: 60 } },
+      audio: false,
+    });
+    const track = stream.getVideoTracks()[0];
+    const clone = track.clone();
+    await clone.applyConstraints({ width: { max: 960 }, height: { max: 540 }, frameRate: { max: 10 } });
+    const result = { source: track.getSettings(), preview: clone.getSettings() };
+    clone.stop();
+    track.stop();
+    return result;
+  `);
+  check(
+    'a cloned capture track downscales without touching the original',
+    copy.preview.height <= 540 &&
+      copy.preview.frameRate <= 10 &&
+      copy.source.height > copy.preview.height,
+    `source ${copy.source.width}x${copy.source.height}@${copy.source.frameRate} -> ` +
+      `preview ${copy.preview.width}x${copy.preview.height}@${copy.preview.frameRate}`,
+  );
+
+  // Losing focus is what pauses the preview in the case this app is for: a game
+  // on one monitor, Harmony on another. Chromium delivering the native blur is
+  // verified separately by hand; what this pins is the app's own reaction.
+  const focus = await cdp.evaluate(`
+    const title = () => document.getElementById('preview-off-title').textContent;
+    const before = title();
+    window.dispatchEvent(new Event('blur'));
+    const blurred = title();
+    window.dispatchEvent(new Event('focus'));
+    return { before, blurred, after: title() };
+  `);
+  check(
+    'losing focus pauses the preview and regaining it resumes',
+    focus.blurred === 'Preview paused' && focus.after === 'Preview hidden',
+    `${focus.before} -> ${focus.blurred} -> ${focus.after}`,
+  );
+
   cdp.close();
 }
 

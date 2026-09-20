@@ -570,6 +570,17 @@ select:focus {
   background: #07090d;
   color: var(--muted);
 }
+/* The paused preview covers the whole stage, so it is the natural thing to
+   click to get the picture back -- say so. */
+.waiting.clickable {
+  cursor: pointer;
+}
+.waiting p {
+  margin: 0;
+  max-width: 46ch;
+  text-align: center;
+  line-height: 1.5;
+}
 .spinner {
   width: 30px;
   height: 30px;
