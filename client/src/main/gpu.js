@@ -52,20 +52,20 @@ function applyEncodingPreference(preference) {
 /**
  * Which GPU Harmony itself should run on, on a laptop that has two.
  *
- * This exists because of a measurement. On a machine playing a game on the
- * discrete GPU while streaming, Harmony's share of that GPU was:
+ * This exists because of a measurement: on a machine playing a game on the
+ * discrete GPU while streaming, Harmony took roughly 20% of the same adapter
+ * the game was using for its 22.8%.
  *
- *     videoencode 13.0%   3d 2.7%   videodecode 2.7%   copy 1.6%   = ~20%
+ * Treat this as a last resort rather than the first thing to try. Most of that
+ * cost turned out to be two other things, both since fixed: painting the
+ * preview at full capture resolution, and negotiating H.264 constrained
+ * baseline, which no NVIDIA encoder accepts and which therefore put every call
+ * on the CPU. See H264_PROFILE_RANK in the renderer's webrtc.js.
  *
- * ...on the same adapter the game was using for its 22.8%. Moving Harmony to
- * the integrated GPU hands all of that back. Intel Quick Sync encodes H.264
- * perfectly well, so the stream does not suffer for it -- verified: with this
- * switch the active adapter becomes the iGPU and `video_encode` still reports
- * `enabled`.
- *
- * It is not a free win in every case: capturing a game that renders on the
- * other GPU means the frames have to cross adapters. Which way round is better
- * depends on the machine, so this is an option rather than a default.
+ * Moving to the integrated GPU is not a free win either: capturing a game that
+ * renders on the other GPU means every frame crosses adapters, and Chromium
+ * cannot composite across GPUs on Windows. Which way round is better depends on
+ * the machine, so this stays an option rather than a default.
  */
 function applyAdapterPreference(preference) {
   if (preference === 'integrated') {

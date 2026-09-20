@@ -31,12 +31,6 @@ const DEFAULTS = {
   // (the dedicated one); 'integrated' keeps Harmony off the GPU a game is
   // using. See gpu.js for the measurement behind this.
   gpuPreference: 'auto',
-  // Stop painting the preview while Harmony is not the focused window. The
-  // preview shows the screen the user is already looking at, so while they are
-  // in the game there is nothing in it they cannot see better elsewhere -- and
-  // it is the single most expensive thing Harmony draws. See
-  // applyPreviewVisibility() in the renderer.
-  pausePreviewUnfocused: true,
   // What to do when a window is shared but per-application audio is not
   // available (non-Windows, or the native module is missing).
   //   'silent' -- send no audio, never leak other apps' sound

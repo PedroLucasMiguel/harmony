@@ -55,12 +55,12 @@
         <button class="ghost small" id="test-connection">Test my connection</button>
         <p class="error" id="connect-error" hidden></p>
 
-        <!-- Shown outside the collapsed section on purpose: it is a one-off
-             recommendation, and nobody opens a panel they have no reason to
-             suspect contains something useful. -->
+        <!-- Shown outside the collapsed section on purpose: nobody opens a
+             panel they have no reason to suspect contains something useful,
+             and this one costs about 10% of a laptop's performance to miss.
+             See DUAL_GPU_WEIRDNESS.md. -->
         <div class="hint" id="gpu-hint" hidden>
           <p id="gpu-hint-text"></p>
-          <button class="ghost small" id="gpu-hint-apply">Use the integrated GPU</button>
         </div>
 
         <!-- Everything here has a sensible default and is set once, if ever.
@@ -82,18 +82,6 @@
             </label>
 
             <label class="check">
-              <input type="checkbox" id="pause-preview-unfocused" checked />
-              <span>
-                Pause the preview while I am in another window
-                <small
-                  >The preview is the most expensive thing Harmony draws, and it shows the screen
-                  you are already looking at. Pausing it while you are in a game costs you nothing
-                  and gives the frames back. Your stream is unaffected either way.</small
-                >
-              </span>
-            </label>
-
-            <label class="check">
               <input type="checkbox" id="hw-encoding" checked />
               <span>
                 Encode on the GPU
@@ -108,13 +96,10 @@
               <span>Run Harmony on</span>
               <select id="gpu-preference">
                 <option value="auto">Whichever GPU Windows picks</option>
-                <option value="integrated">The integrated GPU — leaves the other one for games</option>
-                <option value="dedicated">The dedicated GPU</option>
+                <option value="dedicated">The dedicated GPU — normally the right one</option>
+                <option value="integrated">The integrated GPU</option>
               </select>
-              <small
-                >On a laptop with two GPUs, Harmony shares one with whatever you are playing. Moving
-                it to the integrated GPU hands that capacity back.</small
-              >
+              <small></small>
             </label>
           </div>
         </details>

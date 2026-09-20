@@ -317,21 +317,89 @@ async function run() {
       `preview ${copy.preview.width}x${copy.preview.height}@${copy.preview.frameRate}`,
   );
 
-  // Losing focus is what pauses the preview in the case this app is for: a game
-  // on one monitor, Harmony on another. Chromium delivering the native blur is
-  // verified separately by hand; what this pins is the app's own reaction.
+  // The single most expensive bug this app has had: Chromium offers H.264
+  // constrained baseline first, no NVIDIA encoder or decoder accepts baseline,
+  // and so every call ran on the CPU while the UI said "GPU encode". Pin the
+  // ordering that fixed it -- and pin that baseline is still offered, because a
+  // machine with no hardware encoder can only speak baseline and must still be
+  // able to publish.
+  const codecs = await cdp.evaluate(`
+    const { preferCodec } = await import('./webrtc.js');
+    const pc = new RTCPeerConnection();
+    const tx = pc.addTransceiver('video', { direction: 'sendonly' });
+    // What preferCodec actually handed to setCodecPreferences, which is the
+    // thing under test -- the offer SDP renegotiates the level separately.
+    const preferred = preferCodec(tx, 'H264') ?? [];
+    const offer = await pc.createOffer();
+    pc.close();
+    return {
+      preferred: preferred
+        .filter((c) => /H264/i.test(c.mimeType))
+        .map((c) => /profile-level-id=([0-9a-fA-F]{6})/.exec(c.sdpFmtpLine ?? '')?.[1] ?? '?'),
+      offered: [...offer.sdp.matchAll(/profile-level-id=([0-9a-fA-F]{6})/g)].map((m) => m[1]),
+    };
+  `);
+  const { preferred } = codecs;
+  check(
+    'H.264 prefers High profile over baseline, and still offers baseline',
+    preferred[0]?.slice(0, 2).toLowerCase() === '64' &&
+      preferred.some((p) => p.startsWith('42')),
+    `preference order: ${preferred.join(', ')}`,
+  );
+  // High at level 3.1 caps around 720p30, so taking the first High on
+  // Chromium's own list would quietly cap a native-resolution stream.
+  const highs = preferred.filter((p) => p.slice(0, 2).toLowerCase() === '64');
+  check(
+    'the first H.264 choice is the highest level of the best profile',
+    parseInt(preferred[0].slice(4), 16) === Math.max(...highs.map((p) => parseInt(p.slice(4), 16))),
+    `chose ${preferred[0]} from High profiles ${highs.join(', ')}`,
+  );
+  check(
+    'the negotiated offer leads with High profile',
+    codecs.offered[0]?.slice(0, 2).toLowerCase() === '64',
+    `offer order: ${codecs.offered.join(', ')}`,
+  );
+
+  // The dual-GPU warning is now the only thing telling a user about the
+  // cross-adapter trap, which costs about 10% of the machine and cannot be
+  // fixed from inside the app. If it stops appearing, nobody finds out.
+  const warning = await cdp.evaluate(`
+    ${B}
+    const gpu = await harmony.gpu.status();
+    return {
+      adapters: (gpu.adapters ?? []).map((a) => a.vendor),
+      shown: !document.getElementById('gpu-hint').hidden,
+      text: document.getElementById('gpu-hint-text').textContent,
+    };
+  `);
+  if (warning.adapters.length > 1) {
+    check(
+      'the dual-GPU warning appears on a machine with two GPUs',
+      warning.shown === true && /wired|MUX|Optimus/i.test(warning.text),
+      `${warning.adapters.join(' + ')} -> ${warning.shown ? 'shown' : 'MISSING'}`,
+    );
+  } else {
+    check(
+      'the dual-GPU warning stays hidden on a single-GPU machine',
+      warning.shown === false,
+      `${warning.adapters.join(', ') || 'one adapter'} -> hidden`,
+    );
+  }
+
+  // Losing focus must NOT stop the preview. It used to, and a picture that
+  // blanks itself whenever you click elsewhere reads as a broken stream.
   const focus = await cdp.evaluate(`
-    const title = () => document.getElementById('preview-off-title').textContent;
-    const before = title();
     window.dispatchEvent(new Event('blur'));
-    const blurred = title();
-    window.dispatchEvent(new Event('focus'));
-    return { before, blurred, after: title() };
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      panelShown: !document.getElementById('preview-off').hidden,
+      title: document.getElementById('preview-off-title').textContent,
+    };
   `);
   check(
-    'losing focus pauses the preview and regaining it resumes',
-    focus.blurred === 'Preview paused' && focus.after === 'Preview hidden',
-    `${focus.before} -> ${focus.blurred} -> ${focus.after}`,
+    'losing focus does not pause the preview',
+    focus.panelShown === false,
+    focus.panelShown ? `panel appeared saying "${focus.title}"` : 'preview left alone',
   );
 
   cdp.close();

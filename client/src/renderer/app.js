@@ -94,7 +94,6 @@ const el = {
   previewOff: $('preview-off'),
   previewOffTitle: $('preview-off-title'),
   previewOffText: $('preview-off-text'),
-  pausePreviewUnfocused: $('pause-preview-unfocused'),
 
   watchAll: $('watch-all'),
   mosaicGrid: $('mosaic-grid'),
@@ -117,7 +116,6 @@ const el = {
   gpuPreference: $('gpu-preference'),
   gpuHint: $('gpu-hint'),
   gpuHintText: $('gpu-hint-text'),
-  gpuHintApply: $('gpu-hint-apply'),
   broadcastClip: $('broadcast-clip'),
   watchClip: $('watch-clip'),
 
@@ -186,11 +184,11 @@ const state = {
    * Whether the preview is being painted, and what to paint.
    *
    * `hiddenByUser` is a deliberate choice and survives minimise/restore;
-   * `windowVisible` and `windowFocused` are the automatic halves. `stream`
-   * holds the downscaled copy from previewCopy() -- never the published
-   * stream, which is far too expensive to paint.
+   * `windowVisible` is the automatic half. `stream` holds the downscaled copy
+   * from previewCopy() -- never the published stream, which is far too
+   * expensive to paint.
    */
-  preview: { hiddenByUser: false, windowVisible: true, windowFocused: true, stream: null },
+  preview: { hiddenByUser: false, windowVisible: true, stream: null },
 
   server: '', // control server base URL, valid outside a session too
   session: null, // server response for the current username
@@ -274,8 +272,6 @@ async function boot() {
   el.fallback.value = state.settings.windowAudioFallback;
   state.clips.enabled = Boolean(state.settings.clipsEnabled);
   el.clipsEnabled.checked = state.clips.enabled;
-  el.pausePreviewUnfocused.checked = state.settings.pausePreviewUnfocused !== false;
-  state.preview.windowFocused = document.hasFocus();
 
   for (const [key, preset] of Object.entries(QUALITY)) {
     const option = document.createElement('option');
@@ -335,26 +331,35 @@ async function refreshGpuStatus() {
     el.gpuPreference.value = state.gpu.adapterPreference ?? 'auto';
     el.gpuPreferenceField.querySelector('small').textContent =
       `Currently on ${active ?? 'an unknown GPU'}, of ${adapters.map((a) => a.vendor).join(' + ')}. ` +
-      'Harmony shares that GPU with whatever you are playing; the integrated one leaves the other free.';
+      'Leave this alone unless you are troubleshooting: the discrete GPU is normally the right ' +
+      'choice, because it is where the game being captured already lives.';
   }
 
   /*
-   * Say so unprompted, because nobody would think to look for this setting.
+   * Say so unprompted, because nobody would think to look for this, and the
+   * fix is outside Harmony entirely.
    *
-   * The reason it matters is not obvious: Chromium cannot composite across GPUs
-   * on Windows, so when Harmony renders on the discrete GPU while its window
-   * sits on a display wired to the integrated one, every frame has to be copied
-   * between adapters. Measured on a hybrid laptop, Harmony was taking ~20% of
-   * the same GPU a game was using, and the desktop compositor another ~22%.
+   * Chromium cannot composite across GPUs on Windows. On a hybrid laptop the
+   * display is usually wired to the integrated GPU while Harmony renders on the
+   * discrete one, so every frame of Harmony's window is copied between
+   * adapters before the desktop compositor can draw it. Measured on a hybrid
+   * laptop: the compositor alone cost 25% of a GPU, and dropped to 1.5% once
+   * the panel was wired straight to the discrete GPU. See DUAL_GPU_WEIRDNESS.md.
+   *
+   * There is no switch Harmony can flip for this -- it is a firmware or driver
+   * setting (MUX switch, NVIDIA Advanced Optimus, "Display mode" in Armoury
+   * Crate / Lenovo Vantage). So this is a warning, not an offer.
    */
-  const onDiscrete = multiGpu && active && active !== 'Intel';
-  const showHint = onDiscrete && (state.gpu.adapterPreference ?? 'auto') === 'auto';
+  const showHint = multiGpu;
   el.gpuHint.hidden = !showHint;
   if (showHint) {
     el.gpuHintText.textContent =
-      `Harmony is running on your ${active} GPU — the one games use. Laptops with two GPUs ` +
-      'usually stream more smoothly with Harmony on the integrated GPU instead, which encodes ' +
-      'video just as well and leaves the other card alone.';
+      `This machine has two GPUs (${adapters.map((a) => a.vendor).join(' + ')}). If your screen is ` +
+      'wired to the integrated one, every frame Harmony draws is copied between GPUs before it ' +
+      'reaches the display, which costs roughly 10% of the machine while you stream. Look for a ' +
+      'MUX switch, NVIDIA Advanced Optimus, or a "display mode" setting in your laptop vendor\'s ' +
+      'utility, and point the panel at the discrete GPU. Worth doing once — it is the single ' +
+      'largest thing you can change.';
   }
 
   if (preference === 'off') {
@@ -369,11 +374,32 @@ async function refreshGpuStatus() {
   }
 }
 
-/** A short label for the stats line. */
-function encoderLabel() {
+/**
+ * A short label for the stats line, saying what is really encoding.
+ *
+ * Prefers what the connection reports over what the GPU process advertises.
+ * `getGPUFeatureStatus()` describes ordinary media playback and is no guide at
+ * all to WebRTC: it said `video_encode: enabled` for months while every call
+ * ran on the CPU because of the negotiated H.264 profile. `encoderImplementation`
+ * is only populated when a real hardware encoder is running, so it cannot lie
+ * in the same direction.
+ */
+function encoderLabel(stats) {
+  if (stats?.implementation) {
+    const vendor = /NVIDIA/i.test(stats.implementation)
+      ? 'NVENC'
+      : /AMD|AMF/i.test(stats.implementation)
+        ? 'AMF'
+        : /Intel|Quick/i.test(stats.implementation)
+          ? 'Quick Sync'
+          : 'GPU';
+    return `${vendor} encode`;
+  }
   if (!state.gpu) return null;
   if (state.gpu.preference === 'off') return 'CPU encode';
-  return state.gpu.encodeAccelerated ? 'GPU encode' : 'CPU encode (no GPU encoder)';
+  // No implementation named while a stream is running means software, whatever
+  // the GPU process claims it is capable of.
+  return stats ? 'CPU encode' : null;
 }
 
 /**
@@ -1006,12 +1032,11 @@ async function startBroadcast() {
  * sitting on a second monitor, or behind a fullscreen game, is composited
  * forever at full rate -- on the very GPU the game is using.
  *
- * Three things can stop it, and they compose: the user asking, the window being
- * minimised, and -- when the setting is on -- the window not being focused. The
- * last one is the one that matters in practice, because the case this app is
- * built for is someone playing a game on one monitor with Harmony open on
- * another, where the preview is a picture of the screen they are already
- * looking at.
+ * Two things stop it: the user asking, and the window being minimised. Losing
+ * focus deliberately does not, even though it is free performance -- a preview
+ * that blanks itself every time you click elsewhere reads as a bug, and with
+ * the preview downscaled (previewCopy) and the display no longer crossing
+ * adapters, what it saves is no longer worth what it costs in confusion.
  */
 function applyPreviewVisibility() {
   const reason = previewPauseReason();
@@ -1025,11 +1050,11 @@ function applyPreviewVisibility() {
   }
 
   el.previewOff.hidden = !reason;
-  if (reason === 'unfocused') {
+  if (reason === 'minimised') {
     el.previewOffTitle.textContent = 'Preview paused';
     el.previewOffText.textContent =
-      'You are still live. Harmony stops drawing the preview while you are in another window, ' +
-      'so it costs your game nothing. Click here and it comes straight back.';
+      'You are still live. Harmony is not drawing the preview while the window is minimised, ' +
+      'because nothing would see it — that work would be pure waste.';
   } else {
     el.previewOffTitle.textContent = 'Preview hidden';
     el.previewOffText.textContent =
@@ -1041,11 +1066,10 @@ function applyPreviewVisibility() {
   el.togglePreview.classList.toggle('active', state.preview.hiddenByUser);
 }
 
-/** @returns {'user'|'minimised'|'unfocused'|null} null meaning "paint it". */
+/** @returns {'user'|'minimised'|null} null meaning "paint it". */
 function previewPauseReason() {
   if (state.preview.hiddenByUser) return 'user';
   if (!state.preview.windowVisible) return 'minimised';
-  if (!state.preview.windowFocused && state.settings?.pausePreviewUnfocused) return 'unfocused';
   return null;
 }
 
@@ -1067,7 +1091,7 @@ async function updateBroadcastStats() {
     s.rtt != null ? `${s.rtt} ms` : null,
     s.availableKbps ? `link ${(s.availableKbps / 1000).toFixed(1)} Mbps` : null,
     s.encodeMs != null ? `encode ${s.encodeMs.toFixed(1)} ms` : null,
-    encoderLabel(),
+    encoderLabel(s),
   ].filter(Boolean);
   el.broadcastStats.textContent = bits.join('  ·  ') || 'Connecting…';
 
@@ -2005,16 +2029,12 @@ el.changeSource.addEventListener('click', async () => {
 });
 
 /** Chromium reads the adapter switch once, at startup, so this needs a restart. */
-async function setGpuPreference(value, { restart = false } = {}) {
+async function setGpuPreference(value) {
   await harmony.settings.set({ gpuPreference: value });
   state.settings = await harmony.settings.get();
   el.gpuPreference.value = value;
-  el.gpuHint.hidden = true;
-
-  if (restart && !isBroadcasting()) {
-    await harmony.relaunch().catch(() => {});
-    return;
-  }
+  // The dual-GPU warning stays up: it is about how the display is wired, which
+  // this setting cannot change.
   toast(
     isBroadcasting()
       ? 'Saved. It applies next time Harmony starts — restarting now would end your stream.'
@@ -2028,7 +2048,6 @@ async function setGpuPreference(value, { restart = false } = {}) {
 }
 
 el.gpuPreference.addEventListener('change', () => setGpuPreference(el.gpuPreference.value));
-el.gpuHintApply.addEventListener('click', () => setGpuPreference('integrated', { restart: true }));
 
 el.togglePreview.addEventListener('click', () => {
   state.preview.hiddenByUser = !state.preview.hiddenByUser;
@@ -2038,25 +2057,7 @@ el.togglePreview.addEventListener('click', () => {
   }
 });
 
-// Losing focus is the case this is really for: a game on one monitor, Harmony
-// on another. The window is still on screen, so Chromium keeps compositing it,
-// but a preview of the screen you are looking at has nothing to tell you. Only
-// the broadcaster's own preview pauses -- someone else's stream is content you
-// can only see here, so the mosaic and the watch view are left running.
-//
-// Renderer-side blur/focus rather than BrowserWindow events: Chromium fires
-// these when the native window is deactivated, which is exactly the signal, and
-// it needs no new IPC channel.
-window.addEventListener('blur', () => {
-  state.preview.windowFocused = false;
-  applyPreviewVisibility();
-});
-window.addEventListener('focus', () => {
-  state.preview.windowFocused = true;
-  applyPreviewVisibility();
-});
-
-// The paused panel sits over the stage, so it is the obvious thing to click to
+// The hidden panel sits over the stage, so it is the obvious thing to click to
 // get the picture back.
 el.previewOff.addEventListener('click', () => {
   if (state.preview.hiddenByUser) {
@@ -2065,7 +2066,7 @@ el.previewOff.addEventListener('click', () => {
   }
 });
 
-// Minimising is the other half: the window is gone, so painting it is pure
+// Minimising is the automatic half: the window is gone, so painting it is pure
 // waste. Automatic, and it does not overwrite a deliberate choice.
 harmony.onWindowVisibility((visible) => {
   state.preview.windowVisible = visible;
@@ -2104,13 +2105,6 @@ el.stopStream.addEventListener('click', () => stopBroadcast());
 // Wrapped: addEventListener would otherwise pass the click Event as `usernames`.
 // Watching others without interrupting your own broadcast.
 el.broadcastWatch.addEventListener('click', () => enterMosaic());
-
-el.pausePreviewUnfocused.addEventListener('change', () => {
-  const on = el.pausePreviewUnfocused.checked;
-  if (state.settings) state.settings.pausePreviewUnfocused = on;
-  harmony.settings.set({ pausePreviewUnfocused: on }).catch(() => {});
-  applyPreviewVisibility();
-});
 
 el.clipsEnabled.addEventListener('change', () => {
   state.clips.enabled = el.clipsEnabled.checked;

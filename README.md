@@ -136,10 +136,13 @@ one stream per tile you open.
   native-resolution 60 fps at 25 Mbps, and a **priority** switch deciding what
   the encoder sacrifices when the budget runs out — *Sharp* keeps resolution so
   text stays readable, *Smooth* keeps frame rate so motion stays fluid.
-- **GPU encoding** (NVENC, AMF, Quick Sync) is used automatically where the
-  driver offers it — measured at 18–46% less encode time — with software H.264
-  as the automatic fallback. The stats line says which you are getting, and a
-  toggle forces software if a driver ever produces a corrupt stream.
+- **GPU encoding and decoding** (NVENC, AMF, Quick Sync) is used automatically
+  where the driver offers it, with software H.264 as the automatic fallback. The
+  stats line names the encoder actually in use — read from the connection, not
+  guessed — so `NVENC encode` means NVENC really is running.
+- **Dual-GPU warning.** On a laptop with two GPUs, Harmony checks whether it is
+  in the cross-adapter trap that costs roughly 10% of the machine, and tells you
+  how to get out of it. See [DUAL_GPU_WEIRDNESS.md](DUAL_GPU_WEIRDNESS.md).
 
 ### Watching
 
@@ -208,7 +211,7 @@ perfectly and then play nothing.
 architecture.
 
 **Client:** `cd client && npm install && npm run build` gives you
-`dist/Harmony-0.1.0-portable.exe`.
+`dist/Harmony-1.0.0-portable.exe`.
 
 The full procedure — TLS on a line whose ISP blocks 80 and 443, dynamic IPs,
 packaging, tests and a troubleshooting table — is in
@@ -356,26 +359,29 @@ of anything displaying it. Verified end to end: the server received
 **+1220 KB while the preview was hidden**. Mosaic tiles pause while minimised
 for the same reason.
 
-**3. On a two-GPU laptop, Harmony lands on the same GPU as the game — and
-Chromium cannot composite across GPUs on Windows.** So if Harmony renders on the
-discrete GPU while its window sits on a display wired to the integrated one,
-every frame is copied between adapters. Measured on a hybrid laptop mid-game:
+**3. H.264 was being encoded and decoded on the CPU, on a machine with a
+perfectly good NVENC sitting idle.** Chromium offers H.264 constrained baseline
+first, and NVIDIA's encoder and decoder do not accept baseline at all. One
+change — preferring High profile — moved an entire stream onto the hardware:
 
-| Process | Adapter | Engine | % |
-| --- | --- | --- | --- |
-| The game | NVIDIA | 3d | 22.8 |
-| **desktop compositor** | **Intel** | 3d | **13.3** |
-| Harmony | NVIDIA | videoencode | 13.0 |
-| **desktop compositor** | **NVIDIA** | 3d | **8.9** |
-| Harmony | NVIDIA | 3d + videodecode + copy | 7.0 |
+| NVIDIA engine | baseline (before) | High (now) |
+| --- | --- | --- |
+| videoencode | **0.00%** | **19.03%** |
+| videodecode | **0.00%** | **3.67%** |
 
-The compositor alone cost as much as the game. Harmony now detects this and
-offers to move itself to the integrated GPU — one click, one restart. Quick Sync
-encodes H.264 just as well as NVENC, so nothing is lost, and ~20% of the
-discrete GPU goes back to the game.
+**4. On a two-GPU laptop, Chromium cannot composite across GPUs on Windows.**
+If Harmony renders on the discrete GPU while its window sits on a display wired
+to the integrated one, every frame is copied between adapters — and it shows up
+as the desktop compositor's cost, not Harmony's. Measured on a hybrid laptop:
+**25% of a GPU, falling to 1.5%** once the panel was wired straight to the
+discrete GPU. Harmony now warns about this on the connect screen, because no
+setting inside the app can fix it — it is a MUX / Advanced Optimus switch.
 
 Worth ruling out first: minimise Harmony entirely. If the stutter goes away, it
-was compositing (1 and 2). If it does not, it is contention (3).
+was compositing (1, 2 and 4). If it does not, it is contention.
+
+The full investigation, with the measurement commands, the dead ends and the
+numbers, is in **[DUAL_GPU_WEIRDNESS.md](DUAL_GPU_WEIRDNESS.md)**.
 
 **It is not a canvas.** The preview is a `<video>` element fed the capture
 stream directly — the only canvas in the client is a 160×90 test pattern used by

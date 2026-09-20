@@ -35,24 +35,84 @@ function waitForIceGathering(pc) {
 }
 
 /**
+ * How much we want each H.264 profile, lowest number first.
+ *
+ * This ordering is the whole difference between hardware and software video on
+ * Windows, and it is not obvious. Chromium offers constrained baseline
+ * (profile_idc 42) first, and NVIDIA's H.264 encoder and decoder MFTs do not
+ * accept baseline at all -- so every call silently ran on the CPU while
+ * `getGPUFeatureStatus()` cheerfully reported `video_encode: enabled`, because
+ * that flag describes ordinary media playback and says nothing about WebRTC.
+ *
+ * Measured on an RTX 5060, 1440p screen capture, same build, same everything:
+ *
+ *   baseline (42001f)   videoencode  0.00%   videodecode 0.00%   3d 18.2%
+ *   high     (640032)   videoencode 19.03%   videodecode 3.67%   3d 10.6%
+ *
+ * and only in the second case does getStats() name an implementation at all:
+ * "MediaFoundationVideoEncodeAccelerator (NVIDIA H.264 Encoder MFT)" /
+ * "ExternalDecoder (D3D11VideoDecoder)".
+ */
+const H264_PROFILE_RANK = { 64: 0, '4d': 1, 42: 2 };
+
+/**
+ * Sort key for one H.264 codec entry: profile first, then packetization mode,
+ * then level.
+ *
+ * Level is not decoration. Chromium lists High at level 3.1 (`64001f`) ahead of
+ * High at level 5.0 (`640032`), and 3.1 tops out around 720p30 -- so taking the
+ * first High on the list would cap a native-resolution stream. Packetization
+ * mode 1 allows a frame to be split across packets, which anything above a
+ * small picture needs.
+ */
+function h264Rank(codec) {
+  const fmtp = codec.sdpFmtpLine ?? '';
+  const match = /profile-level-id=([0-9a-fA-F]{6})/.exec(fmtp);
+  return {
+    profile: match ? H264_PROFILE_RANK[match[1].slice(0, 2).toLowerCase()] ?? 3 : 3,
+    // Lower sorts first, so invert: mode 1 wanted before mode 0.
+    packetization: /packetization-mode=1/.test(fmtp) ? 0 : 1,
+    level: match ? parseInt(match[1].slice(4, 6), 16) : 0,
+  };
+}
+
+function byH264Preference(a, b) {
+  const ra = h264Rank(a);
+  const rb = h264Rank(b);
+  return ra.profile - rb.profile || ra.packetization - rb.packetization || rb.level - ra.level;
+}
+
+/**
  * Ask for a specific codec first. H.264 is the default because it is the one
  * codec with hardware encoders on essentially every Windows GPU -- the
  * broadcaster's machine does the encoding so the Raspberry Pi never has to.
+ *
+ * Within H.264, profiles are ordered High, Main, baseline. Ordered rather than
+ * filtered on purpose: a machine with no hardware encoder falls back to
+ * OpenH264, which only speaks constrained baseline, so baseline has to stay on
+ * the list or such a machine could not publish at all.
  */
-function preferCodec(transceiver, codecName) {
-  if (!codecName || typeof RTCRtpSender.getCapabilities !== 'function') return;
-  const caps = RTCRtpSender.getCapabilities('video');
+export function preferCodec(transceiver, codecName, { direction = 'send' } = {}) {
+  const source = direction === 'receive' ? RTCRtpReceiver : RTCRtpSender;
+  if (!codecName || typeof source.getCapabilities !== 'function') return;
+  const caps = source.getCapabilities('video');
   if (!caps) return;
 
-  const wanted = caps.codecs.filter((c) => c.mimeType.toLowerCase() === `video/${codecName.toLowerCase()}`);
+  const isWanted = (c) => c.mimeType.toLowerCase() === `video/${codecName.toLowerCase()}`;
+  const wanted = caps.codecs.filter(isWanted).sort(byH264Preference);
   if (!wanted.length) return;
 
-  const rest = caps.codecs.filter((c) => c.mimeType.toLowerCase() !== `video/${codecName.toLowerCase()}`);
+  const rest = caps.codecs.filter((c) => !isWanted(c));
+  const ordered = [...wanted, ...rest];
   try {
-    transceiver.setCodecPreferences([...wanted, ...rest]);
+    transceiver.setCodecPreferences(ordered);
   } catch {
     // Not fatal -- we just get the browser's default ordering.
+    return null;
   }
+  // Returned so a test can see the ordering that was applied; there is no
+  // getter for codec preferences on the transceiver.
+  return ordered;
 }
 
 export async function applySenderSettings(sender, { maxBitrate, maxFramerate, degradationPreference }) {
@@ -140,7 +200,7 @@ export async function publish({
  * Subscribe to a WHEP endpoint.
  * @returns {Promise<{pc: RTCPeerConnection, stream: MediaStream, resourceUrl: string|null}>}
  */
-export async function watch({ url, iceServers, insertableStreams = false }) {
+export async function watch({ url, iceServers, insertableStreams = false, codec = 'H264' }) {
   const pc = new RTCPeerConnection({
     iceServers,
     bundlePolicy: 'max-bundle',
@@ -157,7 +217,12 @@ export async function watch({ url, iceServers, insertableStreams = false }) {
   try {
     // Declared up front so the offer advertises both kinds even though the
     // publisher's tracks have not arrived yet.
-    pc.addTransceiver('video', { direction: 'recvonly' });
+    //
+    // The receive side needs the same profile ordering as the send side: offer
+    // baseline first and the hardware decoder is never chosen, which is what
+    // made watching a stream cost as much as sending one.
+    const rx = pc.addTransceiver('video', { direction: 'recvonly' });
+    preferCodec(rx, codec, { direction: 'receive' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
 
     pc.addEventListener('track', (event) => {
@@ -207,11 +272,23 @@ export function createStatsReader(pc, direction /* 'outbound' | 'inbound' */) {
       // held back by the network ('bandwidth'), the machine ('cpu'), or neither.
       limitedBy: null,
       availableKbps: null,
-      // Average milliseconds spent encoding one frame. Electron does not expose
-      // `encoderImplementation`, so this stands in for it: a GPU encoder
-      // (NVENC, AMD AMF, Intel QuickSync) sits around 1-3 ms a frame, while the
+      // Average milliseconds spent encoding one frame. A GPU encoder (NVENC,
+      // AMD AMF, Intel QuickSync) sits around 1-3 ms a frame, while the
       // software fallback at 1080p runs an order of magnitude slower.
       encodeMs: null,
+      /**
+       * What is actually doing the work, straight from the horse's mouth --
+       * e.g. "MediaFoundationVideoEncodeAccelerator (NVIDIA H.264 Encoder MFT)"
+       * or "ExternalDecoder (D3D11VideoDecoder)".
+       *
+       * Chromium only fills this in once a hardware path is running, so its
+       * absence is itself the answer. That is worth far more than
+       * `getGPUFeatureStatus()`, which reports on ordinary media playback and
+       * will happily say `video_encode: enabled` while a WebRTC call runs
+       * entirely on the CPU -- which is exactly what it used to do here.
+       */
+      implementation: null,
+      powerEfficient: null,
     };
     let codecId = null;
 
@@ -234,6 +311,11 @@ export function createStatsReader(pc, direction /* 'outbound' | 'inbound' */) {
         out.fps = Math.round(r.framesPerSecond ?? 0);
         out.packetsLost = r.packetsLost ?? 0;
         codecId = r.codecId;
+
+        out.implementation =
+          (direction === 'outbound' ? r.encoderImplementation : r.decoderImplementation) ?? null;
+        out.powerEfficient =
+          (direction === 'outbound' ? r.powerEfficientEncoder : r.powerEfficientDecoder) ?? null;
 
         if (direction === 'outbound') {
           if (r.qualityLimitationReason) out.limitedBy = r.qualityLimitationReason;
