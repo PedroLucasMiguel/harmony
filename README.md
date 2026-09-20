@@ -522,6 +522,15 @@ and must end up decoding that video over WHEP. Nothing is mocked.
   so it is feasible — just not done.
 - **Viewer "pause" freezes on the last frame** and resumes at live. There is no
   buffer to scrub, which is the normal trade for sub-second latency.
+- **The mouse cursor cannot be excluded from a screen share.** Not a decision —
+  Chromium ignores the `cursor` constraint entirely. Measured on Electron 44:
+  `getSupportedConstraints()` does not list `cursor`, and `cursor: 'never'`,
+  `{ exact: 'never' }` and `{ ideal: 'never' }` all leave `getSettings().cursor`
+  at `"always"`, at capture time and via `applyConstraints()` on a live track.
+  Electron's `setDisplayMediaRequestHandler` has no cursor option either. See
+  [crbug 41456762](https://issues.chromium.org/issues/41456762). Hiding it would
+  need the native capture path described in
+  [DUAL_GPU_WEIRDNESS.md](DUAL_GPU_WEIRDNESS.md).
 
 ## Built on
 

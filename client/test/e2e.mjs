@@ -343,7 +343,7 @@ async function run() {
 
   // Volume control is the one viewer affordance that is pure UI.
   const volume = await vwCdp.evaluate(
-    `${setInput('volume', '40')} return document.getElementById('remote').volume;`,
+    `${setInput('volume', '40')} return document.getElementById('remote').dataset.gain;`,
   );
   check('volume control adjusts playback', Math.abs(volume - 0.4) < 0.01, `volume = ${volume}`);
 
@@ -928,7 +928,7 @@ async function run() {
     return {
       columns: getComputedStyle(g).gridTemplateColumns.split(' ').length,
       tiles: tiles.length,
-      audible: [...document.querySelectorAll('.tile video')].filter(v => !v.muted).length,
+      audible: [...document.querySelectorAll('.tile video')].filter(v => v.dataset.muted === 'false').length,
       users: tiles.map(t => t.dataset.user).sort(),
       sliders: document.querySelectorAll('.tile .tile-volume').length,
       fsButtons: tiles.filter(t => t.querySelector('.tile-btn[data-role="fullscreen"]') && t.querySelector('.tile-btn[data-role="mute"]')).length,
@@ -997,7 +997,7 @@ async function run() {
     slider.dispatchEvent(new Event('input', { bubbles: true }));
     await new Promise(r => setTimeout(r, 200));
     const read = () => [...document.querySelectorAll('.tile')].map(t => ({
-      user: t.dataset.user, vol: +t.querySelector('video').volume.toFixed(3),
+      user: t.dataset.user, vol: +(+t.querySelector('video').dataset.gain).toFixed(3),
     }));
     const afterTile = read();
 
@@ -1027,7 +1027,7 @@ async function run() {
     document.querySelector('.tile[data-user="${target}"] .tile-btn[data-role="mute"]').click();
     await new Promise(r => setTimeout(r, 200));
     return [...document.querySelectorAll('.tile')].map(t => ({
-      user: t.dataset.user, muted: t.querySelector('video').muted,
+      user: t.dataset.user, muted: t.querySelector('video').dataset.muted === 'true',
     }));
   `);
   check(
@@ -1071,7 +1071,7 @@ async function run() {
   check('a stream that ends disappears from the mosaic', shrank === true);
 
   const afterDrop = await vwCdp.evaluate(
-    "return { tiles: document.querySelectorAll('.tile').length, audible: [...document.querySelectorAll('.tile video')].filter(v => !v.muted).length };",
+    "return { tiles: document.querySelectorAll('.tile').length, audible: [...document.querySelectorAll('.tile video')].filter(v => v.dataset.muted === 'false').length };",
   );
   check(
     'the remaining tiles keep playing after one leaves',

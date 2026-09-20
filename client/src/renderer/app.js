@@ -3,6 +3,7 @@ import { publish, watch, hangup, createStatsReader, applySenderSettings } from '
 import { AudioBridge } from './audio-bridge.js';
 import { runConnectionTest } from './connection-test.js';
 import { ClipBuffer, CLIP_SECONDS } from './clip-buffer.js';
+import { createSink, MAX_GAIN, asPercent } from './gain.js';
 
 // ---------------------------------------------------------------------------
 // Quality presets
@@ -128,6 +129,10 @@ const el = {
   watchAdd: $('watch-add'),
   watchFullscreen: $('watch-fullscreen'),
   stage: document.querySelector('#view-watch .stage'),
+  // Fullscreen goes on the whole view, not just the stage, so the real
+  // controls come with it -- otherwise fullscreen would need a second copy of
+  // every button, and the two would drift apart.
+  watchView: $('view-watch'),
 
   watchTitle: $('watch-title'),
   watchDot: $('watch-dot'),
@@ -198,6 +203,12 @@ const state = {
 
   /** GPU encode/decode capability, from the main process. */
   gpu: null,
+
+  /**
+   * Single-stream watching. Kept here rather than read off the element because
+   * the element is permanently muted -- gain.js owns what you actually hear.
+   */
+  watch: { volume: 1, muted: false, sink: null },
 
   /** Mosaic mode: one WHEP connection per tile. See freshMosaic(). */
   mosaic: freshMosaic(),
@@ -1344,7 +1355,12 @@ async function connectWatch() {
     state.statsReader = createStatsReader(pc, 'inbound');
 
     el.remote.srcObject = stream;
-    el.remote.volume = Number(el.volume.value) / 100;
+    // Muted element, gain node does the playing -- same arrangement as the
+    // mosaic tiles, and for the same reason: 100% is not always loud enough.
+    el.remote.muted = true;
+    state.watch.sink?.close();
+    state.watch.sink = createSink(stream);
+    applyWatchAudio();
 
     pc.addEventListener('connectionstatechange', () => {
       if (pc.connectionState === 'connected') {
@@ -1583,8 +1599,8 @@ function openTile({ username, whepUrl }) {
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
-  // Start muted so autoplay is never blocked, then applyTileAudio unmutes once
-  // the stream is attached.
+  // Permanently muted: the element only ever shows the picture, and gain.js
+  // plays the sound. Leaving it unmuted would play everything twice.
   video.muted = true;
 
   const status = document.createElement('div');
@@ -1619,7 +1635,7 @@ function openTile({ username, whepUrl }) {
   volume.type = 'range';
   volume.className = 'tile-volume';
   volume.min = '0';
-  volume.max = '100';
+  volume.max = String(asPercent(MAX_GAIN));
   volume.value = '100';
   volume.title = `Volume for ${username}`;
 
@@ -1677,9 +1693,11 @@ function openTile({ username, whepUrl }) {
     resourceUrl: null,
     stats: null,
     // Per-tile audio. Every stream can be heard at once; these are how you
-    // balance them rather than being forced to pick just one.
+    // balance them rather than being forced to pick just one. `sink` is the
+    // gain node that actually plays it, created once the stream arrives.
     volume: 1,
     muted: false,
+    sink: null,
   };
   state.mosaic.tiles.set(username, entry);
 
@@ -1737,9 +1755,10 @@ function openTile({ username, whepUrl }) {
       entry.clips = attachClips(pc, username, 'receiver');
       if (entry.clipBtn) entry.clipBtn.hidden = !entry.clips;
       video.srcObject = stream;
+      entry.sink = createSink(stream);
       status.hidden = true;
-      // applyTileAudio owns both muted and volume; setting them here as well
-      // once cost every tile its sound, by throwing before it could run.
+      // applyTileAudio owns the level; setting it here as well once cost every
+      // tile its sound, by throwing before it could run.
       applyTileAudio();
     })
     .catch((err) => {
@@ -1798,19 +1817,44 @@ function removeTile(username) {
   // If this tile was filling the screen, do not leave the user stranded there.
   if (document.fullscreenElement === entry.el) document.exitFullscreen().catch(() => {});
   entry.video.srcObject = null;
+  entry.sink?.close();
+  entry.sink = null;
   if (entry.pc) hangup(entry.pc, entry.resourceUrl);
   entry.el.remove();
+}
+
+/** The single-stream viewer's level, mirrored onto the element for inspection. */
+function applyWatchAudio() {
+  const { volume, muted, sink } = state.watch;
+  const gain = muted ? 0 : Math.min(MAX_GAIN, volume);
+  sink?.set(gain);
+  el.remote.dataset.gain = String(gain);
+  el.remote.dataset.muted = String(muted);
+
+  el.volume.value = String(asPercent(volume));
+  el.volumeLabel.textContent = `${asPercent(volume)}%`;
+  el.volumeLabel.classList.toggle('boosted', volume > 1);
+  el.toggleMute.innerHTML = muted ? '&#128263;' : '&#128266;';
+  el.toggleMute.title = muted ? 'Unmute' : 'Mute';
 }
 
 /**
  * Every tile can be heard at once; the master control scales them all.
  * Effective volume is the tile's own level times the master level.
+ *
+ * The element stays muted and a GainNode does the playing, which is what allows
+ * a level above 100% -- see gain.js. `dataset.gain` mirrors the result so the
+ * effective level is visible to anything inspecting the DOM, including tests,
+ * now that `video.volume` no longer means anything.
  */
 function applyTileAudio() {
   const { master } = state.mosaic;
   for (const entry of state.mosaic.tiles.values()) {
-    entry.video.muted = entry.muted || master.muted;
-    entry.video.volume = Math.max(0, Math.min(1, entry.volume * master.volume));
+    const silent = entry.muted || master.muted;
+    const gain = silent ? 0 : Math.min(MAX_GAIN, entry.volume * master.volume);
+    entry.sink?.set(gain);
+    entry.video.dataset.gain = String(gain);
+    entry.video.dataset.muted = String(silent);
   }
 }
 
@@ -1874,9 +1918,33 @@ document.addEventListener('fullscreenchange', () => {
     entry.fsBtn.innerHTML = on ? '&#10005;' : '&#9974;';
     entry.fsBtn.title = on ? 'Exit fullscreen (Esc)' : 'Fullscreen';
   }
-  const watching = el.stage === active;
+  const watching = el.watchView === active;
   el.watchFullscreen.innerHTML = watching ? '&#10005;' : '&#9974;';
   el.watchFullscreen.title = watching ? 'Exit fullscreen (Esc)' : 'Fullscreen';
+
+  // Start every fullscreen session with the chrome out of the way; the pointer
+  // reaching for the bottom of the screen is what brings it back.
+  document.querySelectorAll('.hud-visible').forEach((n) => n.classList.remove('hud-visible'));
+});
+
+/**
+ * Reveal the controls when the pointer goes looking for them.
+ *
+ * Fullscreen is for watching, so the bars are hidden by default -- but they
+ * have to be reachable, and the two things people reach for are volume and the
+ * way out. Bottom-edge proximity is the convention every video player uses, so
+ * it needs no explaining.
+ */
+const HUD_ZONE_PX = 120;
+
+document.addEventListener('mousemove', (event) => {
+  const fs = document.fullscreenElement;
+  if (!fs) return;
+  const rect = fs.getBoundingClientRect();
+  // A share of the height as well as a fixed band, so the target is not
+  // uncomfortably thin on a 4K screen.
+  const zone = Math.max(HUD_ZONE_PX, rect.height * 0.15);
+  fs.classList.toggle('hud-visible', event.clientY >= rect.bottom - zone);
 });
 
 // ---------------------------------------------------------------------------
@@ -1958,6 +2026,8 @@ async function teardown() {
   state.changingSource = false;
   el.preview.srcObject = null;
   el.remote.srcObject = null;
+  state.watch.sink?.close();
+  state.watch.sink = null;
 
   // Give the username back at once rather than waiting for the claim to lapse.
   if (state.session?.token) {
@@ -2212,6 +2282,7 @@ el.mosaicVolume.addEventListener('input', () => {
   const value = Number(el.mosaicVolume.value);
   state.mosaic.master.volume = value / 100;
   el.mosaicVolumeLabel.textContent = `${value}%`;
+  el.mosaicVolumeLabel.classList.toggle('boosted', value > 100);
   if (value > 0 && state.mosaic.master.muted) {
     state.mosaic.master.muted = false;
     el.mosaicMute.innerHTML = '&#128266;';
@@ -2226,8 +2297,8 @@ el.addStream.addEventListener('click', (e) => {
   if (e.target === el.addStream) closeAddStream(); // click the backdrop to dismiss
 });
 
-el.watchFullscreen.addEventListener('click', () => toggleFullscreen(el.stage));
-el.remote.addEventListener('dblclick', () => toggleFullscreen(el.stage));
+el.watchFullscreen.addEventListener('click', () => toggleFullscreen(el.watchView));
+el.remote.addEventListener('dblclick', () => toggleFullscreen(el.watchView));
 
 el.leaveStream.addEventListener('click', async () => {
   await teardown();
@@ -2248,19 +2319,14 @@ el.togglePlay.addEventListener('click', () => {
 });
 
 el.toggleMute.addEventListener('click', () => {
-  el.remote.muted = !el.remote.muted;
-  el.toggleMute.innerHTML = el.remote.muted ? '&#128263;' : '&#128266;';
-  el.toggleMute.title = el.remote.muted ? 'Unmute' : 'Mute';
+  state.watch.muted = !state.watch.muted;
+  applyWatchAudio();
 });
 
 el.volume.addEventListener('input', () => {
-  const value = Number(el.volume.value);
-  el.remote.volume = value / 100;
-  el.volumeLabel.textContent = `${value}%`;
-  if (value > 0 && el.remote.muted) {
-    el.remote.muted = false;
-    el.toggleMute.innerHTML = '&#128266;';
-  }
+  state.watch.volume = Number(el.volume.value) / 100;
+  if (state.watch.volume > 0) state.watch.muted = false;
+  applyWatchAudio();
 });
 
 // Re-flow the mosaic as the window changes size.

@@ -360,6 +360,64 @@ async function run() {
     `offer order: ${codecs.offered.join(', ')}`,
   );
 
+  // Amplification past 100% only works because the element is muted and a gain
+  // node does the playing. If the element ever comes back unmuted the sound
+  // doubles, and if the slider ceiling drops back to 100 the feature is gone.
+  const gainSetup = await cdp.evaluate(`
+    const { MAX_GAIN, asPercent, createSink } = await import('./gain.js');
+    // A real stream, so createSink exercises the same path a viewer does.
+    const c = document.createElement('canvas');
+    c.width = c.height = 32;
+    const ctx = new AudioContext();
+    const dst = ctx.createMediaStreamDestination();
+    ctx.createOscillator().connect(dst);
+    const sink = createSink(dst.stream);
+    sink.set(3.2);
+    const clamped = (sink.set(99), sink.value);
+    sink.close();
+    ctx.close();
+    return {
+      max: MAX_GAIN,
+      watchSlider: Number(document.getElementById('volume').max),
+      masterSlider: Number(document.getElementById('mosaic-volume').max),
+      set: sink.value,
+      clamped,
+      asPercent: asPercent(MAX_GAIN),
+    };
+  `);
+  check(
+    'volume goes to 350% and clamps there',
+    gainSetup.watchSlider === 350 && gainSetup.masterSlider === 350 && gainSetup.clamped === 3.5,
+    `sliders max ${gainSetup.watchSlider}/${gainSetup.masterSlider}, gain clamps at ${gainSetup.clamped}`,
+  );
+
+  // Fullscreen hides the chrome; the pointer reaching the bottom brings it
+  // back. Drive the same mousemove the app listens for, with a faked
+  // fullscreenElement, since real fullscreen needs a user gesture.
+  const hud = await cdp.evaluate(`
+    const view = document.getElementById('view-watch');
+    const rect = { bottom: 800, height: 800 };
+    // The handler reads document.fullscreenElement; stand one in.
+    Object.defineProperty(document, 'fullscreenElement', { value: view, configurable: true });
+    view.getBoundingClientRect = () => rect;
+
+    const at = (y) => document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: y }));
+
+    at(100);
+    const middle = view.classList.contains('hud-visible');
+    at(780);
+    const bottom = view.classList.contains('hud-visible');
+    at(100);
+    const away = view.classList.contains('hud-visible');
+    view.classList.remove('hud-visible');
+    return { middle, bottom, away };
+  `);
+  check(
+    'fullscreen controls appear only near the bottom edge',
+    hud.middle === false && hud.bottom === true && hud.away === false,
+    `middle=${hud.middle} bottom=${hud.bottom} back-to-middle=${hud.away}`,
+  );
+
   // The dual-GPU warning is now the only thing telling a user about the
   // cross-adapter trap, which costs about 10% of the machine and cannot be
   // fixed from inside the app. If it stops appearing, nobody finds out.

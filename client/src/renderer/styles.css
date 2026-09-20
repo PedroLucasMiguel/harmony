@@ -736,6 +736,79 @@ select:focus {
   width: 120px;
 }
 
+/* The whole watch view goes fullscreen, not just its stage, so the existing
+   header and footer come along rather than needing a duplicate set of
+   controls. They float over the picture instead of taking layout space. */
+#view-watch:fullscreen {
+  background: #000;
+}
+#view-watch:fullscreen .stage {
+  position: absolute;
+  inset: 0;
+}
+#view-watch:fullscreen video {
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+}
+#view-watch:fullscreen .bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  border: none;
+  background: linear-gradient(to top, rgba(7, 9, 13, 0.92), rgba(7, 9, 13, 0.55));
+  padding: 18px 24px;
+}
+#view-watch:fullscreen header.bar {
+  top: 0;
+  background: linear-gradient(to bottom, rgba(7, 9, 13, 0.92), rgba(7, 9, 13, 0));
+}
+#view-watch:fullscreen footer.bar {
+  bottom: 0;
+}
+#view-watch:fullscreen #volume {
+  width: 160px;
+}
+
+/* Hidden while watching, revealed when the pointer reaches for the bottom of
+   the screen -- the convention every video player already taught people.
+   Transform and opacity only, so revealing it never costs a layout. */
+#view-watch:fullscreen .bar,
+.tile:fullscreen .tile-bar {
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+#view-watch:fullscreen header.bar {
+  transform: translateY(-100%);
+}
+#view-watch:fullscreen footer.bar,
+.tile:fullscreen .tile-bar {
+  transform: translateY(100%);
+}
+#view-watch:fullscreen.hud-visible .bar,
+.tile:fullscreen.hud-visible .tile-bar {
+  opacity: 1;
+  transform: none;
+}
+/* The bar re-enables pointer events on its own controls (see .tile-bar), so
+   only lift the block on the container that owns them. */
+#view-watch:fullscreen.hud-visible .bar {
+  pointer-events: auto;
+}
+.tile:fullscreen.hud-visible .tile-bar > * {
+  pointer-events: auto;
+}
+
+/* Above 100% is amplification, not just loudness -- say so quietly. */
+.boosted {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- modal picker ---------- */
 
 .modal {
