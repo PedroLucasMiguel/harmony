@@ -132,10 +132,10 @@ one stream per tile you open.
   is GPU work on top of whatever you are sharing, which is what makes a game
   feel stuttery at a high frame rate. It also detaches automatically while the
   window is minimised.
-- **Four quality presets**, from 720p30/3 Mbps to native-resolution 60 fps at
-  25 Mbps, and a **priority** switch deciding what the encoder sacrifices when the
-  budget runs out — *Sharp* keeps resolution so text stays readable, *Smooth*
-  keeps frame rate so motion stays fluid.
+- **Five quality presets**, from 720p30/3 Mbps through 1080p60/12 Mbps to
+  native-resolution 60 fps at 25 Mbps, and a **priority** switch deciding what
+  the encoder sacrifices when the budget runs out — *Sharp* keeps resolution so
+  text stays readable, *Smooth* keeps frame rate so motion stays fluid.
 - **GPU encoding** (NVENC, AMF, Quick Sync) is used automatically where the
   driver offers it — measured at 18–46% less encode time — with software H.264
   as the automatic fallback. The stats line says which you are getting, and a

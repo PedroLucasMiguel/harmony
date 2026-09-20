@@ -37,7 +37,7 @@ async function run() {
   check('opens on the connect view', view === 'view-connect', view);
 
   const qualityCount = await cdp.evaluate("return document.getElementById('quality').options.length;");
-  check('boot() populated quality presets', qualityCount === 4, `${qualityCount} options`);
+  check('boot() populated quality presets', qualityCount === 5, `${qualityCount} options`);
 
   const modulesOk = await cdp.evaluate(
     "return typeof (await import('./webrtc.js')).publish === 'function';",

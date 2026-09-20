@@ -15,6 +15,10 @@ import { ClipBuffer, CLIP_SECONDS } from './clip-buffer.js';
 const QUALITY = {
   low: { label: 'Low — 720p, 30 fps', width: 1280, height: 720, fps: 30, bitrate: 3_000_000 },
   balanced: { label: 'Balanced — 1080p, 30 fps', width: 1920, height: 1080, fps: 30, bitrate: 8_000_000 },
+  // Doubling the frame rate does not double the bits needed -- consecutive
+  // frames are more alike at 60 fps than at 30 -- so 12 rather than 16, which
+  // also leaves room below the native-resolution presets above.
+  full60: { label: 'Full HD — 1080p, 60 fps', width: 1920, height: 1080, fps: 60, bitrate: 12_000_000 },
   high: { label: 'High — native, 60 fps', width: null, height: null, fps: 60, bitrate: 15_000_000 },
   ultra: { label: 'Ultra — native, 60 fps', width: null, height: null, fps: 60, bitrate: 25_000_000 },
 };
