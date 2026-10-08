@@ -243,9 +243,15 @@ The easy case. Caddy gets a certificate by itself:
 
 ```
 stream.example.com {
-    handle /api/* { reverse_proxy 127.0.0.1:8080 }
-    handle /ws    { reverse_proxy 127.0.0.1:8080 }
-    handle        { reverse_proxy 127.0.0.1:8889 }
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle /ws {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8889
+    }
 }
 ```
 
@@ -284,9 +290,15 @@ sudo certbot certonly --dns-cloudflare \
 ```
 https://stream.example.com:8444 {
     tls /etc/caddy/tls/fullchain.pem /etc/caddy/tls/privkey.pem
-    handle /api/* { reverse_proxy 127.0.0.1:8080 }
-    handle /ws    { reverse_proxy 127.0.0.1:8080 }
-    handle        { reverse_proxy 127.0.0.1:8889 }
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle /ws {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8889
+    }
 }
 ```
 
