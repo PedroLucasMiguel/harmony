@@ -766,8 +766,17 @@ select:focus {
 .channel-list li:hover {
   background: rgb(var(--tint-rgb) / 0.06);
 }
-.channel-list li[data-active] {
+/* The channel on screen. */
+.channel-list li[data-viewing] {
   background: rgb(var(--accent-rgb) / 0.18);
+}
+/*
+ * The voice channel you are in, while you are looking at something else:
+ * named in the palette's "live" colour rather than highlighted, so it is
+ * still easy to find without competing with the channel you are reading.
+ */
+.channel-list li[data-active]:not([data-viewing]) .channel-name {
+  color: var(--live);
 }
 .channel-list li .kind {
   flex: 0 0 1rem;

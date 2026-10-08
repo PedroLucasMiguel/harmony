@@ -1678,7 +1678,19 @@ function channelNodes(channel) {
   // "every li in the sidebar" stopped meaning "every channel".
   li.className = 'channel-row';
   li.dataset.id = String(channel.id);
+  /*
+   * Two different things, marked separately, the way Discord does it.
+   *
+   * data-active is the voice channel you are CONNECTED to -- true for as
+   * long as the call lasts, whatever you are looking at. data-viewing is the
+   * channel whose content is on screen: the text channel you opened, or,
+   * with no chat open, the voice channel's stage. Only data-viewing is the
+   * highlight; it used to be data-active alone, so opening a text channel
+   * highlighted nothing new and the voice channel stayed lit the whole call.
+   */
   if (channel.id === state.voice.channelId) li.setAttribute('data-active', '');
+  const viewing = state.chat.channelId ?? state.voice.channelId;
+  if (channel.id === viewing) li.setAttribute('data-viewing', '');
   if (state.mentioned.has(channel.id)) li.setAttribute('data-mention', '');
 
   const kind = document.createElement('span');
@@ -4404,6 +4416,8 @@ function closeChat() {
   state.chat.channelId = null;
   if (el.voiceActive.hidden) el.voiceIdle.hidden = false;
   applyStage();
+  // The highlight follows what is on screen, which just went back to the call.
+  renderChannels();
 }
 
 // ---------------------------------------------------------------------------
