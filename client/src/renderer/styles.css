@@ -1767,17 +1767,21 @@ button.danger {
   font-weight: 700;
   color: var(--text);
 }
+/* How many: "@ 3". Drawn from the attribute, which app.js keeps as the count. */
 .channel-list li[data-mention]::after {
-  content: '@';
+  content: '@ ' attr(data-mention);
   margin-left: auto;
   flex: 0 0 auto;
+  min-width: 1.4rem;
+  text-align: center;
   font-size: 0.7rem;
   font-weight: 700;
   line-height: 1;
-  padding: 0.15rem 0.3rem;
+  padding: 0.15rem 0.35rem;
   border-radius: 999px;
   background: var(--warn);
   color: var(--bg);
+  font-variant-numeric: tabular-nums;
 }
 
 /*

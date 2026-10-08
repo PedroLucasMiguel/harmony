@@ -483,7 +483,15 @@ const state = {
    * which is the only question a mark on a sidebar row can honestly
    * answer without a read-receipt table on the server.
    */
-  mentioned: new Set(),
+  /*
+   * Mentions waiting for you, per channel: channelId -> how many.
+   *
+   * Entirely local -- counted from the pushes this client receives, never
+   * sent anywhere, and gone when the app closes. Each person's client counts
+   * only what names them (or @everyone), so whoever was mentioned sees the
+   * number and nobody else does.
+   */
+  mentioned: new Map(),
   /** The webcam publish, which is a SECOND stream under `<nickname>-cam`. */
   camera: { stream: null, publication: null, session: null },
   voice: new VoiceSession(),
@@ -1691,7 +1699,12 @@ function channelNodes(channel) {
   if (channel.id === state.voice.channelId) li.setAttribute('data-active', '');
   const viewing = state.chat.channelId ?? state.voice.channelId;
   if (channel.id === viewing) li.setAttribute('data-viewing', '');
-  if (state.mentioned.has(channel.id)) li.setAttribute('data-mention', '');
+  const mentions = state.mentioned.get(channel.id) ?? 0;
+  if (mentions) {
+    // The number itself is drawn by CSS from the attribute.
+    li.dataset.mention = mentions > 99 ? '99+' : String(mentions);
+    li.title = `${mentions} ${mentions === 1 ? 'message mentions' : 'messages mention'} you`;
+  }
 
   const kind = document.createElement('span');
   kind.className = 'kind';
@@ -1933,6 +1946,15 @@ function groupNode(group) {
   name.textContent = group.name;
 
   li.append(fold, name);
+
+  // A folded group hides its channels and their counts with them, so the
+  // heading carries their total until it is opened.
+  if (collapsed) {
+    const total = state.channels.list
+      .filter((c) => (c.groupId ?? null) === group.id)
+      .reduce((sum, c) => sum + (state.mentioned.get(c.id) ?? 0), 0);
+    if (total) li.dataset.mention = total > 99 ? '99+' : String(total);
+  }
 
   li.addEventListener('click', () => {
     if (collapsed) state.channels.collapsed.delete(group.id);
@@ -4485,7 +4507,7 @@ function notifyMention(message) {
   if (message.userId === state.auth.user?.id) return;
 
   if (message.channelId !== state.chat.channelId) {
-    state.mentioned.add(message.channelId);
+    state.mentioned.set(message.channelId, (state.mentioned.get(message.channelId) ?? 0) + 1);
     renderChannels();
   }
   if (state.settings?.mentionSound !== false) playCue('mention');
