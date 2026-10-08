@@ -52,6 +52,14 @@ const STALL_MS = 8000;
  */
 const SUBSCRIBE_STAGGER_MS = 75;
 
+
+/**
+ * How long the microphone's connection may sit in 'disconnected' before it is
+ * rebuilt. ICE passes through that state on a momentary blip and recovers on
+ * its own; past this it is not coming back.
+ */
+const DISCONNECT_GRACE_MS = 8000;
+
 export class VoiceSession {
   /** @type {{pc: RTCPeerConnection, resourceUrl: string|null}|null} */
   #mic = null;
@@ -478,6 +486,19 @@ export class VoiceSession {
       iceServers: this.iceServers,
     });
 
+    // Either of these is a microphone nobody can hear any more, and nothing
+    // else would notice: the caller is told at once, and micHealth() says
+    // what happened. See the watchdog in app.js.
+    const mic = this.#mic;
+    mic.pc.addEventListener('connectionstatechange', () => {
+      if (this.#mic === mic) this.onMicTrouble?.();
+    });
+    for (const track of this.#micStream.getAudioTracks()) {
+      track.addEventListener('ended', () => {
+        if (this.#mic === mic) this.onMicTrouble?.();
+      });
+    }
+
     // Metered, not played: see createMeter.
     this.#micMeter = createMeter(this.#micStream);
 
@@ -600,6 +621,52 @@ export class VoiceSession {
     this.#micMeter?.close();
     this.#micMeter = createMeter(stream);
     return true;
+  }
+
+  /** Called when the microphone's connection or device changes state. */
+  onMicTrouble = null;
+
+  /** When the publish connection went 'disconnected', or null. */
+  #micDisconnectedSince = null;
+
+  /**
+   * Whether anybody can still hear this microphone.
+   *
+   * 'ok', 'none' (no microphone published), 'device-lost' (the capture
+   * track ended -- a headset unplugged, asleep, or switching mode) or
+   * 'connection-lost' (the publish to the media server failed or closed).
+   *
+   * 'disconnected' is not lost on its own: ICE goes through it on a brief
+   * blip and comes back by itself. Only after DISCONNECT_GRACE_MS of it is
+   * it treated as gone.
+   */
+  micHealth() {
+    if (!this.#mic) return 'none';
+    const track = this.#micStream?.getAudioTracks()[0];
+    if (!track || track.readyState === 'ended') return 'device-lost';
+    const state = this.#mic.pc.connectionState;
+    if (state === 'failed' || state === 'closed') return 'connection-lost';
+    if (state === 'disconnected') {
+      this.#micDisconnectedSince ??= Date.now();
+      if (Date.now() - this.#micDisconnectedSince > DISCONNECT_GRACE_MS) return 'connection-lost';
+    } else {
+      this.#micDisconnectedSince = null;
+    }
+    return 'ok';
+  }
+
+  /**
+   * Publish the microphone again from scratch: a new capture and a new WHIP
+   * session, on whatever publish URL the session holds now -- so the caller
+   * should refresh the tokens first. Mute, input volume and the gate carry
+   * over, because they live on the session rather than on the publish.
+   */
+  async restartMic(deviceId) {
+    const url = this.publishUrls?.voice;
+    if (!url) throw new Error('no publish URL for the microphone');
+    await this.stopMic();
+    this.#micDisconnectedSince = null;
+    await this.startMic(url, deviceId);
   }
 
   /** The device the microphone is actually on, as the browser reports it. */

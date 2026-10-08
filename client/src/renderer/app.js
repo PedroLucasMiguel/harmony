@@ -2533,6 +2533,11 @@ async function joinVoice(channel, password) {
 
     addTimer(setInterval(renderSpeaking, SPEAKING_POLL_MS), 'voice');
 
+    // The microphone watchdog: on any change of its connection or device,
+    // and every few seconds besides, in case an event was missed.
+    state.voice.onMicTrouble = () => checkMicHealth();
+    addTimer(setInterval(checkMicHealth, MIC_HEALTH_MS), 'voice');
+
     /*
      * The ping is NOT on a per-join timer any more.
      *
@@ -2624,6 +2629,70 @@ async function joinVoice(channel, password) {
  *
  * @returns {Promise<boolean>} whether the tokens are now fresh
  */
+/*
+ * The microphone watchdog.
+ *
+ * Reported: muted for half an hour, then the microphone "stopped working
+ * entirely" until a reconnect. Muting is not what breaks it -- muting is what
+ * HIDES it. The publish of your voice is one WebRTC connection, and nothing
+ * watched it: incoming audio is retried on a timer (syncPeers), but if your
+ * own publish failed -- a network blip, a Wi-Fi roam, the machine sleeping,
+ * the server dropping the session -- or the capture device stopped (a headset
+ * asleep or switching mode), it stayed dead for the rest of the call. Muted,
+ * nobody notices until they unmute and talk to nobody. The relay's log fits:
+ * members still in a channel while subscriptions to their voice path fail
+ * with "no stream is available", until they rejoin.
+ *
+ * So it is checked, and rebuilt in place: fresh tokens (the ones from the
+ * join may long since have expired, and MediaMTX checks them on every new
+ * publish), then a new capture and a new publish. Mute carries over.
+ *
+ * Never against a force-mute: the server refuses that publish ON PURPOSE,
+ * and retrying it every few seconds would be fighting an admin. When the
+ * admin lifts it, this is also what brings the microphone back -- nothing
+ * did before.
+ */
+const MIC_HEALTH_MS = 5000;
+/** After a failed attempt, wait this long before the next. */
+const MIC_RETRY_MS = 10_000;
+let micRecovering = false;
+let micRetryAt = 0;
+
+async function checkMicHealth() {
+  if (!state.voice.channelId || micRecovering) return;
+  const health = state.voice.micHealth();
+  if (health === 'ok' || health === 'none') return;
+  const me = state.channels.roster.find((m) => m.mid === state.voice.mid);
+  if (me?.forceMuted) return;
+  if (Date.now() < micRetryAt) return;
+
+  micRecovering = true;
+  const channelId = state.voice.channelId;
+  console.warn(`[voice] microphone ${health}; publishing it again`);
+  try {
+    await refreshVoiceTokens();
+    if (state.voice.channelId !== channelId) return;
+    await state.voice.restartMic(deviceForVoiceInput());
+    // Left, or moved, while that was in flight: the new publish belongs to
+    // a channel we are no longer in.
+    if (state.voice.channelId !== channelId) {
+      await state.voice.stopMic();
+      return;
+    }
+    applyMicTuning();
+    await harmony.realtime
+      .request('voice:publishing', { channelId, kind: 'v', on: true })
+      .catch(() => { /* the others' retry timer finds the path anyway */ });
+    micRetryAt = 0;
+    console.warn('[voice] microphone is back');
+  } catch (err) {
+    console.warn('[voice] could not publish the microphone again:', err.message);
+    micRetryAt = Date.now() + MIC_RETRY_MS;
+  } finally {
+    micRecovering = false;
+  }
+}
+
 async function refreshVoiceTokens() {
   const channelId = state.voice.channelId;
   if (!channelId) return false;
