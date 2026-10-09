@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The default palette's background (Midnight): what shows behind the page
+         before it paints, and in the status and navigation bars. -->
+    <color name="app_background">#0F1116</color>
+    <color name="colorPrimary">#5B8CFF</color>
+    <color name="colorPrimaryDark">#0F1116</color>
+    <color name="colorAccent">#8B7CFF</color>
+</resources>

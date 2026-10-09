@@ -6,6 +6,11 @@
 // its custom properties stripped -- `err.code` would be undefined, and the UI
 // depends on it to tell "stream is not live yet, keep waiting" apart from
 // "something is actually broken".
+//
+// Without a preload -- the browser and Android builds -- there is no
+// window.harmony at all, and the same object is built out of what a page can
+// do on its own instead: see web/bridge.js. app.js cannot tell the two apart
+// except through `capabilities`.
 
 const raw = window.harmony;
 
@@ -21,8 +26,22 @@ function unwrap(result) {
 
 const lift = (fn) => async (...args) => unwrap(await fn(...args));
 
-export const harmony = {
+const desktop = () => ({
   platform: raw.platform,
+
+  // Everything; the web build is the one that says no. See web/bridge.js.
+  capabilities: {
+    screenShare: true,
+    // The desktop shares through the picker and the page's own WebRTC.
+    nativeScreenShare: false,
+    appAudio: true,
+    hotkeys: true,
+    clips: true,
+    gpu: true,
+    scale: true,
+    updates: true,
+    reveal: true,
+  },
 
   settings: {
     get: lift(raw.settings.get),
@@ -34,10 +53,22 @@ export const harmony = {
   },
 
   relaunch: lift(raw.relaunch),
+  // Links leave through the window-open handler in main, which hands them to
+  // the system browser.
+  openExternal: async (url) => {
+    window.open(url, '_blank', 'noopener');
+  },
+  // Only the Android app needs a service to keep a call alive.
+  voiceService: {
+    start: async () => null,
+    stop: async () => null,
+  },
   setScale: lift(raw.setScale),
   logos: {
     ensure: lift(raw.logos.ensure),
   },
+  // Served by main from its logo cache; see logos:ensure.
+  logoUrl: (hash) => `harmony://app/server-logo/${hash}`,
   version: lift(raw.version),
   updates: {
     get: lift(raw.updates.get),
@@ -153,4 +184,6 @@ export const harmony = {
     disconnect: lift(raw.realtime.disconnect),
     onEvent: (handler) => raw.realtime.onEvent(handler),
   },
-};
+});
+
+export const harmony = raw ? desktop() : (await import('./web/bridge.js')).harmony;

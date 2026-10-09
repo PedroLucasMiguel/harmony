@@ -1,7 +1,7 @@
 # Every push to main and every pull request: the client built for all three
-# OSes -- so a build that only breaks on macOS or Linux is found here, not on
-# release day. Nothing is uploaded or published; that is release.yml, on a
-# tag.
+# desktop OSes and Android -- so a build that only breaks on one of them is
+# found here, not on release day. Nothing is published; that is release.yml,
+# on a tag. The Android job does keep its debug APK as a run artifact.
 
 name: CI
 
@@ -9,6 +9,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The "Run workflow" button: build any branch on demand, e.g. to get a
+  # debug APK of work that is not on main yet.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -56,3 +59,44 @@ jobs:
       - name: Update metadata was written
         if: matrix.name != 'macos'
         run: ls dist/latest*.yml
+
+  # The Android app: the web client (scripts/build-web.js) wrapped by
+  # Capacitor. A DEBUG build here -- installable for trying a change on a
+  # phone (adb install), downloadable from the run's artifacts -- while
+  # release.yml builds the signed one.
+  android:
+    name: Android build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    env:
+      # The Android build needs none of Electron's binaries.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - run: npm ci
+      - name: Web client into the Android project
+        run: npm run android:sync
+      - name: Build
+        working-directory: client/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          version=$(node -p "require('../package.json').version")
+          mv app/build/outputs/apk/debug/app-debug.apk "Harmony-$version-debug.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harmony-android-debug
+          path: client/android/Harmony-*-debug.apk
+          retention-days: 14

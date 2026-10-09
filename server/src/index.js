@@ -28,6 +28,7 @@ import {
   MEDIA_KINDS,
 } from './channels.js';
 import { Realtime } from './realtime.js';
+import { mintMediaKey, verifyMediaKey } from './media-keys.js';
 import {
   Chat, Soundpad, Emojis,
   publicMessage, publicClip, publicEmoji, allowedTypes, mediaTypeOf, mentionsIn,
@@ -227,6 +228,24 @@ app.get('/api/health', (req, res) => {
         }
       : {}),
   });
+});
+
+/**
+ * A stored file, by media key rather than by headers.
+ *
+ * For clients that load uploads straight into <img>/<video>/<audio> -- the
+ * browser and Android builds -- which cannot attach the door password or a
+ * session token to those requests. The key stands in for both: it is only
+ * issued behind the door and a login (GET /api/media-key), and it names the
+ * account, which must still exist. Registered BEFORE the door on purpose;
+ * the key is what was checked at the door. See media-keys.js.
+ */
+app.get('/api/media/:hash', (req, res) => {
+  const userId = verifyMediaKey(mediaSecret, req.query.k);
+  if (!userId || !accounts.byId(userId)) {
+    return res.status(401).json({ error: 'bad_media_key', message: 'That media link has expired.' });
+  }
+  return sendUpload(req, res);
 });
 
 app.use('/api', requirePassword);
@@ -1170,7 +1189,14 @@ app.post(
  * image/png is served as image/png and cannot execute. X-Content-Type-Options
  * stops a browser sniffing its way to a different conclusion.
  */
-app.get('/api/uploads/:hash', requireLogin, (req, res) => {
+app.get('/api/uploads/:hash', requireLogin, (req, res) => sendUpload(req, res));
+
+/** A key for loading uploads without headers. See GET /api/media/:hash. */
+app.get('/api/media-key', requireLogin, (req, res) => {
+  res.json({ key: mintMediaKey(mediaSecret, req.user.id) });
+});
+
+function sendUpload(req, res) {
   const hash = String(req.params.hash);
   if (!/^[0-9a-f]{64}$/.test(hash)) return res.status(400).json({ error: 'bad_hash' });
 
@@ -1183,7 +1209,7 @@ app.get('/api/uploads/:hash', requireLogin, (req, res) => {
   // Content-addressed, so it can never change: cache it forever.
   res.set('Cache-Control', 'public, max-age=31536000, immutable');
   return res.sendFile(info.path);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Custom emoji

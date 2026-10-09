@@ -11,6 +11,7 @@
 // concurrent subscriptions with zero loss, so the cap is about the relay's
 // bandwidth, not this file.
 
+import { harmony } from './bridge.js';
 import { publish, watch } from './webrtc.js';
 import { createSink, createMeter, createMicChain, MAX_GAIN } from './gain.js';
 

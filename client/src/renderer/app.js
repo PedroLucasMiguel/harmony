@@ -196,6 +196,11 @@ const el = {
   channelAdd: $('channel-add'),
   channelItems: $('channel-items'),
   channelsLayout: document.querySelector('.channels-layout'),
+  channelsMenu: $('channels-menu'),
+  channelList: document.querySelector('.channel-list'),
+  channelDock: $('channel-dock'),
+  mobileDock: $('mobile-dock'),
+  drawerScrim: $('drawer-scrim'),
   channelStage: $('channel-stage'),
   channelsError: $('channels-error'),
   voiceIdle: $('voice-idle'),
@@ -290,6 +295,7 @@ const el = {
   themeCustom: $('theme-custom'),
   voiceCamera: $('voice-camera'),
   voiceCam: $('voice-cam'),
+  voiceFlip: $('voice-flip'),
   voiceScreen: $('voice-screen'),
   voiceMute: $('voice-mute'),
   voiceDeafen: $('voice-deafen'),
@@ -493,6 +499,8 @@ const state = {
    * channel's own `vc-<cid>-<mid>-s` path.
    */
   share: { target: null },
+  /** Android's screen share, published natively: { channelId } while on. */
+  nativeShare: null,
   chat: { channelId: null, messages: [], pinned: [], searching: false, pendingFile: null },
   soundpad: { clips: [] },
   /**
@@ -520,7 +528,13 @@ const state = {
    */
   mentioned: new Map(),
   /** The webcam publish, which is a SECOND stream under `<nickname>-cam`. */
-  camera: { stream: null, publication: null, session: null },
+  /*
+   * facing: which way the camera points, where the device says ('user' is
+   * the front, 'environment' the back) -- a phone's two cameras have no
+   * other useful names. several: whether there is a second camera at all,
+   * which is when the switch button appears.
+   */
+  camera: { stream: null, publication: null, session: null, facing: 'user', several: false },
   voice: new VoiceSession(),
   audioAvailable: false,
   audioUnavailableReason: null,
@@ -681,7 +695,29 @@ function showError(message) {
 // Boot
 // ---------------------------------------------------------------------------
 
+/**
+ * Hide what this build cannot do.
+ *
+ * The desktop app can do everything; the browser and Android builds cannot
+ * pick a window to share, bind global hotkeys, switch GPUs and so on (see
+ * web/bridge.js). Every control for one of those carries data-cap="<name>",
+ * and CSS hides it when the root lists <name> in data-lacks -- a stylesheet
+ * rule rather than `hidden`, because plenty of code sets `hidden` on these
+ * controls for its own reasons and would otherwise put them back.
+ *
+ * data-platform is for the few layout rules that are about the device
+ * rather than the window size.
+ */
+function applyCapabilities() {
+  const lacks = Object.entries(harmony.capabilities ?? {})
+    .filter(([, can]) => !can)
+    .map(([name]) => name.toLowerCase());
+  document.documentElement.dataset.lacks = lacks.join(' ');
+  document.documentElement.dataset.platform = harmony.platform;
+}
+
 async function boot() {
+  applyCapabilities();
   state.settings = await harmony.settings.get();
   // First, before anything is drawn. Applying it later means the window
   // opens in the default palette and flashes into the chosen one.
@@ -984,7 +1020,7 @@ function currentFields(server) {
  * the owner changing it) compares the hash it reports with the one kept,
  * and only a change downloads anything.
  */
-const logoUrl = (hash) => `harmony://app/server-logo/${hash}`;
+const logoUrl = (hash) => harmony.logoUrl(hash);
 
 /** Fill a .server-badge: the logo, or the initial, plus the status dot. */
 function fillServerBadge(node, { name, logo, reachable = false, checking = false, dot = true }) {
@@ -2020,6 +2056,9 @@ async function enterChannels() {
   // to be told separately where to download from.
   await harmony.media.setServer(state.server);
   showChannelsError('');
+  // A phone opens on the channel list: nothing is selected yet, and the
+  // empty stage behind it has nothing to say.
+  if (narrowScreen.matches) openDrawer('channels');
   // Restored here rather than at boot: the column only exists in the
   // lobby, and applyMemberList draws it.
   applyMemberList(state.settings?.showMembers !== false);
@@ -2412,7 +2451,11 @@ function channelNodes(channel) {
     });
   }
 
-  li.addEventListener('click', () => onChannelClick(channel));
+  li.addEventListener('click', () => {
+    // On a phone, picking a channel is done with the drawer.
+    closeDrawer();
+    onChannelClick(channel);
+  });
   if (channel.kind === 'voice') acceptMemberDrop(li, channel, li);
 
   // Who is in this voice channel, under it, the way a sidebar shows it.
@@ -3174,6 +3217,11 @@ async function joinVoice(channel, password) {
       // The voice preference, not the capture-card one. See settings.js.
       deviceForVoiceInput(),
     );
+    // Android: the notification that keeps the call alive with the screen
+    // off. After the microphone, not before -- Android refuses a microphone
+    // service to an app that has not been granted the microphone yet, and
+    // startMic is what asks. A no-op everywhere else.
+    harmony.voiceService.start(`In ${channel.name}`, serverInfo.name || 'Harmony');
     // Tell the server the path is live, so other members know to subscribe.
     await harmony.realtime.request('voice:publishing', {
       channelId: channel.id, kind: 'v', on: true,
@@ -3392,6 +3440,9 @@ async function refreshVoiceTokens() {
 
 async function leaveVoice({ silent = false } = {}) {
   clearTimers('voice');
+  // Before the service goes: the share runs inside it.
+  await stopNativeShare();
+  harmony.voiceService.stop();
   const channelId = state.voice.channelId;
   // A screen share published into this channel has nowhere to go once we are
   // out of it, and its path stops being authorised the moment the slot is
@@ -3436,6 +3487,7 @@ function applyVoiceButtons() {
   el.voiceDeafen.toggleAttribute('data-on', state.voice.deafened);
   setButtonLabel(el.voiceCam, state.voice.camLive ? 'Stop camera' : 'Start camera');
   el.voiceCam.toggleAttribute('data-on', state.voice.camLive);
+  el.voiceFlip.hidden = !(state.voice.camLive && state.camera.several);
 
   // Both live on the strip at the bottom now, and both mean something only
   // while there is a microphone to mute. Outside a call they would set a
@@ -3444,8 +3496,10 @@ function applyVoiceButtons() {
   el.voiceMute.disabled = !live;
   el.voiceDeafen.disabled = !live;
 
-  const sharing = state.share.target?.channelId === state.voice.channelId
-    && Boolean(state.voice.channelId);
+  const sharing = Boolean(state.voice.channelId) && (
+    state.share.target?.channelId === state.voice.channelId
+    || state.nativeShare?.channelId === state.voice.channelId
+  );
   setButtonLabel(el.voiceScreen, sharing ? 'Change source or stop sharing' : 'Share screen here');
   el.voiceScreen.toggleAttribute('data-on', sharing);
 
@@ -4511,6 +4565,7 @@ function recordHotkey(title) {
 }
 
 async function editHotkey(id, label) {
+  if (!harmony.capabilities.hotkeys) return undefined;
   const value = await recordHotkey(`Hotkey: ${label}`);
   // Cancelled: nothing changes, but the bindings released for recording
   // still have to be handed back.
@@ -6464,6 +6519,9 @@ function attachmentNode(message) {
       // Cancelling a save dialog is an answer, not a failure.
       if (!result.saved) return;
       el.chatNote.textContent = `Saved ${result.name}.`;
+      // Only where there is a folder to show it in: the browser and Android
+      // hand the file to their own downloads instead.
+      if (!result.path || !harmony.capabilities.reveal) return;
       // The one useful thing to do next, offered where the answer is.
       const show = document.createElement('button');
       show.type = 'button';
@@ -7120,6 +7178,9 @@ function renderSoundpad() {
 
     // Hotkeys are personal, so this is for everybody, not only admins.
     cell.addEventListener('contextmenu', (event) => {
+      // No global hotkeys outside the desktop app; leave the long-press to
+      // the platform rather than open an empty menu.
+      if (!harmony.capabilities.hotkeys) return;
       event.preventDefault();
       const current = clipHotkey(clip.id);
       openRowMenu(clip.name, [
@@ -7296,14 +7357,81 @@ const CAMERA = { width: 640, height: 360, frameRate: 24, bitrate: 400_000 };
  * default itself, and says so. The preference is never rewritten, which is
  * what lets a camera that is plugged back in be picked up again.
  */
-const openCamera = (deviceId) => navigator.mediaDevices.getUserMedia({
+const openCamera = (deviceId, facing) => navigator.mediaDevices.getUserMedia({
   video: {
     width: { ideal: CAMERA.width },
     height: { ideal: CAMERA.height },
     frameRate: { ideal: CAMERA.frameRate },
-    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    // A device, or else a direction: facingMode is how a phone's front and
+    // back cameras are asked for, and a desktop webcam simply ignores it.
+    ...(deviceId
+      ? { deviceId: { exact: deviceId } }
+      : facing ? { facingMode: { ideal: facing } } : {}),
   },
 });
+
+/** Whether there is more than one camera to switch between. */
+async function countCameras() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    state.camera.several = devices.filter((d) => d.kind === 'videoinput').length > 1;
+  } catch {
+    state.camera.several = false;
+  }
+}
+
+/**
+ * Switch to the other camera, keeping the call's camera stream up.
+ *
+ * A phone flips between front and back by facingMode. A desktop's webcams
+ * have no facing, so there it moves to the next camera in the list instead.
+ * Either way the new picture goes out through replaceTrack (switchCam), so
+ * nobody watching has to resubscribe.
+ *
+ * The current camera is let go BEFORE the other one is opened: most phones
+ * cannot hold their front and back cameras open at the same time, and the
+ * second getUserMedia fails if the first is still running. Watchers see the
+ * last frame held for a moment instead.
+ */
+async function flipCamera() {
+  if (!state.voice.camLive) return;
+  const current = state.voice.camStream?.getVideoTracks()[0];
+  const settings = current?.getSettings?.() ?? {};
+  el.voiceFlip.disabled = true;
+  try {
+    let open;
+    let facing = state.camera.facing;
+    if (settings.facingMode) {
+      facing = settings.facingMode === 'environment' ? 'user' : 'environment';
+      open = (which) => openCamera('', which);
+    } else {
+      const cameras = (await navigator.mediaDevices.enumerateDevices())
+        .filter((d) => d.kind === 'videoinput');
+      const at = cameras.findIndex((d) => d.deviceId === settings.deviceId);
+      const next = cameras[(at + 1) % cameras.length];
+      if (!next || next.deviceId === settings.deviceId) return;
+      open = () => openCamera(next.deviceId);
+    }
+
+    current?.stop();
+    let stream = await open(facing).catch(() => null);
+    if (!stream) {
+      // The other one would not open: put the one we had back.
+      showChannelsError('Could not switch camera.');
+      stream = await openCamera(settings.deviceId ?? '').catch(() => null);
+      facing = state.camera.facing;
+    }
+    if (!stream || !await state.voice.switchCam(stream)) {
+      stream?.getTracks().forEach((t) => t.stop());
+      showChannelsError('The camera stopped. Turn it off and on again.');
+      return;
+    }
+    state.camera.facing = facing;
+    renderChannelVideo();
+  } finally {
+    el.voiceFlip.disabled = false;
+  }
+}
 
 async function startCamera() {
   if (state.camera.publication || state.voice.camLive) return;
@@ -7315,8 +7443,12 @@ async function startCamera() {
     let stream = wanted ? await openCamera(wanted).catch(() => null) : null;
     if (!stream) {
       if (wanted) deviceNote('Your chosen camera is unplugged. Using the default one.');
-      stream = await openCamera('');
+      // Whichever way it pointed last time: flipping to the back camera and
+      // turning the camera off and on again should not flip it back.
+      stream = await openCamera('', state.camera.facing);
     }
+    // Labels and the full device list exist only once a camera is open.
+    await countCameras();
 
     /*
      * Inside a voice channel the camera goes to the CHANNEL path.
@@ -7697,6 +7829,7 @@ async function enterPicker() {
  * state.share rather than reading it off state.session.
  */
 async function shareScreenHere() {
+  if (harmony.capabilities.nativeScreenShare) return shareScreenNative();
   /*
    * Already sharing: ask, rather than stop.
    *
@@ -7744,6 +7877,86 @@ async function shareScreenHere() {
   await enterPicker();
   return undefined;
 }
+
+/*
+ * Android: the screen, shared through the system's own capture.
+ *
+ * The page's WebView cannot capture the screen, so the publishing is done by
+ * native code (ScreenShare.java) -- to the same channel path the desktop's
+ * picker would publish to, announced to the channel the same way. There is
+ * no picker: Android's own prompt is the choice, and the whole screen is what
+ * it offers.
+ */
+async function shareScreenNative() {
+  if (state.nativeShare) {
+    openRowMenu('Your screen', [{
+      label: 'Stop sharing',
+      title: 'End the share for everybody watching',
+      danger: true,
+      run: () => stopNativeShare(),
+    }], { clientX: 0, clientY: 0 }, { above: el.voiceScreen });
+    return undefined;
+  }
+  if (!state.voice.channelId) {
+    showChannelsError('Join a voice channel first.');
+    return undefined;
+  }
+  await refreshVoiceTokens();
+  const channelId = state.voice.channelId;
+  const url = state.voice.publishUrls.screen;
+  if (!url) {
+    showChannelsError('This channel did not give out a screen path. Rejoin it.');
+    return undefined;
+  }
+
+  el.voiceScreen.disabled = true;
+  try {
+    await harmony.screenShare.start({
+      url,
+      iceServers: state.session?.iceServers ?? state.mosaic?.iceServers ?? [],
+      fps: 30,
+      maxBitrateKbps: 4000,
+    });
+  } catch (err) {
+    // Refusing Android's prompt is an answer, not an error.
+    if (err.code !== 'cancelled') showChannelsError(`Could not share your screen: ${err.message}`);
+    return undefined;
+  } finally {
+    el.voiceScreen.disabled = false;
+  }
+
+  // Left the channel while Android's prompt was up: take it down again.
+  if (state.voice.channelId !== channelId) {
+    await harmony.screenShare.stop();
+    return undefined;
+  }
+  state.nativeShare = { channelId };
+  await harmony.realtime
+    .request('voice:publishing', { channelId, kind: 's', on: true })
+    .catch(() => { /* the roster is cosmetic; the stream is up */ });
+  voiceCue('streamStart');
+  applyVoiceButtons();
+  return undefined;
+}
+
+async function stopNativeShare({ alreadyStopped = false } = {}) {
+  const share = state.nativeShare;
+  if (!share) return;
+  state.nativeShare = null;
+  if (!alreadyStopped) await harmony.screenShare.stop();
+  await harmony.realtime
+    .request('voice:publishing', { channelId: share.channelId, kind: 's', on: false })
+    .catch(() => { /* leaving the channel says the same thing */ });
+  voiceCue('streamStop');
+  applyVoiceButtons();
+}
+
+// Stopped from outside the app: the system's "stop sharing", or the
+// connection failed. The share is already gone; tell the channel.
+harmony.screenShare?.onEnded((reason) => {
+  if (reason === 'failed') showChannelsError('Your screen share lost its connection.');
+  stopNativeShare({ alreadyStopped: true });
+});
 
 async function loadSources() {
   el.sourceGrid.replaceChildren(message('Loading…'));
@@ -9557,6 +9770,12 @@ el.memberItems.addEventListener('scroll', () => closeMemberMenu());
 window.addEventListener('blur', () => closeMemberMenu());
 
 el.channelsMembers.addEventListener('click', async () => {
+  // A phone: the list is a drawer, opened and closed here, and the desktop
+  // setting for whether the column is shown is left alone.
+  if (narrowScreen.matches) {
+    toggleDrawer('members');
+    return;
+  }
   const show = el.memberList.hidden;
   applyMemberList(show);
   await harmony.settings.set({ showMembers: show });
@@ -9699,6 +9918,7 @@ el.voiceOutput.addEventListener('change', async () => {
 });
 
 el.voiceScreen.addEventListener('click', () => shareScreenHere());
+el.voiceFlip.addEventListener('click', () => flipCamera());
 
 /*
  * The soundpad's volume.
@@ -10745,6 +10965,234 @@ el.updateBannerLater.addEventListener('click', async () => {
     state.settings = await harmony.settings.set({ updateDismissed: status.version });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phones
+// ---------------------------------------------------------------------------
+//
+// Below 720 px the channel and member lists are drawers (see "Phones" in
+// styles.css). The CSS does the layout; this opens and closes them, moves the
+// call controls between the sidebar and the bottom dock, and answers
+// Android's back button.
+
+const narrowScreen = window.matchMedia('(max-width: 720px)');
+
+function openDrawer(which) {
+  if (!narrowScreen.matches) return;
+  // The member list renders only while it is shown; the drawer shows it
+  // without touching the desktop's saved preference.
+  if (which === 'members') applyMemberList(true);
+  el.channelsLayout.dataset.drawer = which;
+}
+
+function closeDrawer() {
+  if (!el.channelsLayout.dataset.drawer) return;
+  el.channelsLayout.dataset.drawer = '';
+}
+
+function toggleDrawer(which) {
+  if (el.channelsLayout.dataset.drawer === which) closeDrawer();
+  else openDrawer(which);
+}
+
+/**
+ * The call panel and the self strip: in the sidebar on a wide window, in the
+ * dock along the bottom on a narrow one. Moved rather than duplicated, so
+ * every listener and every `el.` reference keeps pointing at the one copy.
+ */
+function applyNarrowLayout({ initial = false } = {}) {
+  if (narrowScreen.matches) {
+    if (el.channelDock.parentElement !== el.mobileDock) el.mobileDock.append(el.channelDock);
+    return;
+  }
+  if (el.channelDock.parentElement !== el.channelList) el.channelList.append(el.channelDock);
+  closeDrawer();
+  // Widened past the breakpoint: back to what the desktop setting says,
+  // now that the member list is a column again. Not at start-up, when there
+  // is no member list to show yet -- enterChannels applies it.
+  if (!initial && state.auth.user) applyMemberList(state.settings?.showMembers !== false);
+}
+narrowScreen.addEventListener('change', () => applyNarrowLayout());
+applyNarrowLayout({ initial: true });
+
+el.channelsMenu.addEventListener('click', () => toggleDrawer('channels'));
+el.drawerScrim.addEventListener('click', () => closeDrawer());
+
+/*
+ * Android's back button, sent by MainActivity as a "harmonyback" event.
+ *
+ * Back closes whatever is on top -- a dialog, a menu, the emoji picker, a
+ * drawer -- and with nothing left to close, it goes back to the channel
+ * list. Only from there does it leave, and it leaves by sending the app to
+ * the background rather than closing it, so a call carries on.
+ */
+function handleBack() {
+  const dialog = [...document.querySelectorAll('dialog[open]')].pop();
+  if (dialog) {
+    if (typeof dialog.requestClose === 'function') dialog.requestClose();
+    else dialog.close();
+    return;
+  }
+  const overlays = [
+    [el.lightbox, closeLightbox],
+    [el.emojiPop, closeEmojiPicker],
+    [el.soundpad, closeSoundpad],
+    [el.rowMenu, closeRowMenu],
+    [el.peerMenu, closePeerMenu],
+    [el.memberMenu, closeMemberMenu],
+    [el.serverMenu, closeServerMenu],
+  ];
+  for (const [node, close] of overlays) {
+    if (node && !node.hidden) {
+      close();
+      return;
+    }
+  }
+  if (el.channelsLayout.dataset.drawer) {
+    closeDrawer();
+    return;
+  }
+  const view = document.querySelector('.view[data-active]')?.id;
+  if (view === 'view-channels' && narrowScreen.matches) {
+    openDrawer('channels');
+    return;
+  }
+  harmony.moveToBack?.();
+}
+window.addEventListener('harmonyback', handleBack);
+
+/*
+ * Swiping the drawers open and shut.
+ *
+ * Right opens the channels, left opens the members, and the opposite swipe
+ * closes whichever is open -- from anywhere on the screen, not only the
+ * edge, because Android's own back gesture owns the edges. The drawer
+ * follows the finger and settles open or shut on release.
+ *
+ * The direction is decided once, on the first few pixels: mostly sideways
+ * is a swipe, mostly up or down is a scroll and is left entirely alone.
+ * Nothing here calls preventDefault, so a scroll is never held up waiting to
+ * find out which it is.
+ */
+const SWIPE_DECIDE_PX = 10;
+/** How far, as a share of the drawer's width, a release has to have come. */
+const SWIPE_COMMIT = 0.35;
+/** ...or how fast, in px/ms, for a flick that did not travel far. */
+const SWIPE_FLICK = 0.5;
+
+let swipe = null;
+
+/** Things a sideways drag means something else on. */
+function swipeIgnored(target) {
+  if (target.closest?.('input, textarea, select, dialog, .emoji-pop, .soundpad, .lightbox, .row-menu, .peer-menu')) {
+    return true;
+  }
+  // A strip that scrolls sideways itself: a code block, a wide table.
+  for (let node = target; node && node !== document.body; node = node.parentElement) {
+    if (node.scrollWidth > node.clientWidth + 1) {
+      const overflow = getComputedStyle(node).overflowX;
+      if (overflow === 'auto' || overflow === 'scroll') return true;
+    }
+  }
+  return false;
+}
+
+function swipeDrawerNode(which) {
+  return which === 'channels' ? el.channelList : el.memberList;
+}
+
+/** Where the drawer sits for `shown` (0 shut .. 1 open), in px. */
+function swipeOffset(which, shown, width) {
+  const hidden = (1 - shown) * width;
+  return which === 'channels' ? -hidden : hidden;
+}
+
+function swipePaint(shown) {
+  const node = swipeDrawerNode(swipe.drawer);
+  node.style.transform = `translateX(${swipeOffset(swipe.drawer, shown, swipe.width)}px)`;
+  el.drawerScrim.style.opacity = String(shown);
+}
+
+function swipeRelease() {
+  for (const node of [el.channelList, el.memberList, el.drawerScrim]) {
+    node.style.transition = '';
+    node.style.transform = '';
+    node.style.visibility = '';
+    node.style.opacity = '';
+  }
+}
+
+document.addEventListener('touchstart', (event) => {
+  swipe = null;
+  if (!narrowScreen.matches || event.touches.length !== 1) return;
+  if (!document.getElementById('view-channels')?.hasAttribute('data-active')) return;
+  if (swipeIgnored(event.target)) return;
+  const touch = event.touches[0];
+  swipe = {
+    x0: touch.clientX, y0: touch.clientY, t0: event.timeStamp,
+    axis: null, drawer: null, opening: false, width: 0, shown: 0,
+    open: el.channelsLayout.dataset.drawer || '',
+  };
+}, { passive: true });
+
+document.addEventListener('touchmove', (event) => {
+  if (!swipe || swipe.axis === 'y') return;
+  const touch = event.touches[0];
+  const dx = touch.clientX - swipe.x0;
+  const dy = touch.clientY - swipe.y0;
+
+  if (!swipe.axis) {
+    if (Math.abs(dx) < SWIPE_DECIDE_PX && Math.abs(dy) < SWIPE_DECIDE_PX) return;
+    swipe.axis = Math.abs(dx) > Math.abs(dy) * 1.3 ? 'x' : 'y';
+    if (swipe.axis === 'y') return;
+
+    // Which drawer this drag is about, and whether it opens or shuts it.
+    if (!swipe.open) {
+      swipe.drawer = dx > 0 ? 'channels' : 'members';
+      swipe.opening = true;
+    } else if ((swipe.open === 'channels' && dx < 0) || (swipe.open === 'members' && dx > 0)) {
+      swipe.drawer = swipe.open;
+      swipe.opening = false;
+    } else {
+      swipe.axis = 'y'; // dragging an open drawer further open: nothing to do
+      return;
+    }
+    if (swipe.drawer === 'members') applyMemberList(true);
+    const node = swipeDrawerNode(swipe.drawer);
+    swipe.width = node.getBoundingClientRect().width || 300;
+    for (const n of [node, el.drawerScrim]) n.style.transition = 'none';
+    node.style.visibility = 'visible';
+  }
+
+  const travel = swipe.drawer === 'channels' ? dx : -dx;
+  const shown = swipe.opening
+    ? Math.min(1, Math.max(0, travel / swipe.width))
+    : Math.min(1, Math.max(0, 1 + travel / swipe.width));
+  swipe.shown = shown;
+  swipePaint(shown);
+}, { passive: true });
+
+function endSwipe(event) {
+  if (!swipe || swipe.axis !== 'x') {
+    swipe = null;
+    return;
+  }
+  const touch = event.changedTouches?.[0];
+  const dx = touch ? touch.clientX - swipe.x0 : 0;
+  const velocity = Math.abs(dx) / Math.max(1, event.timeStamp - swipe.t0);
+  const flick = velocity > SWIPE_FLICK;
+  const open = swipe.opening
+    ? swipe.shown > SWIPE_COMMIT || flick
+    : !(swipe.shown < 1 - SWIPE_COMMIT || flick);
+  const which = swipe.drawer;
+  swipe = null;
+  // Back to the stylesheet's transition, then let the attribute settle it.
+  swipeRelease();
+  if (open) openDrawer(which);
+  else closeDrawer();
+}
+document.addEventListener('touchend', endSwipe, { passive: true });
+document.addEventListener('touchcancel', endSwipe, { passive: true });
 
 // Release the username even if the user closes the window mid-stream.
 window.addEventListener('beforeunload', () => {

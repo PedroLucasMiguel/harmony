@@ -233,6 +233,15 @@ body {
 }
 
 body {
+  box-sizing: border-box;
+  /* Zero everywhere but the Android app, which draws edge to edge and
+     reports the system bars through these (Capacitor's SystemBars sets the
+     --safe-area-inset-* variables). */
+  padding:
+    var(--safe-area-inset-top, env(safe-area-inset-top, 0px))
+    var(--safe-area-inset-right, env(safe-area-inset-right, 0px))
+    var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))
+    var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
   background: var(--bg);
   color: var(--text);
   font: 14px/1.5 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -342,7 +351,10 @@ p {
 
 .view {
   display: none;
-  height: 100vh;
+  /* 100% of the body rather than 100vh: on Android the body is padded by
+     the status and navigation bars (see "Phones" at the end), and 100vh
+     would run underneath them. */
+  height: 100%;
   flex-direction: column;
 }
 .view[data-active] {
@@ -4679,4 +4691,192 @@ input[type='range'][data-boosted] {
     gap: 12px;
     padding: 16px 0;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Phones
+
+   Below 720 px the channels view is one column: whatever you are looking at
+   (the chat, the streams, or the voice roster) fills the screen. The channel
+   list slides in from the left (the ☰ button) and the member list from the
+   right (Members); the call controls and you are lifted out of the channel
+   list into a dock along the bottom (#mobile-dock, moved there by
+   applyNarrowLayout in app.js), because "Mute" and "Disconnect" cannot live
+   behind a drawer.
+
+   Width rather than "is this a phone", so a narrow desktop window and a
+   phone browser get it too.
+   --------------------------------------------------------------------------- */
+
+.narrow-only,
+.mobile-dock,
+.drawer-scrim {
+  display: none;
+}
+.channel-dock {
+  margin-top: auto;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .narrow-only {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #view-channels .bar {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  #view-channels .bar-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
+  }
+  #view-channels .bar-right {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  #server-name {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #channels-role {
+    display: none;
+  }
+  #channels-menu {
+    font-size: 1.1rem;
+    padding: 4px 10px;
+  }
+
+  .channels-layout,
+  .channels-layout[data-members] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0;
+    padding: 0.5rem;
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  /* The two drawers. Out of the grid (fixed), so the one column left is
+     the stage's, whichever of its children is showing. */
+  .channel-list,
+  .member-list {
+    position: fixed;
+    z-index: 35;
+    top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    width: min(85vw, 340px);
+    box-sizing: border-box;
+    padding: 0.8rem;
+    background: var(--bg);
+    border: none;
+    box-shadow: 0 0 32px rgb(0 0 0 / 0.5);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0.2s;
+  }
+  .channel-list {
+    left: 0;
+    transform: translateX(-105%);
+  }
+  .member-list {
+    right: 0;
+    transform: translateX(105%);
+  }
+  .channels-layout[data-drawer='channels'] .channel-list,
+  .channels-layout[data-drawer='members'] .member-list {
+    transform: none;
+    visibility: visible;
+  }
+
+  .drawer-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 34;
+    background: rgb(0 0 0 / 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .channels-layout[data-drawer='channels'] .drawer-scrim,
+  .channels-layout[data-drawer='members'] .drawer-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .mobile-dock {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    padding: 0 0.5rem 0.5rem;
+  }
+  .mobile-dock .channel-dock {
+    margin-top: 0;
+  }
+  .mobile-dock .voice-panel {
+    margin-bottom: 0.4rem;
+  }
+  .mobile-dock .self-strip {
+    margin-top: 0;
+  }
+
+  /* Bigger targets for a finger. */
+  .channel-list li,
+  #member-items .member-row {
+    min-height: 40px;
+  }
+  .icon-btn,
+  .voice-action {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .channel-video {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ask {
+    max-width: calc(100vw - 24px);
+  }
+}
+
+/*
+ * A touchscreen has no hover. Most hover-revealed tools still work -- a tap
+ * leaves the hover state on what was tapped, so tapping a message shows its
+ * tools -- but a control whose tap would ALSO do something else (picking the
+ * server, inserting the emoji) has to be visible without one.
+ */
+@media (hover: none) {
+  .server-option-forget,
+  .emoji-cell-wrap .emoji-remove {
+    opacity: 0.8;
+  }
+}
+
+/* ---------- what this build cannot do ---------- */
+
+/*
+ * The browser and Android builds list what they lack on the root
+ * (applyCapabilities in app.js); every control for one of those carries
+ * data-cap. !important because those controls are shown and hidden by
+ * script for their own reasons, and none of those reasons should win.
+ */
+:root[data-lacks~='screenshare'] [data-cap~='screenshare'],
+:root[data-lacks~='clips'] [data-cap~='clips'],
+:root[data-lacks~='gpu'] [data-cap~='gpu'],
+:root[data-lacks~='hotkeys'] [data-cap~='hotkeys'],
+:root[data-lacks~='scale'] [data-cap~='scale'],
+:root[data-lacks~='updates'] [data-cap~='updates'] {
+  display: none !important;
 }

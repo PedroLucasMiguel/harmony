@@ -40,7 +40,9 @@ or with Docker. See [docker/](docker/).
 
 **Client:** download it from
 [Releases](https://github.com/PedroLucasMiguel/harmony/releases/latest).
-Windows (`-setup.exe`), Linux (`.AppImage`) and macOS (`.dmg`). The app
+Windows (`-setup.exe`), Linux (`.AppImage`), macOS (`.dmg`) and Android
+(`.apk`: voice, streams, camera and chat, everything but sharing the phone's
+screen; see [client/android](client/android/README.md)). The app
 offers new versions itself: it installs them itself on Windows and Linux,
 and on macOS it opens the download page.
 

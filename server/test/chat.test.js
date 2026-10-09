@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import {
   Chat, Emojis, ftsPhrase, mediaTypeOf, mentionsIn, MAX_UPLOAD_BYTES,
 } from '../src/chat.js';
+import { mintMediaKey, verifyMediaKey } from '../src/media-keys.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverEntry = resolve(here, '..', 'src', 'index.js');
@@ -273,6 +274,27 @@ describe('uploads', () => {
   it('refuses a hash that is not a hash', async () => {
     const res = await api('/api/uploads/..%2F..%2Fetc%2Fpasswd', { token: memberToken });
     assert.equal(res.status, 400);
+  });
+
+  it('serves it by media key, with no headers at all', async () => {
+    const issued = await api('/api/media-key', { token: memberToken });
+    assert.equal(issued.status, 200);
+    assert.match(issued.body.key, /^m1\./);
+
+    const res = await fetch(`${BASE}/api/media/${hash}?k=${encodeURIComponent(issued.body.key)}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await res.arrayBuffer()), PNG);
+  });
+
+  it('refuses a media download with no key or a forged one', async () => {
+    assert.equal((await fetch(`${BASE}/api/media/${hash}`)).status, 401);
+    const forged = mintMediaKey('not the server secret', 1);
+    assert.equal((await fetch(`${BASE}/api/media/${hash}?k=${forged}`)).status, 401);
+  });
+
+  it('refuses a media key without a login', async () => {
+    assert.equal((await api('/api/media-key')).status, 401);
   });
 
   it('attaches to a message and records its media type', async () => {
@@ -956,5 +978,28 @@ describe('the disk quota', () => {
     });
     assert.equal(res.status, 507, 'a full disk stops every SQLite write, so refuse early');
     assert.equal(res.body.error, 'server_full');
+  });
+});
+
+describe('media keys', () => {
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+  const now = 1_000 * WEEK + 12345;
+
+  it('names the account it was made for', () => {
+    assert.equal(verifyMediaKey('s', mintMediaKey('s', 42, now), now), 42);
+  });
+
+  it('is still good the week after, and not the week after that', () => {
+    const key = mintMediaKey('s', 42, now);
+    assert.equal(verifyMediaKey('s', key, now + WEEK), 42);
+    assert.equal(verifyMediaKey('s', key, now + 2 * WEEK), null);
+  });
+
+  it('refuses another secret, a tampered account, and a channel token', () => {
+    const key = mintMediaKey('s', 42, now);
+    assert.equal(verifyMediaKey('other', key, now), null);
+    assert.equal(verifyMediaKey('s', key.replace('m1.16.', 'm1.17.'), now), null);
+    assert.equal(verifyMediaKey('s', 'h1.1.1.rw.abc.def', now), null);
+    assert.equal(verifyMediaKey('s', undefined, now), null);
   });
 });

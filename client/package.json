@@ -1,6 +1,6 @@
 {
   "name": "@harmony/client",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "description": "Harmony desktop client: share a screen or window, or watch someone else's",
   "author": "Pedro Lucas Miguel",
@@ -20,9 +20,15 @@
     "build": "node scripts/build.js fast",
     "build:release": "node scripts/build.js release",
     "build:zip": "node scripts/build.js fast --win zip",
-    "build:all": "node scripts/build.js release --win nsis --linux AppImage --mac dmg"
+    "build:all": "node scripts/build.js release --win nsis --linux AppImage --mac dmg",
+    "build:web": "node scripts/build-web.js",
+    "web": "node scripts/serve-web.js",
+    "android:sync": "node scripts/build-web.js && cap sync android"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
     "electron": "^44.4.3",
     "electron-builder": "^26.15.3"
   },

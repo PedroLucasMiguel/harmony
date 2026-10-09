@@ -2,6 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- For the browser and Android builds; the desktop window ignores it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self'; script-src 'self'"
@@ -175,7 +177,7 @@
              panel they have no reason to suspect contains something useful,
              and this one costs about 10% of a laptop's performance to miss.
              See DUAL_GPU_WEIRDNESS.md. -->
-        <div class="hint" id="gpu-hint" hidden>
+        <div class="hint" id="gpu-hint" data-cap="gpu" hidden>
           <p id="gpu-hint-text"></p>
         </div>
 
@@ -188,7 +190,7 @@
           <div class="options-body">
             <button class="ghost small" id="test-connection">Test my connection</button>
 
-            <label class="check">
+            <label class="check" data-cap="clips">
               <input type="checkbox" id="clips-enabled" />
               <span>
                 Keep the last 30 seconds for clipping
@@ -199,7 +201,7 @@
               </span>
             </label>
 
-            <label class="check">
+            <label class="check" data-cap="gpu">
               <input type="checkbox" id="hw-encoding" checked />
               <span>
                 Encode on the GPU
@@ -210,7 +212,7 @@
               </span>
             </label>
 
-            <label class="field" id="gpu-preference-field" hidden>
+            <label class="field" id="gpu-preference-field" data-cap="gpu" hidden>
               <span>Run Harmony on</span>
               <select id="gpu-preference">
                 <option value="auto">Whichever GPU Windows picks</option>
@@ -285,6 +287,10 @@
                .self-strip. All that is left up here is the server. -->
           <!-- The server's own name, once it says what it is. -->
           <!-- Its logo, or its initial while it has none. -->
+          <!-- A phone only: the channel list is a drawer there, and this opens
+               it. See the narrow-screen rules at the end of styles.css. -->
+          <button class="ghost small narrow-only" id="channels-menu"
+                  title="Channels" aria-label="Channels">&#9776;</button>
           <span class="server-badge" id="server-icon" aria-hidden="true"></span>
           <strong class="brand-small" id="server-name">Harmony</strong>
           <span class="muted" id="channels-role"></span>
@@ -328,6 +334,12 @@
           <ul id="channel-items"></ul>
           <p class="error" id="channels-error" hidden></p>
 
+          <!--
+            The voice panel and you, together, so a phone can lift them out of
+            the channel drawer and keep them on screen (#mobile-dock below):
+            "Disconnect" and "Mute" are not things to open a drawer for.
+          -->
+          <div class="channel-dock" id="channel-dock">
           <!--
             The call lives at the bottom of the channel list, where it is in
             every other app of this shape. It was in the middle column, which
@@ -389,9 +401,22 @@
               >
                 Start camera
               </button>
+              <!-- Only while the camera is on, and only where there is a
+                   second one to switch to: front and back on a phone, the
+                   next webcam on a desktop. See flipCamera. -->
+              <button
+                class="voice-action"
+                id="voice-flip"
+                data-glyph="&#128260;"
+                title="Switch camera"
+                hidden
+              >
+                Switch camera
+              </button>
               <button
                 class="voice-action"
                 id="voice-screen"
+                data-cap="screenshare"
                 data-glyph="&#128421;"
                 title="Share screen here"
               >
@@ -446,6 +471,7 @@
               <button class="icon-btn" id="voice-config" data-glyph="&#9881;"
                       title="Devices and appearance">Devices</button>
             </div>
+          </div>
           </div>
         </aside>
 
@@ -589,7 +615,13 @@
           </div>
           <ul id="member-items"></ul>
         </aside>
+
+        <!-- Behind an open drawer, on a phone; tapping it closes the drawer. -->
+        <div class="drawer-scrim" id="drawer-scrim"></div>
       </div>
+
+      <!-- On a phone, the call controls and you (#channel-dock) move here. -->
+      <div class="mobile-dock" id="mobile-dock"></div>
     </section>
 
     <!--
@@ -693,7 +725,7 @@
           </button>
           <button class="ghost" id="broadcast-watch">Watch others</button>
           <button class="ghost icon" id="monitor-toggle" title="Hear my own audio">&#127911;</button>
-          <button class="ghost" id="broadcast-clip" hidden>&#9986; Clip</button>
+          <button class="ghost" id="broadcast-clip" data-cap="clips" hidden>&#9986; Clip</button>
           <button class="danger" id="stop-stream">Stop streaming</button>
         </div>
       </header>
@@ -746,7 +778,7 @@
           <input id="volume" type="range" min="0" max="350" value="100" />
           <span class="volume-value" id="volume-label">100%</span>
           <button class="ghost icon" id="watch-fullscreen" title="Fullscreen">&#9974;</button>
-          <button class="ghost" id="watch-clip" hidden>&#9986; Clip</button>
+          <button class="ghost" id="watch-clip" data-cap="clips" hidden>&#9986; Clip</button>
         </div>
         <p class="stats" id="watch-stats"></p>
       </footer>
@@ -1036,7 +1068,7 @@
           Size, next to colour, because both are about reading the app
           rather than about the hardware under it.
         -->
-        <section class="settings-section">
+        <section class="settings-section" data-cap="scale">
           <h3>Size</h3>
           <p class="muted">
             Everything at once -- the type, the icons, the pictures and the
@@ -1179,7 +1211,7 @@
           on the clip, next to the clip, rather than from a list here that
           would have to repeat the whole soundpad.
         -->
-        <section class="settings-section">
+        <section class="settings-section" data-cap="hotkeys">
           <h3>Hotkeys</h3>
           <p class="muted">
             Work anywhere, even while a game has focus. A combination you bind
@@ -1196,7 +1228,7 @@
           release page instead, since an unsigned Mac app cannot install its
           own update.
         -->
-        <section class="settings-section">
+        <section class="settings-section" data-cap="updates">
           <h3>Updates</h3>
           <div class="update-row">
             <div class="update-text">
@@ -1218,7 +1250,7 @@
       A newer version exists. Its own small card rather than the toast: it
       needs two answers (do it / later), and it stays until one is given.
     -->
-    <div class="update-banner" id="update-banner" role="status" hidden>
+    <div class="update-banner" id="update-banner" data-cap="updates" role="status" hidden>
       <span id="update-banner-text"></span>
       <button type="button" class="primary small" id="update-banner-action">Download</button>
       <button type="button" class="ghost small" id="update-banner-later">Later</button>

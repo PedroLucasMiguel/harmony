@@ -1,0 +1,12 @@
+{
+  "appId": "com.harmony.client",
+  "appName": "Harmony",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0b0d12"
+  }
+}
