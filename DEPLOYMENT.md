@@ -117,10 +117,31 @@ The installer is safe to re-run. It:
 - creates the system user `harmony`;
 - writes `/etc/harmony/mediamtx.yml` and, on first run only,
   `/etc/harmony/harmony.env` from `.env.example`;
-- registers `harmony-server`, `mediamtx` and `harmony-ip-watch.timer`.
+- registers `harmony-server`, `mediamtx` and `harmony-ip-watch.timer`;
+- **then, on a fresh install, walks you through the rest** -- the steps in
+  sections 2 to 4 below, done for you:
+  - asks for the **domain** clients will use, and checks it resolves to this
+    machine (and warns if it is behind Cloudflare's proxy, which must be off);
+  - asks how to do **HTTPS**:
+    1. **Caddy, automatic certificate** -- this machine is reachable on ports 80
+       and 443 (a cloud VM, a rented server);
+    2. **certbot over Cloudflare DNS** -- ports 80/443 are blocked (a home
+       connection); asks for the HTTPS port (default 8444), an email and a
+       Cloudflare API token, and installs the renewal hook;
+    3. **none** -- you run your own reverse proxy;
+  - asks for the optional **server password**;
+  - writes `harmony.env`, opens the ports in `ufw` if it is active, starts
+    everything, checks the HTTPS address answers, and prints the **owner key**
+    and the ports your router or cloud firewall still has to let in.
 
-An existing `harmony.env` is never overwritten, so upgrading is just
-`git pull && sudo ./install.sh`.
+  Leave the domain empty to skip it and configure by hand. `--setup` runs it
+  again on a configured server, `--no-setup` never runs it, and every answer
+  can be given as an environment variable for an unattended install -- see
+  `./install.sh --help`.
+
+An existing `harmony.env` is only changed by the setup, and only when you run
+it, so upgrading is just `git pull && sudo ./install.sh` -- which restarts the
+services onto the new code and leaves the configuration alone.
 
 ## 2. Configure
 
