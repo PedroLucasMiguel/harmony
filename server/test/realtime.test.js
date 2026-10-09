@@ -220,6 +220,26 @@ describe('the socket handshake', () => {
   });
 });
 
+describe('somebody new registering', () => {
+  it('is announced to everybody already connected', async () => {
+    // The member list is drawn from the accounts a client already holds;
+    // without this push a new account appeared in nobody's list until a
+    // restart, even with its owner online.
+    const watcher = connect(memberToken);
+    await watcher.hello();
+    const res = await api('/api/accounts/register', {
+      method: 'POST', body: { nickname: 'newcomer', password: 'hunter22' },
+    });
+    assert.equal(res.status, 201);
+    const push = await watcher.next((m) => m.type === 'user:updated' && m.user?.nickname === 'newcomer');
+    assert.equal(push.user.id, res.body.user.id);
+    // The public view only: nothing about the password or the session.
+    assert.equal(push.user.passwordHash, undefined);
+    assert.equal(push.token, undefined);
+    watcher.ws.close();
+  });
+});
+
 describe('voice presence', () => {
   it('joins, gets a slot, and publishes a roster to everyone', async () => {
     const watcher = connect(ownerToken);

@@ -1,9 +1,13 @@
 {
   "name": "@harmony/client",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
   "description": "Harmony desktop client: share a screen or window, or watch someone else's",
   "author": "Pedro Lucas Miguel",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PedroLucasMiguel/harmony.git"
+  },
   "main": "src/main/index.js",
   "scripts": {
     "start": "node scripts/start.js",
@@ -27,6 +31,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "mp4-muxer": "^5.2.2"
   }
 }

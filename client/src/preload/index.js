@@ -25,6 +25,32 @@ contextBridge.exposeInMainWorld('harmony', {
   relaunch: invoke('app:relaunch'),
   setScale: invoke('app:scale'),
 
+  logos: {
+    ensure: invoke('logos:ensure'),
+  },
+
+  version: invoke('app:version'),
+
+  updates: {
+    get: invoke('updates:get'),
+    check: invoke('updates:check'),
+    download: invoke('updates:download'),
+    install: invoke('updates:install'),
+    open: invoke('updates:open'),
+
+    /**
+     * The update status changed: a check started or finished, a download
+     * moved, an update is ready. Always the whole status, never a delta.
+     * @param {(status: object) => void} handler
+     * @returns {() => void} unsubscribe
+     */
+    onStatus(handler) {
+      const listener = (_event, status) => handler(status);
+      ipcRenderer.on('updates:status', listener);
+      return () => ipcRenderer.removeListener('updates:status', listener);
+    },
+  },
+
   hotkeys: {
     set: invoke('hotkeys:set'),
 
@@ -146,6 +172,7 @@ contextBridge.exposeInMainWorld('harmony', {
     deleteClip: invoke('api:delete-clip'),
     reorderClips: invoke('api:reorder-clips'),
     health: invoke('api:health'),
+    probe: invoke('api:probe'),
     streams: invoke('api:streams'),
     session: invoke('api:session'),
     heartbeat: invoke('api:heartbeat'),

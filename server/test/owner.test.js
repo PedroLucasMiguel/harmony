@@ -321,3 +321,103 @@ describe('server settings', () => {
     assert.equal(res.body.passwordRequired, false);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe('the server logo', () => {
+  // A real 1x1 PNG, so the content type and the bytes are both honest.
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const upload = async (bytes, type, token) => {
+    const res = await fetch(`${BASE}/api/uploads`, {
+      method: 'POST',
+      headers: { 'Content-Type': type, Authorization: `Bearer ${token}` },
+      body: bytes,
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  let hash;
+
+  before(async () => {
+    const res = await upload(PNG, 'image/png', ownerToken);
+    assert.equal(res.status, 201);
+    hash = res.body.hash;
+  });
+
+  it('starts as none, and there is nothing to fetch', async () => {
+    assert.equal((await api('/api/health')).body.logo, null);
+    assert.equal((await api('/api/server/logo')).status, 404);
+  });
+
+  it('is the owner\'s to set, not an admin\'s or a member\'s', async () => {
+    for (const token of [memberToken, adminToken]) {
+      const res = await api('/api/server', { method: 'POST', body: { logo: hash }, token });
+      assert.equal(res.status, 403);
+    }
+  });
+
+  it('refuses something that is not an upload', async () => {
+    const bad = await api('/api/server', { method: 'POST', body: { logo: 'nope' }, token: ownerToken });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error, 'bad_hash');
+    const missing = await api('/api/server', {
+      method: 'POST', body: { logo: 'a'.repeat(64) }, token: ownerToken,
+    });
+    assert.equal(missing.status, 400);
+    assert.equal(missing.body.error, 'no_such_upload');
+  });
+
+  it('is set by the owner and reported by health as its hash', async () => {
+    const res = await api('/api/server', { method: 'POST', body: { logo: hash }, token: ownerToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.server.logo, hash);
+    assert.equal((await api('/api/health')).body.logo, hash);
+  });
+
+  it('SETTING IT DOES NOT TOUCH THE NAME OR THE PASSWORD', async () => {
+    const res = await api('/api/server', { token: ownerToken });
+    assert.equal(res.body.server.name, 'Still Here');
+    assert.equal(res.body.server.passwordRequired, false);
+  });
+
+  it('is served with no login at all -- the server list asks without a session', async () => {
+    const res = await fetch(`${BASE}/api/server/logo`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.equal(res.headers.get('x-harmony-hash'), hash);
+    assert.deepEqual(Buffer.from(await res.arrayBuffer()), PNG);
+  });
+
+  it('BUT STILL BEHIND THE DOOR PASSWORD', async () => {
+    await api('/api/server', { method: 'POST', body: { password: 'logodoor' }, token: ownerToken });
+    try {
+      assert.equal((await fetch(`${BASE}/api/server/logo`)).status, 401);
+      // Nor does health hand out the hash to somebody without the key.
+      assert.equal((await api('/api/health')).body.logo, undefined);
+      const res = await fetch(`${BASE}/api/server/logo`, { headers: { 'x-harmony-password': 'logodoor' } });
+      assert.equal(res.status, 200);
+      assert.equal((await api('/api/health', { password: 'logodoor' })).body.logo, hash);
+    } finally {
+      await api('/api/server', {
+        method: 'POST', body: { password: '' }, token: ownerToken, password: 'logodoor',
+      });
+    }
+  });
+
+  it('SURVIVES A RESTART', async () => {
+    await stopHarmony();
+    await startHarmony();
+    assert.equal((await api('/api/health')).body.logo, hash);
+    assert.equal((await fetch(`${BASE}/api/server/logo`)).status, 200);
+  });
+
+  it('can be taken away again', async () => {
+    const res = await api('/api/server', { method: 'POST', body: { logo: null }, token: ownerToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.server.logo, null);
+    assert.equal((await api('/api/health')).body.logo, null);
+    assert.equal((await api('/api/server/logo')).status, 404);
+  });
+});

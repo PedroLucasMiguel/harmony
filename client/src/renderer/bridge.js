@@ -35,6 +35,18 @@ export const harmony = {
 
   relaunch: lift(raw.relaunch),
   setScale: lift(raw.setScale),
+  logos: {
+    ensure: lift(raw.logos.ensure),
+  },
+  version: lift(raw.version),
+  updates: {
+    get: lift(raw.updates.get),
+    check: lift(raw.updates.check),
+    download: lift(raw.updates.download),
+    install: lift(raw.updates.install),
+    open: lift(raw.updates.open),
+    onStatus: (handler) => raw.updates.onStatus(handler),
+  },
   hotkeys: {
     set: lift(raw.hotkeys.set),
     onFired: (handler) => raw.hotkeys.onFired(handler),
@@ -69,6 +81,7 @@ export const harmony = {
     setPassword: lift(raw.api.setPassword),
     setSessionToken: lift(raw.api.setSessionToken),
     health: lift(raw.api.health),
+    probe: lift(raw.api.probe),
     streams: lift(raw.api.streams),
     session: lift(raw.api.session),
     heartbeat: lift(raw.api.heartbeat),

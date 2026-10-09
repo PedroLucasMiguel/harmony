@@ -127,6 +127,24 @@ const $ = (id) => document.getElementById(id);
 const el = {
   views: document.querySelectorAll('.view'),
   serverUrl: $('server-url'),
+  stepServer: $('step-server'),
+  stepAccount: $('step-account'),
+  serverContinue: $('server-continue'),
+  serverHint: $('server-hint'),
+  serverChip: $('server-chip'),
+  serverChipBadge: $('server-chip-badge'),
+  serverLogoPreview: $('server-logo-preview'),
+  serverLogoPick: $('server-logo-pick'),
+  serverLogoRemove: $('server-logo-remove'),
+  serverChipName: $('server-chip-name'),
+  serverChipHost: $('server-chip-host'),
+  serverBackRow: $('server-back-row'),
+  serverBack: $('server-back'),
+  serverMenu: $('server-menu'),
+  serverSearch: $('server-search'),
+  serverOptions: $('server-options'),
+  serverOptionsEmpty: $('server-options-empty'),
+  serverAdd: $('server-add'),
   passwordField: $('password-field'),
   password: $('server-password'),
   username: $('username'),
@@ -152,6 +170,7 @@ const el = {
   avatarFile: $('avatar-file'),
   channelsRole: $('channels-role'),
   serverName: $('server-name'),
+  serverIcon: $('server-icon'),
   serverSettings: $('server-settings'),
   serverDialog: $('server-dialog'),
   serverForm: $('server-form'),
@@ -253,6 +272,14 @@ const el = {
   soundVolume: $('sound-volume'),
   soundVolumeLabel: $('sound-volume-label'),
   hotkeyList: $('hotkey-list'),
+  updateVersion: $('update-version'),
+  updateStatus: $('update-status'),
+  updateCheck: $('update-check'),
+  updateAction: $('update-action'),
+  updateBanner: $('update-banner'),
+  updateBannerText: $('update-banner-text'),
+  updateBannerAction: $('update-banner-action'),
+  updateBannerLater: $('update-banner-later'),
   hotkeyRecorder: $('hotkey-recorder'),
   hotkeyRecorderTitle: $('hotkey-recorder-title'),
   hotkeyCapture: $('hotkey-capture'),
@@ -715,9 +742,32 @@ async function boot() {
 
   await refreshGpuStatus();
 
+  // A saved server skips the first step: the address and its password are
+  // already known, so the first thing to ask is who you are. With nothing
+  // saved, the first thing to ask is where.
+  //
+  // The last server selected is the one that opens, and its account screen is
+  // drawn straight away from what is saved -- the check that it is there
+  // runs behind it, the selector's dot saying so, rather than leaving the
+  // empty "server address" step on screen for as long as a server that is
+  // down takes to not answer.
+  if (!state.settings.serverUrl) {
+    // No current server but some saved ones: the most recently used.
+    const latest = [...savedServers()].sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0))[0];
+    if (latest) {
+      el.serverUrl.value = latest.url;
+      el.password.value = latest.password ?? '';
+      await loadProfile(latest);
+      await saveProfile(currentFields(latest.url));
+    }
+  }
   if (state.settings.serverUrl) {
-    await probeServer();
-    refreshLiveList();
+    connectServer = { name: '', reachable: false, checking: true };
+    showConnectStep('account');
+    applyAuthMode();
+    submitServer({ resuming: true });
+  } else {
+    showConnectStep('server');
   }
 }
 
@@ -818,6 +868,546 @@ function encoderLabel(stats) {
   return stats ? 'CPU encode' : null;
 }
 
+// ---------------------------------------------------------------------------
+// The connect screen: WHERE, then WHO
+//
+// Step one is the server and nothing else -- its address, and its password
+// only once it has said it wants one. Step two is the account, on a server
+// that has already answered, so every question there is one it actually
+// asked. Everything typed is kept locally (settings.json): the address, the
+// server password, the nickname and, with "remember me", the session. The
+// server's NAME is not -- it is asked for every time, so a rename shows up.
+// ---------------------------------------------------------------------------
+
+/** What the server said about itself at the last successful check. */
+let connectServer = null;
+
+function showConnectStep(step) {
+  closeServerMenu();
+  el.stepServer.hidden = step !== 'server';
+  el.stepAccount.hidden = step !== 'account';
+  if (step === 'account') renderServerChip();
+  else el.liveList.hidden = true;
+}
+
+/*
+ * Saved servers, each with its own credentials.
+ *
+ * settings.servers is the list; the top-level serverUrl / password /
+ * username / sessionToken / rememberAccount are the CURRENT server's and are
+ * what main sends with every request. Switching copies a profile up into
+ * them. Nothing about an account carries from one server to another: a
+ * session token is only ever sent to the server that issued it, and the
+ * nickname, the server password and "remember me" are per server too.
+ */
+
+/** The same server however it was typed: no trailing slash, any case. */
+function serverKey(address) {
+  return String(address ?? '').trim().replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * Names seen this session, by serverKey. Memory only, never written to disk:
+ * a server's name is asked for each time, so a rename shows. Other servers'
+ * names are not fetched for the list -- main holds ONE server password, and
+ * asking a server with the wrong one burns an attempt against its lockout.
+ */
+const serverNames = new Map();
+
+function savedServers() {
+  const list = Array.isArray(state.settings?.servers) ? state.settings.servers : [];
+  if (list.length || !state.settings?.serverUrl) return list;
+  // From before servers were a list: the one there was is the first entry.
+  return [{
+    url: state.settings.serverUrl,
+    password: state.settings.password ?? '',
+    username: state.settings.username ?? '',
+    sessionToken: state.settings.sessionToken ?? '',
+    rememberAccount: state.settings.rememberAccount !== false,
+    lastUsed: 0,
+  }];
+}
+
+function findProfile(address) {
+  const key = serverKey(address);
+  return savedServers().find((p) => serverKey(p.url) === key) ?? null;
+}
+
+/**
+ * Write what is on screen into the current server's profile, adding it if new.
+ *
+ * `extra` goes in the SAME write: every settings write is a round trip to
+ * main and a synchronous write of the file there, and switching server used
+ * to make five or six of them in a row. settings.set answers with the whole
+ * merged settings, so there is no read-back either.
+ */
+async function saveProfile(extra = {}) {
+  const url = el.serverUrl.value.trim();
+  if (!url) {
+    if (Object.keys(extra).length) state.settings = await harmony.settings.set(extra);
+    return;
+  }
+  const remember = el.rememberAccount.checked;
+  const profile = {
+    url,
+    password: el.password.value,
+    username: normalizeName(el.username.value) || '',
+    sessionToken: remember ? state.auth.token : '',
+    rememberAccount: remember,
+    // Kept, not rebuilt from the screen: only syncLogo changes it.
+    logo: findProfile(url)?.logo ?? null,
+    lastUsed: Date.now(),
+  };
+  const others = savedServers().filter((p) => serverKey(p.url) !== serverKey(url));
+  state.settings = await harmony.settings.set({ ...extra, servers: [profile, ...others] });
+}
+
+/** The top-level settings that make `server` the current one, from the screen. */
+function currentFields(server) {
+  return {
+    serverUrl: server,
+    password: el.password.value,
+    username: normalizeName(el.username.value) || '',
+    sessionToken: el.rememberAccount.checked ? state.auth.token : '',
+    rememberAccount: el.rememberAccount.checked,
+  };
+}
+
+// --- server logos -------------------------------------------------------------
+
+/*
+ * A server's logo is cached on disk by main (logos:ensure), keyed by its
+ * hash, and drawn from harmony://app/server-logo/<hash>. The profile keeps
+ * only the hash -- which is what lets the list and the selector show the
+ * logo straight away at start-up, before any server has been asked. Every
+ * check of a server (step one, the list's background probes, a push from
+ * the owner changing it) compares the hash it reports with the one kept,
+ * and only a change downloads anything.
+ */
+const logoUrl = (hash) => `harmony://app/server-logo/${hash}`;
+
+/** Fill a .server-badge: the logo, or the initial, plus the status dot. */
+function fillServerBadge(node, { name, logo, reachable = false, checking = false, dot = true }) {
+  const initial = document.createElement('span');
+  initial.textContent = (name || '?').trim().charAt(0).toUpperCase() || '?';
+  node.replaceChildren(initial);
+  if (logo) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = logoUrl(logo);
+    // Not cached (yet, or any more): the initial stays.
+    img.addEventListener('load', () => initial.replaceWith(img));
+  }
+  if (!dot) return;
+  const status = document.createElement('span');
+  status.className = 'server-chip-dot';
+  if (checking) status.setAttribute('data-checking', '');
+  else if (reachable) status.setAttribute('data-up', '');
+  node.append(status);
+}
+
+/**
+ * Bring a server's cached logo in line with what it just reported.
+ *
+ * `hash` undefined means it did not say -- /api/health only tells somebody
+ * who has the door password -- and the cached one is left alone. Null means
+ * it has none any more. The download uses THAT server's password, never the
+ * current one's.
+ */
+async function syncLogo(url, password, hash) {
+  if (hash === undefined) return;
+  const profile = findProfile(url);
+  if (!profile) return;
+  if (hash) {
+    try {
+      await harmony.logos.ensure(url, password ?? '', hash);
+    } catch {
+      return; // Kept as it was; the next check tries again.
+    }
+  }
+  if ((profile.logo ?? null) !== (hash ?? null)) {
+    const servers = savedServers().map((p) => (
+      serverKey(p.url) === serverKey(url) ? { ...p, logo: hash ?? null } : p
+    ));
+    state.settings = await harmony.settings.set({ servers });
+  }
+  if (serverKey(url) === serverKey(el.serverUrl.value)) renderServerChip();
+  if (!el.serverMenu.hidden) renderServerMenu();
+}
+
+/** Make the server on screen the current one, top-level fields and all. */
+async function adoptServer(server) {
+  await saveProfile(currentFields(server));
+}
+
+/**
+ * Put a server's own credentials on screen and in main: its nickname, its
+ * "remember me", its session token. Nothing from the server before it
+ * survives, so a token is never sent anywhere but where it was issued.
+ * `profile` null means a server never seen: everything blank.
+ */
+async function loadProfile(profile) {
+  state.auth.user = null;
+  state.auth.mode = 'login';
+  state.auth.token = profile?.sessionToken ?? '';
+  await harmony.api.setSessionToken(state.auth.token);
+  el.username.value = profile?.username ?? '';
+  el.accountPassword.value = '';
+  el.accountConfirm.value = '';
+  el.ownerKey.value = '';
+  el.rememberAccount.checked = profile ? profile.rememberAccount !== false : true;
+  if (!el.password.value && profile?.password) el.password.value = profile.password;
+  connectServer = null;
+}
+
+/**
+ * Switch to a saved server.
+ *
+ * The screen changes at once -- the selector, and the account fields with
+ * that server's own credentials -- and the check that it is there runs
+ * behind it, with the selector's dot saying "checking" until it answers.
+ * It used to wait for that answer first, which on a server that was down
+ * meant the list closed and nothing happened for up to ten seconds.
+ */
+async function switchServer(url) {
+  closeServerMenu();
+  if (serverKey(url) === serverKey(state.settings.serverUrl)) return;
+  const profile = findProfile(url);
+  if (!profile) return;
+  el.serverUrl.value = profile.url;
+  el.password.value = profile.password ?? '';
+  showError('');
+  await loadProfile(profile);
+  const known = serverStatus.get(serverKey(profile.url));
+  connectServer = { name: known?.name ?? '', reachable: false, checking: true };
+  renderServerChip();
+  applyAuthMode();
+  /*
+   * Saved as the current server NOW, before the check. It used to be saved
+   * only once the server answered -- so picking one that was down, or whose
+   * password had changed, or closing the app mid-check, opened the previous
+   * server next time. What was picked last is what opens.
+   */
+  await saveProfile(currentFields(profile.url));
+  submitServer({ resuming: true });
+}
+
+/*
+ * What each saved server said when last asked, for the list: reachable, and
+ * its name where it gave one. Memory only. Asked in the background when the
+ * list opens, all at once, each row filling in as its own answer arrives --
+ * nothing waits for the slowest.
+ *
+ * Each server is asked with ITS OWN saved password and no session token
+ * (api.probe), never the current server's. A saved password that turns out
+ * to be wrong is not sent again this session: every wrong one counts toward
+ * that server's lockout, and the list opening is not worth an attempt.
+ */
+const serverStatus = new Map();
+const stalePasswords = new Set();
+/** How long an answer is good for before the list asks again. */
+const SERVER_STATUS_TTL_MS = 30_000;
+
+function probeSavedServers() {
+  const current = serverKey(el.serverUrl.value);
+  for (const profile of savedServers()) {
+    const key = serverKey(profile.url);
+    // The current server is checked by step one already.
+    if (key === current) continue;
+    const known = serverStatus.get(key);
+    if (known?.pending || (known && Date.now() - known.at < SERVER_STATUS_TTL_MS)) continue;
+    serverStatus.set(key, { ...known, pending: true, at: Date.now() });
+
+    const password = stalePasswords.has(key) ? '' : profile.password ?? '';
+    harmony.api.probe(profile.url, password)
+      .then((health) => {
+        if (password && health.passwordRequired && !health.authenticated) stalePasswords.add(key);
+        if (health.name) serverNames.set(key, health.name);
+        syncLogo(profile.url, password, health.logo);
+        serverStatus.set(key, {
+          reachable: true, name: health.name ?? known?.name ?? '', at: Date.now(),
+        });
+      })
+      .catch(() => {
+        serverStatus.set(key, { reachable: false, name: known?.name ?? '', at: Date.now() });
+      })
+      .finally(() => {
+        if (!el.serverMenu.hidden) renderServerMenu();
+      });
+  }
+}
+
+async function forgetServer(url) {
+  const servers = savedServers().filter((p) => serverKey(p.url) !== serverKey(url));
+  state.settings = await harmony.settings.set({ servers });
+  serverStatus.delete(serverKey(url));
+  renderServerMenu();
+}
+
+// --- the dropdown ---------------------------------------------------------
+
+function renderServerMenu() {
+  const query = el.serverSearch.value.trim().toLowerCase();
+  const current = serverKey(el.serverUrl.value);
+  const list = [...savedServers()].sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0));
+  const shown = list.filter((p) => !query || [p.url, serverNames.get(serverKey(p.url)), p.username]
+    .some((v) => v && v.toLowerCase().includes(query)));
+
+  el.serverOptions.replaceChildren(...shown.map((p) => {
+    const key = serverKey(p.url);
+    const name = serverNames.get(key);
+    const li = document.createElement('li');
+    li.className = 'server-option';
+    li.setAttribute('role', 'option');
+    li.setAttribute('aria-selected', String(key === current));
+    li.title = p.url;
+
+    const status = serverStatus.get(key);
+    const badge = document.createElement('span');
+    badge.className = 'server-badge';
+    fillServerBadge(badge, {
+      name: name || serverHost(p.url),
+      logo: p.logo,
+      reachable: key === current ? connectServer?.reachable : status?.reachable,
+      checking: key === current ? connectServer?.checking : status?.pending,
+    });
+    li.append(badge);
+
+    const text = document.createElement('span');
+    text.className = 'server-option-text';
+    const title = document.createElement('strong');
+    title.textContent = name || serverHost(p.url);
+    const detail = document.createElement('small');
+    detail.textContent = [name ? serverHost(p.url) : null, p.username ? `as ${p.username}` : null]
+      .filter(Boolean).join(' · ');
+    text.append(title, detail);
+    li.append(text);
+
+    if (key === current) {
+      const tick = document.createElement('span');
+      tick.className = 'server-option-tick';
+      tick.textContent = '\u2713';
+      li.append(tick);
+    } else {
+      // Forgetting a server forgets its credentials with it.
+      const forget = document.createElement('button');
+      forget.type = 'button';
+      forget.className = 'server-option-forget';
+      forget.textContent = '\u00D7';
+      forget.title = 'Forget this server and the sign-in saved for it';
+      forget.addEventListener('click', (event) => {
+        event.stopPropagation();
+        forgetServer(p.url);
+      });
+      li.append(forget);
+    }
+
+    li.addEventListener('click', () => switchServer(p.url));
+    return li;
+  }));
+  el.serverOptionsEmpty.hidden = shown.length > 0;
+}
+
+/**
+ * Open the list under the selector -- or above it, where there is no room.
+ * Fixed and placed by hand because the card it sits in scrolls, and would
+ * clip anything absolutely positioned inside it.
+ */
+function openServerMenu() {
+  el.serverSearch.value = '';
+  probeSavedServers();
+  renderServerMenu();
+  el.serverMenu.style.left = '-9999px';
+  el.serverMenu.hidden = false;
+  const anchor = el.serverChip.getBoundingClientRect();
+  const height = el.serverMenu.getBoundingClientRect().height;
+  const below = anchor.bottom + 4;
+  const top = below + height > window.innerHeight - 8
+    ? Math.max(8, anchor.top - 4 - height)
+    : below;
+  el.serverMenu.style.left = `${anchor.left}px`;
+  el.serverMenu.style.top = `${top}px`;
+  el.serverMenu.style.width = `${anchor.width}px`;
+  el.serverChip.setAttribute('aria-expanded', 'true');
+  el.serverSearch.focus();
+}
+
+function closeServerMenu() {
+  if (el.serverMenu.hidden) return;
+  el.serverMenu.hidden = true;
+  el.serverChip.setAttribute('aria-expanded', 'false');
+}
+
+/** Step one, to add a server -- remembering the one to go back to. */
+let addingFrom = null;
+function addServer() {
+  closeServerMenu();
+  addingFrom = { url: el.serverUrl.value, password: el.password.value };
+  el.serverUrl.value = '';
+  el.password.value = '';
+  el.passwordField.hidden = true;
+  el.passwordField.classList.remove('bad');
+  el.serverHint.textContent = 'The address you were given for your Harmony server.';
+  el.serverBackRow.hidden = !addingFrom.url;
+  showError('');
+  showConnectStep('server');
+  el.serverUrl.focus();
+}
+
+/** "harmony.example.com", from whatever was typed. */
+function serverHost(address) {
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(address) ? address : `http://${address}`);
+    return url.port ? `${url.hostname}:${url.port}` : url.hostname;
+  } catch {
+    return address;
+  }
+}
+
+function renderServerChip() {
+  const address = el.serverUrl.value.trim();
+  const host = serverHost(address);
+  const name = connectServer?.name || serverNames.get(serverKey(address)) || '';
+  el.serverChipName.textContent = name || host;
+  // The address under the name, unless the name IS the address.
+  el.serverChipHost.textContent = name ? host : '';
+  el.serverChipHost.hidden = !name;
+  fillServerBadge(el.serverChipBadge, {
+    name: name || host,
+    logo: findProfile(address)?.logo,
+    reachable: connectServer?.reachable,
+    checking: connectServer?.checking,
+  });
+  el.serverChip.title = connectServer?.checking
+    ? `Checking ${address}…`
+    : connectServer?.reachable
+    ? `${address} -- click to switch or add a server`
+    : `${address} is not answering -- click to switch or add a server`;
+}
+
+/** Take what /api/health says about accounts into the auth state. */
+function applyHealth(health) {
+  state.passwordRequired = Boolean(health.passwordRequired);
+  // `hasAccounts` is absent on a pre-accounts server, which is how the two are
+  // told apart: undefined means "no account system", and the single-box flow
+  // stays as it was.
+  state.auth.supported = health.hasAccounts !== undefined;
+  state.auth.hasAccounts = Boolean(health.hasAccounts);
+  state.auth.needsOwner = Boolean(health.needsOwner);
+  // An empty server has nobody to log in as, so offer registration first.
+  if (state.auth.supported && !state.auth.hasAccounts && !state.auth.user) {
+    state.auth.mode = 'register';
+  }
+}
+
+/**
+ * Step one: reach the server, and get past its password if it has one.
+ *
+ * `resuming` is the start-up path with a saved server: an unreachable server
+ * then still lands on the account step, with the card saying it is not
+ * answering, because the address is not what is wrong -- the person should
+ * not be sent back to retype something that was right yesterday.
+ */
+/** Bumped by every check, so only the newest one gets to change the screen. */
+let serverAttempt = 0;
+
+async function submitServer({ resuming = false } = {}) {
+  const attempt = ++serverAttempt;
+  // Switching A -> B -> C quickly runs three checks at once; whichever
+  // answered last used to win, even if it was A.
+  const superseded = () => attempt !== serverAttempt;
+  const server = el.serverUrl.value.trim();
+  if (!server) {
+    showError('Enter the address of your Harmony server.');
+    el.serverUrl.focus();
+    return;
+  }
+  showError('');
+  el.serverContinue.disabled = true;
+  el.serverContinue.textContent = 'Checking…';
+
+  try {
+    /*
+     * A different server than the current one: nothing about the account
+     * carries over. Its own saved credentials if it is one we know, and
+     * none at all if it is new -- set BEFORE the first request, so a session
+     * token is never sent to a server that did not issue it.
+     */
+    if (serverKey(server) !== serverKey(state.settings.serverUrl)) {
+      await loadProfile(findProfile(server));
+    }
+
+    await harmony.api.setPassword(el.password.value);
+    let health;
+    try {
+      health = await harmony.api.health(server);
+      if (superseded()) return;
+    } catch (err) {
+      if (superseded()) return;
+      if (err.code === 'locked_out') {
+        el.passwordField.hidden = false;
+        el.passwordField.classList.add('bad');
+        showError(err.message);
+        showConnectStep('server');
+        return;
+      }
+      if (resuming) {
+        connectServer = { name: serverNames.get(serverKey(server)) ?? '', reachable: false };
+        serverStatus.set(serverKey(server), { reachable: false, name: connectServer.name, at: Date.now() });
+        // Still the server they chose: it is current, just not answering.
+        await adoptServer(server);
+        showConnectStep('account');
+        applyAuthMode();
+        showError(`${serverHost(server)} is not answering. Check that it is running, or pick another server.`);
+        return;
+      }
+      throw err;
+    }
+
+    // The door is shut: ask for the key, and say so if the one we had was wrong.
+    if (health.passwordRequired && !health.authenticated) {
+      el.passwordField.hidden = false;
+      showConnectStep('server');
+      if (el.password.value) {
+        el.passwordField.classList.add('bad');
+        showError('Wrong server password.');
+        el.password.select();
+      } else {
+        el.serverHint.textContent = 'This server asks for a password before anything else.';
+      }
+      el.password.focus();
+      return;
+    }
+
+    // In.
+    el.passwordField.classList.remove('bad');
+    el.passwordField.hidden = !health.passwordRequired;
+    connectServer = { name: health.name ?? '', reachable: true };
+    if (health.name) serverNames.set(serverKey(server), health.name);
+    serverStatus.set(serverKey(server), { reachable: true, name: health.name ?? '', at: Date.now() });
+    applyHealth(health);
+    await adoptServer(server);
+    // Behind the switch, not before it: the screen does not wait for a picture.
+    syncLogo(server, el.password.value, health.logo);
+    addingFrom = null;
+    el.serverBackRow.hidden = true;
+
+    await restoreSession();
+    if (superseded()) return;
+    showConnectStep('account');
+    applyAuthMode();
+    refreshLiveList();
+    if (!state.auth.user) (el.username.value ? el.accountPassword : el.username).focus();
+  } catch (err) {
+    showConnectStep('server');
+    showError(err.message);
+    el.serverUrl.focus();
+  } finally {
+    el.serverContinue.disabled = false;
+    el.serverContinue.textContent = 'Continue';
+  }
+}
+
 /**
  * Ask the server whether it wants a password, and show the field if it does.
  *
@@ -842,19 +1432,7 @@ async function probeServer() {
     el.passwordField.querySelector('span').textContent = health.passwordRequired
       ? 'Server password'
       : 'Server password (not needed)';
-    state.passwordRequired = Boolean(health.passwordRequired);
-
-    // `hasAccounts` is absent on a pre-accounts server, which is exactly how we
-    // tell the two apart -- undefined means "this server has no account system",
-    // so the whole block stays hidden and the single-box flow is unchanged.
-    // It is also absent while unauthenticated, since /api/health withholds its
-    // details until the shared password is right.
-    state.auth.supported = health.hasAccounts !== undefined;
-    state.auth.hasAccounts = Boolean(health.hasAccounts);
-    state.auth.needsOwner = Boolean(health.needsOwner);
-
-    // An empty server has nobody to log in as, so offer registration first.
-    if (state.auth.supported && !state.auth.hasAccounts) state.auth.mode = 'register';
+    applyHealth(health);
     await restoreSession();
     applyAuthMode();
   } catch {
@@ -961,10 +1539,16 @@ function applyAuthMode() {
 async function adoptSession(token) {
   state.auth.token = token ?? '';
   await harmony.api.setSessionToken(state.auth.token);
-  await harmony.settings.set({
+  const patch = {
     sessionToken: el.rememberAccount.checked ? state.auth.token : '',
     rememberAccount: el.rememberAccount.checked,
-  });
+  };
+  // Into the profile too, but only the profile of the server it belongs to.
+  if (serverKey(el.serverUrl.value) === serverKey(state.settings.serverUrl)) {
+    await saveProfile(patch);
+  } else {
+    state.settings = await harmony.settings.set(patch);
+  }
 }
 
 /**
@@ -1109,8 +1693,7 @@ async function startSession() {
     if (session.token) state.lastClaim = { username, token: session.token };
     el.passwordField.classList.remove('bad');
 
-    await harmony.settings.set({ serverUrl: server, username, password: el.password.value });
-    state.settings = await harmony.settings.get();
+    await saveProfile({ serverUrl: server, username, password: el.password.value });
 
     // A signed-in user gets the lobby; everyone else keeps the original
     // straight-to-your-stream flow, which is what an account-less server and
@@ -1126,7 +1709,11 @@ async function startSession() {
   } catch (err) {
     showError(err.message);
     if (err.code === 'bad_password' || err.code === 'locked_out') {
+      // The server password lives on step one -- and if it was right a
+      // moment ago and is wrong now, it has been changed on the server.
+      el.passwordField.hidden = false;
       el.passwordField.classList.add('bad');
+      showConnectStep('server');
       el.password.focus();
       el.password.select();
     }
@@ -1352,6 +1939,19 @@ function refreshKeepSet() {
 }
 
 /** Pull the roster so every id in a message or a roster row has a picture. */
+/** refreshUsers, at most once a second however many pushes ask for it. */
+let refreshUsersTimer = null;
+function refreshUsersSoon() {
+  if (refreshUsersTimer) return;
+  refreshUsersTimer = setTimeout(async () => {
+    refreshUsersTimer = null;
+    await refreshUsers();
+    renderMembers();
+    renderChannels();
+    renderChat();
+  }, 1000);
+}
+
 async function refreshUsers() {
   try {
     const { users } = await harmony.api.roster(state.server);
@@ -1432,8 +2032,9 @@ async function enterChannels() {
   loadServerInfo();
   loadSoundpad();
   loadEmojis();
-  // Before anybody clicks, not on the click. See scheduleEmojiGrid.
-  scheduleEmojiGrid();
+  // Draws every emoji into one image, out of idle time, so the picker never
+  // has to draw a glyph. See buildEmojiAtlas.
+  buildEmojiAtlas();
   showView('view-channels');
 
   try {
@@ -2224,9 +2825,30 @@ const serverInfo = { name: 'Harmony', passwordRequired: false, restartRequired: 
 function applyServerInfo(info) {
   if (info) Object.assign(serverInfo, info);
   el.serverName.textContent = serverInfo.name;
+  paintServerIcon();
   // Shown only to the owner. Hidden rather than disabled: a control you
   // can see and cannot use is a question nobody else needs asked.
   el.serverSettings.hidden = !isOwner();
+}
+
+/**
+ * The logo top left. Drawn from the cache at once -- the profile has the
+ * hash from the last visit -- and fetched behind it if this is a new one;
+ * until then, and on a server with none, the server's initial.
+ */
+function paintServerIcon() {
+  const logo = serverInfo.logo !== undefined
+    ? serverInfo.logo
+    : findProfile(state.server || el.serverUrl.value)?.logo ?? null;
+  const paint = () => fillServerBadge(el.serverIcon, { name: serverInfo.name, logo, dot: false });
+  paint();
+  if (!logo) return;
+  harmony.logos.ensure(state.server || el.serverUrl.value.trim(), el.password.value, logo)
+    .then(() => {
+      // Still the logo by the time it arrived: the owner may have changed it.
+      if ((serverInfo.logo ?? logo) === logo) paint();
+    })
+    .catch(() => { /* the initial stays */ });
 }
 
 async function loadServerInfo() {
@@ -2238,7 +2860,64 @@ async function loadServerInfo() {
   }
 }
 
+/**
+ * The logo the dialog will save: undefined while untouched, a hash once a new
+ * one has been uploaded, null to remove it. Uploaded on picking -- so Save is
+ * one request -- but only made the server's logo by Save.
+ */
+let pendingLogo;
+
+function paintLogoPreview(src) {
+  fillServerBadge(el.serverLogoPreview, { name: serverInfo.name, logo: null, dot: false });
+  if (!src) return;
+  const img = document.createElement('img');
+  img.alt = '';
+  img.src = src;
+  el.serverLogoPreview.replaceChildren(img);
+}
+
+/**
+ * Shrink a picked image to a 256-pixel square PNG and upload it.
+ *
+ * Contain, not cover, and PNG, not JPEG: a logo is usually a shape on
+ * transparency, and cropping it or flattening it onto black would both
+ * change it. Shrunk here so the server needs no image library.
+ */
+async function stageServerLogo(file) {
+  const SIZE = 256;
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+  const scale = Math.min(SIZE / bitmap.width, SIZE / bitmap.height);
+  const w = bitmap.width * scale;
+  const h = bitmap.height * scale;
+  canvas.getContext('2d').drawImage(bitmap, (SIZE - w) / 2, (SIZE - h) / 2, w, h);
+  bitmap.close();
+  const blob = await new Promise((done) => canvas.toBlob(done, 'image/png'));
+  if (!blob) throw new Error('Could not read that image.');
+  if (blob.size > AVATAR_MAX_BYTES) throw new Error('That image is too detailed to use as a logo.');
+  const upload = await harmony.media.upload(
+    state.server, new Uint8Array(await blob.arrayBuffer()), 'image/png',
+  );
+  pendingLogo = upload.hash;
+  // A data: URL, because the page may only show images from itself or data:.
+  paintLogoPreview(canvas.toDataURL('image/png'));
+  el.serverLogoRemove.disabled = false;
+}
+
 function openServerDialog() {
+  pendingLogo = undefined;
+  paintLogoPreview(serverInfo.logo ? logoUrl(serverInfo.logo) : null);
+  el.serverLogoRemove.disabled = !serverInfo.logo;
+  if (serverInfo.logo) {
+    // Cached by now almost always; if not, fetch it so the preview shows.
+    harmony.logos.ensure(state.server, el.password.value, serverInfo.logo)
+      .then(() => {
+        if (pendingLogo === undefined) paintLogoPreview(logoUrl(serverInfo.logo));
+      })
+      .catch(() => {});
+  }
   el.serverNameInput.value = serverInfo.name;
   el.serverPasswordInput.value = '';
   el.serverPasswordOff.checked = false;
@@ -2258,6 +2937,7 @@ async function saveServerSettings() {
   const typed = el.serverPasswordInput.value;
 
   const body = { name };
+  if (pendingLogo !== undefined) body.logo = pendingLogo;
   // An absent field and an empty string are different answers, and the
   // server treats them differently on purpose -- so an untouched box must
   // not be sent at all, or saving a rename would take the door off.
@@ -2277,8 +2957,10 @@ async function saveServerSettings() {
      */
     if (body.password !== undefined) {
       await harmony.api.setPassword(body.password);
-      await harmony.settings.set({ password: body.password });
-      state.settings = await harmony.settings.get();
+      // Into this server's profile as well, or switching away and back
+      // would bring the old password with it.
+      el.password.value = body.password;
+      await saveProfile({ password: body.password });
     }
 
     el.serverDialog.close();
@@ -5194,9 +5876,186 @@ function rememberEmoji(value) {
 /** What to do with the emoji that gets chosen. Set by openEmojiPicker. */
 let emojiPick = null;
 let emojiFilter = '';
-/** The generated grid, built once and kept: 1400 buttons is not free. */
-let standardWrap = null;
-let dynamicWrap = null;
+
+/*
+ * The grid is virtual: only the rows in view, plus a margin, exist as DOM.
+ *
+ * It used to be every emoji -- fourteen hundred buttons, built ahead of time
+ * in idle callbacks. Building them was not the slow part; showing them was.
+ * Every open laid out all fourteen hundred again (the popover is display:none
+ * while closed, so nothing survives), and every scroll had the browser
+ * rasterise colour glyphs across the whole grid. Now there are about a
+ * hundred buttons at any moment, and a scroll adds a row or two of them.
+ *
+ * The model is a flat list of rows -- a section heading, or one line of
+ * cells -- with a precomputed top for each, so finding what is in view is a
+ * binary search, and the rows are absolutely positioned inside a spacer as
+ * tall as the whole list. Every geometry number is fixed (a heading is
+ * EMOJI_HEAD_PX, a cell row is as tall as a cell is wide), which is what
+ * makes the tops computable without measuring anything.
+ */
+const EMOJI_HEAD_PX = 26;
+/** The narrowest a cell may be; the column count is whatever fits. */
+const EMOJI_CELL_MIN_PX = 34;
+
+const emojiView = {
+  /** [{ label, items: [{ value, label, custom?, removable? }] }] */
+  sections: [],
+  /** [{ top, height, label, head?: true, items?: [] }] */
+  rows: [],
+  /** Row index -> its element, for the rows currently in the DOM. */
+  live: new Map(),
+  frame: 0,
+  spacer: null,
+  sticky: null,
+};
+
+/** The generated sections as picker items. Plain data, built on first use. */
+let standardEmoji = null;
+function standardEmojiSections() {
+  standardEmoji ??= EMOJI_SECTIONS.map((section) => ({
+    label: section.label,
+    items: section.items.map(([value, label]) => ({ value, label })),
+  }));
+  return standardEmoji;
+}
+
+// --- the sprite sheet ------------------------------------------------------
+
+/*
+ * Every standard emoji, drawn once into one image, and the picker shows
+ * slices of it.
+ *
+ * Drawing a colour emoji as text is the expensive part of the picker, not
+ * the DOM. Each one is a font fallback lookup (no UI font has it, so the
+ * system is asked which one does) and then a colour-glyph rasterisation --
+ * and it happens for every glyph the first time it appears: all of them on
+ * the first open, and the new row's worth on every scroll. That was the lag.
+ *
+ * So it happens once, out of idle time, shortly after the app opens: onto a
+ * canvas, a few dozen glyphs per idle callback, then encoded to a PNG off the
+ * main thread and decoded before it is used. From then on a cell is an empty
+ * span with a background position, which costs nothing to show or scroll --
+ * the same trick as Discord's sprite sheets.
+ *
+ * Until it is ready (the picker opened in the first second or so) cells fall
+ * back to text, with the emoji font named outright so there is at least no
+ * fallback search.
+ */
+const EMOJI_GLYPH_PX = 22;
+const EMOJI_ATLAS_COLS = 40;
+const EMOJI_FONT = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+
+const emojiAtlas = {
+  /** none | building | ready | failed */
+  state: 'none',
+  /** Emoji -> its slot in the sheet. */
+  index: null,
+  /** Kept so the decoded image is not collected while the sheet is in use. */
+  image: null,
+};
+
+function emojiAtlasIndex() {
+  if (!emojiAtlas.index) {
+    emojiAtlas.index = new Map();
+    for (const section of EMOJI_SECTIONS) {
+      for (const [value] of section.items) {
+        if (!emojiAtlas.index.has(value)) emojiAtlas.index.set(value, emojiAtlas.index.size);
+      }
+    }
+  }
+  return emojiAtlas.index;
+}
+
+function buildEmojiAtlas() {
+  if (emojiAtlas.state !== 'none') return;
+  emojiAtlas.state = 'building';
+
+  const values = [...emojiAtlasIndex().keys()];
+  // Drawn for the screen it will be shown on -- devicePixelRatio includes
+  // the app's own zoom -- so the slices are sharp rather than scaled up.
+  const scale = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  const px = Math.ceil(EMOJI_GLYPH_PX * scale);
+  const rows = Math.ceil(values.length / EMOJI_ATLAS_COLS);
+  const canvas = document.createElement('canvas');
+  canvas.width = EMOJI_ATLAS_COLS * px;
+  canvas.height = rows * px;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    emojiAtlas.state = 'failed';
+    return;
+  }
+  ctx.font = `${Math.round(px * 0.84)}px ${EMOJI_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+
+  const idle = window.requestIdleCallback
+    ? (fn) => window.requestIdleCallback(fn, { timeout: 2000 })
+    : (fn) => setTimeout(() => fn({ timeRemaining: () => 8, didTimeout: false }), 16);
+
+  let i = 0;
+  const step = (deadline) => {
+    // At least a few per callback, or a busy machine never finishes.
+    let drawn = 0;
+    while (i < values.length && (drawn < 8 || deadline.timeRemaining() > 2)) {
+      const value = values[i];
+      const metrics = ctx.measureText(value);
+      const ascent = metrics.actualBoundingBoxAscent || px * 0.7;
+      const descent = metrics.actualBoundingBoxDescent || px * 0.15;
+      // Centred on its own ink, not on the font's line box: emoji sit at
+      // different heights in it and the grid would look ragged otherwise.
+      const x = (i % EMOJI_ATLAS_COLS) * px + px / 2;
+      const y = Math.floor(i / EMOJI_ATLAS_COLS) * px + (px - ascent - descent) / 2 + ascent;
+      ctx.fillText(value, x, y);
+      i += 1;
+      drawn += 1;
+    }
+    if (i < values.length) {
+      idle(step);
+      return;
+    }
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        emojiAtlas.state = 'failed';
+        return;
+      }
+      // A data: URL, because the CSP allows those for images and not blob:.
+      const reader = new FileReader();
+      reader.onload = () => installEmojiAtlas(String(reader.result), rows);
+      reader.onerror = () => { emojiAtlas.state = 'failed'; };
+      reader.readAsDataURL(blob);
+    }, 'image/png');
+  };
+  idle(step);
+}
+
+/**
+ * Put the sheet in a stylesheet and switch to it once decoded.
+ *
+ * A constructed stylesheet rather than a <style> element, which the CSP
+ * (style-src 'self') would refuse; and one rule for every slice, so the
+ * multi-megabyte URL is parsed once rather than once per cell.
+ */
+async function installEmojiAtlas(url, rows) {
+  try {
+    const image = new Image();
+    image.src = url;
+    // Decoded before any cell uses it, so switching never shows blank cells.
+    await image.decode();
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(
+      `.emoji-sprite { background-image: url("${url}"); `
+      + `background-size: ${EMOJI_ATLAS_COLS * EMOJI_GLYPH_PX}px ${rows * EMOJI_GLYPH_PX}px; }`,
+    );
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    emojiAtlas.image = image;
+    emojiAtlas.state = 'ready';
+    // Open right now: swap the text cells for slices.
+    if (!el.emojiPop.hidden) layoutEmojiRows();
+  } catch {
+    emojiAtlas.state = 'failed';
+  }
+}
 
 function emojiCell(value, label, custom) {
   const button = document.createElement('button');
@@ -5205,143 +6064,223 @@ function emojiCell(value, label, custom) {
   button.dataset.value = value;
   button.dataset.label = label;
   button.title = `:${label}:`;
-  if (custom) button.append(customEmojiImg(custom, ''));
-  else button.textContent = value;
+  button.setAttribute('aria-label', label.replaceAll('_', ' '));
+  const slot = !custom && emojiAtlas.state === 'ready' ? emojiAtlas.index.get(value) : undefined;
+  if (custom) {
+    button.append(customEmojiImg(custom, ''));
+  } else if (slot !== undefined) {
+    const sprite = document.createElement('span');
+    sprite.className = 'emoji-sprite';
+    sprite.style.backgroundPosition = `${-(slot % EMOJI_ATLAS_COLS) * EMOJI_GLYPH_PX}px `
+      + `${-Math.floor(slot / EMOJI_ATLAS_COLS) * EMOJI_GLYPH_PX}px`;
+    button.append(sprite);
+  } else {
+    button.textContent = value;
+  }
   return button;
 }
 
-function emojiSection(label, cells) {
-  const wrap = document.createDocumentFragment();
-  const head = document.createElement('div');
-  head.className = 'emoji-section-head';
-  head.textContent = label;
-  const grid = document.createElement('div');
-  grid.className = 'emoji-section';
-  grid.append(...cells);
-  wrap.append(head, grid);
+/** One item as DOM: a cell, plus a corner remove button where allowed. */
+function emojiItemNode(item) {
+  const cell = emojiCell(item.value, item.label, item.custom);
+  if (!item.removable) return cell;
+  const wrap = document.createElement('span');
+  wrap.className = 'emoji-cell-wrap';
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'emoji-remove';
+  remove.textContent = '\u00d7';
+  remove.title = `Remove :${item.custom.name}:`;
+  // Handled by the grid's one click listener, like the cells.
+  remove.dataset.emojiId = String(item.custom.id);
+  wrap.append(cell, remove);
   return wrap;
 }
 
+/** The scroller's fixed parts, made once: the sticky heading and the spacer. */
+function ensureEmojiGrid() {
+  if (emojiView.spacer) return;
+  emojiView.sticky = document.createElement('div');
+  emojiView.sticky.className = 'emoji-section-head emoji-sticky';
+  emojiView.spacer = document.createElement('div');
+  emojiView.spacer.className = 'emoji-space';
+  el.emojiGrid.replaceChildren(emojiView.sticky, emojiView.spacer);
+
+  // At most one repaint per frame, however many scroll events arrive.
+  el.emojiGrid.addEventListener('scroll', () => {
+    if (emojiView.frame) return;
+    emojiView.frame = requestAnimationFrame(() => {
+      emojiView.frame = 0;
+      paintEmojiRows();
+    });
+  }, { passive: true });
+
+  // The column count follows the width. The popover is a fixed width, so in
+  // practice this is the window getting narrower than it.
+  let lastWidth = 0;
+  new ResizeObserver(() => {
+    const width = el.emojiGrid.clientWidth;
+    if (!width || width === lastWidth || el.emojiPop.hidden) return;
+    lastWidth = width;
+    layoutEmojiRows();
+  }).observe(el.emojiGrid);
+}
+
 /**
- * The custom and recent sections, which change, and the search results.
- *
- * Separated from the generated grid because that one does not change at
- * all: rebuilding fourteen hundred buttons every time somebody types a
- * letter is the difference between a picker that opens and one that
- * stutters.
+ * What the picker shows: custom and recent, then the generated sections --
+ * or the search results. Rebuilds the model; only visible rows get DOM.
  */
 function renderEmojiPicker() {
-  if (!dynamicWrap || el.emojiPop.hidden) return;
+  if (el.emojiPop.hidden) return;
+  ensureEmojiGrid();
 
   const filter = emojiFilter;
-  const nodes = [];
+  const sections = [];
 
   if (filter) {
-    const cells = [];
+    const items = [];
     for (const emoji of state.emojis.list) {
-      if (emoji.name.includes(filter)) cells.push(emojiCell(`:${emoji.name}:`, emoji.name, emoji));
-    }
-    for (const section of EMOJI_SECTIONS) {
-      for (const [ch, name] of section.items) {
-        if (cells.length >= EMOJI_RESULT_CAP) break;
-        if (name.includes(filter)) cells.push(emojiCell(ch, name, null));
+      if (emoji.name.includes(filter)) {
+        items.push({ value: `:${emoji.name}:`, label: emoji.name, custom: emoji });
       }
     }
-    if (cells.length) nodes.push(emojiSection(`Matching "${el.emojiSearch.value}"`, cells));
-    el.emojiEmpty.hidden = cells.length > 0;
+    for (const section of EMOJI_SECTIONS) {
+      for (const [value, label] of section.items) {
+        if (items.length >= EMOJI_RESULT_CAP) break;
+        if (label.includes(filter)) items.push({ value, label });
+      }
+    }
+    if (items.length) sections.push({ label: `Matching "${el.emojiSearch.value}"`, items });
+    el.emojiEmpty.hidden = items.length > 0;
     el.emojiEmpty.textContent = `Nothing called "${el.emojiSearch.value}".`;
   } else {
     el.emojiEmpty.hidden = true;
 
     if (state.emojis.list.length) {
-      nodes.push(emojiSection('This server', state.emojis.list.map((emoji) => {
-        const cell = emojiCell(`:${emoji.name}:`, emoji.name, emoji);
-        // Yours, or anybody's if you are an admin -- the rule the server
-        // enforces, so a button that appears always works.
-        if (emoji.uploadedBy !== state.auth.user?.id && !isAdmin()) return cell;
-        const wrap = document.createElement('span');
-        wrap.className = 'emoji-cell-wrap';
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'emoji-remove';
-        remove.textContent = '\u00d7';
-        remove.title = `Remove :${emoji.name}:`;
-        remove.addEventListener('click', async (event) => {
-          event.stopPropagation();
-          if (!await askConfirm(`Remove :${emoji.name}:?`, {
-            text: 'Reactions that used it keep their count and fall back to the text.',
-            okLabel: 'Remove',
-          })) return;
-          try {
-            await harmony.api.deleteEmoji(state.server, emoji.id);
-          } catch (err) {
-            showChannelsError(err.message);
-          }
-        });
-        wrap.append(cell, remove);
-        return wrap;
-      })));
+      sections.push({
+        label: 'This server',
+        items: state.emojis.list.map((emoji) => ({
+          value: `:${emoji.name}:`,
+          label: emoji.name,
+          custom: emoji,
+          // Yours, or anybody's if you are an admin -- the rule the server
+          // enforces, so a button that appears always works.
+          removable: emoji.uploadedBy === state.auth.user?.id || isAdmin(),
+        })),
+      });
     }
 
     const recent = (state.settings.recentEmoji ?? []).slice(0, RECENT_EMOJI);
     if (recent.length) {
-      nodes.push(emojiSection('Recent', recent.map((value) => {
-        const match = /^:([a-z0-9_]{2,32}):$/i.exec(value);
-        const custom = match ? state.emojis.byName.get(match[1].toLowerCase()) : null;
-        // A custom emoji that has since been removed still sits in the
-        // list; it is drawn as its text rather than dropped, because
-        // silently losing something out of "recent" is confusing.
-        return emojiCell(value, match ? match[1] : value, custom);
-      })));
+      sections.push({
+        label: 'Recent',
+        items: recent.map((value) => {
+          const match = /^:([a-z0-9_]{2,32}):$/i.exec(value);
+          // A custom emoji that has since been removed still sits in the
+          // list; it is drawn as its text rather than dropped, because
+          // silently losing something out of "recent" is confusing.
+          const custom = match ? state.emojis.byName.get(match[1].toLowerCase()) : null;
+          return { value, label: match ? match[1] : value, custom };
+        }),
+      });
+    }
+
+    sections.push(...standardEmojiSections());
+  }
+
+  emojiView.sections = sections;
+  layoutEmojiRows();
+}
+
+/** Rows and their tops, from the sections and the current width. */
+function layoutEmojiRows() {
+  const width = el.emojiGrid.clientWidth;
+  if (!width) return;
+  const cols = Math.max(1, Math.floor(width / EMOJI_CELL_MIN_PX));
+  const cell = Math.floor(width / cols);
+
+  const rows = [];
+  let top = 0;
+  for (const section of emojiView.sections) {
+    rows.push({ top, height: EMOJI_HEAD_PX, label: section.label, head: true });
+    top += EMOJI_HEAD_PX;
+    for (let i = 0; i < section.items.length; i += cols) {
+      rows.push({ top, height: cell, label: section.label, items: section.items.slice(i, i + cols) });
+      top += cell;
     }
   }
 
-  dynamicWrap.replaceChildren(...nodes);
-  standardWrap.hidden = Boolean(filter);
+  emojiView.rows = rows;
+  emojiView.spacer.style.height = `${top}px`;
+  emojiView.spacer.style.setProperty('--emoji-cols', String(cols));
+  // Everything on screen was drawn for the old model.
+  for (const node of emojiView.live.values()) node.remove();
+  emojiView.live.clear();
+  paintEmojiRows();
+}
+
+/** The last row whose top is at or above `y`. */
+function emojiRowAt(y) {
+  const { rows } = emojiView;
+  let lo = 0;
+  let hi = rows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (rows[mid].top <= y) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
 }
 
 /**
- * Build the generated sections, a section at a time, out of idle time.
- *
- * Fourteen hundred buttons is about a tenth of a second of DOM work, and
- * doing it on the click meant the picker took that long to appear the first
- * time -- the one time a person has no idea whether it is coming.
- *
- * So it is started when the channels view opens and spread across idle
- * callbacks, and the picker never waits for it. Opening early is still
- * useful: searching builds its own small list and hides this one, so the
- * box at the top works before the grid under it has finished arriving.
- *
- * One section per callback rather than a fixed number of cells, because a
- * section boundary is the only place the grid is coherent -- stopping half
- * way through one would leave a heading with nothing under it if the build
- * were ever interrupted.
+ * Put the rows in view (and half a screen either side) in the DOM, and take
+ * the rest out. Rows still in view are left exactly where they are, so a
+ * scroll only ever creates the row or two it uncovered.
  */
-function scheduleEmojiGrid() {
-  if (standardWrap) return;
+function paintEmojiRows() {
+  const { rows, live } = emojiView;
+  if (!rows.length) {
+    for (const node of live.values()) node.remove();
+    live.clear();
+    emojiView.sticky.hidden = true;
+    return;
+  }
+  const scroll = el.emojiGrid.scrollTop;
+  const view = el.emojiGrid.clientHeight;
+  const margin = Math.max(120, view / 2);
+  const first = emojiRowAt(Math.max(0, scroll - margin));
+  let last = first;
+  while (last < rows.length && rows[last].top < scroll + view + margin) last += 1;
 
-  dynamicWrap = document.createElement('div');
-  standardWrap = document.createElement('div');
-  el.emojiGrid.replaceChildren(dynamicWrap, standardWrap);
+  for (const [index, node] of live) {
+    if (index < first || index >= last) {
+      node.remove();
+      live.delete(index);
+    }
+  }
 
-  const idle = window.requestIdleCallback
-    ?? ((fn) => setTimeout(() => fn({ timeRemaining: () => 8 }), 0));
+  const fresh = document.createDocumentFragment();
+  for (let index = first; index < last; index += 1) {
+    if (live.has(index)) continue;
+    const row = rows[index];
+    const node = document.createElement('div');
+    node.style.top = `${row.top}px`;
+    node.style.height = `${row.height}px`;
+    if (row.head) {
+      node.className = 'emoji-section-head emoji-row-head';
+      node.textContent = row.label;
+    } else {
+      node.className = 'emoji-row';
+      for (const item of row.items) node.append(emojiItemNode(item));
+    }
+    live.set(index, node);
+    fresh.append(node);
+  }
+  if (fresh.childNodes.length) emojiView.spacer.append(fresh);
 
-  let index = 0;
-  const step = (deadline) => {
-    do {
-      const section = EMOJI_SECTIONS[index];
-      standardWrap.append(emojiSection(section.label, section.items.map(
-        ([ch, name]) => emojiCell(ch, name, null),
-      )));
-      index += 1;
-      // At least one section per callback, or a busy machine never
-      // finishes: timeRemaining() can be 0 on every single call.
-    } while (index < EMOJI_SECTIONS.length && deadline.timeRemaining() > 4);
-
-    if (index < EMOJI_SECTIONS.length) idle(step);
-  };
-  idle(step);
+  // The heading that stays at the top: the section of the topmost row.
+  emojiView.sticky.hidden = false;
+  emojiView.sticky.textContent = rows[emojiRowAt(scroll)].label;
 }
 
 /**
@@ -5353,14 +6292,15 @@ function scheduleEmojiGrid() {
  * and a fixed element has no idea where its button is.
  */
 function openEmojiPicker(anchorEl, onPick) {
-  // Idempotent, and it does NOT wait: if the background build has not
-  // finished, the picker opens with what there is and fills in behind.
-  scheduleEmojiGrid();
+  // Normally long since done; this only matters if the picker is opened
+  // before the channels view ever was.
+  buildEmojiAtlas();
   emojiPick = onPick;
   emojiFilter = '';
   el.emojiSearch.value = '';
   el.emojiPop.hidden = false;
   el.emojiPreview.replaceChildren();
+  el.emojiGrid.scrollTop = 0;
   renderEmojiPicker();
 
   const anchor = anchorEl.getBoundingClientRect();
@@ -6489,6 +7429,11 @@ function onRealtimeEvent(msg) {
     case 'presence':
       state.channels.online = new Set(msg.online ?? []);
       renderMembers();
+      // Somebody online this client has never heard of: an account made
+      // since the list was fetched, on a server too old to announce it (or
+      // an announcement missed while reconnecting). Fetch the list again
+      // rather than leave them out of the member column.
+      if ([...state.channels.online].some((id) => !state.users.has(id))) refreshUsersSoon();
       break;
 
     case 'channels':
@@ -6574,6 +7519,8 @@ function onRealtimeEvent(msg) {
 
     case 'server':
       applyServerInfo(msg.server);
+      // The owner changed the logo: everybody's list follows, without a restart.
+      syncLogo(el.serverUrl.value.trim(), el.password.value, msg.server?.logo ?? null);
       break;
 
     /*
@@ -8547,6 +9494,31 @@ function applyMemberList(show) {
 
 el.serverSettings.addEventListener('click', () => openServerDialog());
 el.serverCancel.addEventListener('click', () => el.serverDialog.close());
+el.serverLogoPick.addEventListener('click', () => {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/png,image/jpeg,image/webp,image/gif';
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0];
+    if (!file) return;
+    el.serverErrorLine.hidden = true;
+    el.serverLogoPick.disabled = true;
+    try {
+      await stageServerLogo(file);
+    } catch (err) {
+      el.serverErrorLine.textContent = err.message;
+      el.serverErrorLine.hidden = false;
+    } finally {
+      el.serverLogoPick.disabled = false;
+    }
+  });
+  picker.click();
+});
+el.serverLogoRemove.addEventListener('click', () => {
+  pendingLogo = null;
+  paintLogoPreview(null);
+  el.serverLogoRemove.disabled = true;
+});
 el.serverForm.addEventListener('submit', (event) => {
   // The dialog's own method="dialog" would close it before the save was
   // even attempted, and a failure would have nowhere to be shown.
@@ -8599,6 +9571,9 @@ el.channelsSignout.addEventListener('click', async () => {
   state.auth.user = null;
   await adoptSession('');
   showView('view-connect');
+  // Same server, someone else perhaps: straight to who, not where.
+  showConnectStep('account');
+  applyAuthMode();
 });
 
 el.voiceMute.addEventListener('click', async () => {
@@ -9006,10 +9981,28 @@ el.chatEmoji.addEventListener('click', () => {
 el.emojiSearch.addEventListener('input', () => {
   emojiFilter = el.emojiSearch.value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '');
+  // Results start at the top, not wherever the full grid was scrolled to.
+  el.emojiGrid.scrollTop = 0;
   renderEmojiPicker();
 });
 
-el.emojiGrid.addEventListener('click', (event) => {
+el.emojiGrid.addEventListener('click', async (event) => {
+  const remove = event.target.closest('.emoji-remove');
+  if (remove) {
+    event.stopPropagation();
+    const emoji = state.emojis.list.find((e) => String(e.id) === remove.dataset.emojiId);
+    if (!emoji) return;
+    if (!await askConfirm(`Remove :${emoji.name}:?`, {
+      text: 'Reactions that used it keep their count and fall back to the text.',
+      okLabel: 'Remove',
+    })) return;
+    try {
+      await harmony.api.deleteEmoji(state.server, emoji.id);
+    } catch (err) {
+      showChannelsError(err.message);
+    }
+    return;
+  }
   const cell = event.target.closest('.emoji-cell');
   if (!cell || !emojiPick) return;
   const pick = emojiPick;
@@ -9204,8 +10197,43 @@ el.channelAdd.addEventListener('click', async () => {
   }
 });
 el.username.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
-el.serverUrl.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
-el.password.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
+el.serverUrl.addEventListener('keydown', (e) => e.key === 'Enter' && submitServer());
+el.password.addEventListener('keydown', (e) => e.key === 'Enter' && submitServer());
+el.serverContinue.addEventListener('click', () => submitServer());
+
+el.serverChip.addEventListener('click', () => {
+  if (el.serverMenu.hidden) openServerMenu();
+  else closeServerMenu();
+});
+el.serverSearch.addEventListener('input', renderServerMenu);
+el.serverSearch.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeServerMenu();
+    el.serverChip.focus();
+  } else if (event.key === 'Enter') {
+    // The first match, which is what typing a few letters then Enter means.
+    el.serverOptions.querySelector('.server-option')?.click();
+  }
+});
+el.serverAdd.addEventListener('click', addServer);
+el.serverBack.addEventListener('click', () => {
+  if (!addingFrom) return;
+  el.serverUrl.value = addingFrom.url;
+  el.password.value = addingFrom.password;
+  addingFrom = null;
+  el.serverBackRow.hidden = true;
+  showError('');
+  showConnectStep('account');
+});
+// Same dismissal as every other menu: pointerdown, captured, so it closes on
+// the way down. The selector itself is excluded, or pressing it would close
+// the list here and its own handler would open it again.
+document.addEventListener('pointerdown', (event) => {
+  if (el.serverMenu.hidden) return;
+  if (el.serverMenu.contains(event.target) || el.serverChip.contains(event.target)) return;
+  closeServerMenu();
+}, true);
+window.addEventListener('resize', closeServerMenu);
 el.accountPassword.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
 el.accountConfirm.addEventListener('keydown', (e) => e.key === 'Enter' && startSession());
 
@@ -9246,17 +10274,19 @@ el.authModeToggle.addEventListener('click', async () => {
 applyAuthMode();
 
 el.rememberAccount.addEventListener('change', async () => {
-  await harmony.settings.set({
+  await saveProfile({
     rememberAccount: el.rememberAccount.checked,
     // Unticking it has to forget what is already stored, or "remember me" is a
     // setting that only ever points one way.
     sessionToken: el.rememberAccount.checked ? state.auth.token : '',
   });
 });
-el.serverUrl.addEventListener('change', async () => {
-  // A different server may have a different answer about passwords.
-  await probeServer();
-  refreshLiveList();
+// A different address is a different server, with its own answer about
+// passwords: the field goes until that server asks for it.
+el.serverUrl.addEventListener('input', () => {
+  el.passwordField.hidden = true;
+  el.passwordField.classList.remove('bad');
+  el.serverHint.textContent = 'The address you were given for your Harmony server.';
 });
 // Typing a new password is a reason to retry the list that just failed.
 el.password.addEventListener('change', async () => {
@@ -9583,6 +10613,137 @@ let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(layoutMosaic, 120);
+});
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+//
+// Main checks GitHub Releases and pushes its whole status here (updater.js).
+// This side only draws it and passes on the person's answer: nothing is
+// downloaded until somebody presses Download. On macOS "Download" opens the
+// release page, because an unsigned Mac app cannot install its own update.
+
+let updateStatus = { state: 'idle' };
+/** "state:version" the banner was waved away for, this session. */
+let updateBannerHidden = '';
+
+function updateLine(status) {
+  switch (status.state) {
+    case 'checking':
+      return 'Checking for updates…';
+    case 'latest':
+      return 'Up to date.';
+    case 'available':
+      return `Version ${status.version} is available.`;
+    case 'downloading':
+      return `Downloading ${status.version}… ${status.percent ?? 0}%`;
+    case 'ready':
+      return `Version ${status.version} is ready. It installs when you restart or quit.`;
+    case 'error':
+      return `Could not update: ${status.error}`;
+    case 'unsupported':
+      return status.error;
+    default:
+      return 'Not checked yet.';
+  }
+}
+
+/** The one thing there is to do next, or null. */
+function updateActionLabel(status) {
+  if (status.state === 'ready') return 'Restart now';
+  // A download that failed can be tried again.
+  if (status.state === 'available' || (status.state === 'error' && status.version)) {
+    return status.manual ? 'Open download page' : 'Download';
+  }
+  return null;
+}
+
+function renderUpdates() {
+  const status = updateStatus;
+  el.updateVersion.textContent = status.current ? `Harmony ${status.current}` : 'Harmony';
+  el.updateStatus.textContent = updateLine(status);
+  el.updateCheck.disabled = ['checking', 'downloading', 'unsupported'].includes(status.state);
+  const label = updateActionLabel(status);
+  el.updateAction.hidden = !label;
+  if (label) el.updateAction.textContent = label;
+
+  // The banner: a new version that was not put off, its download, and the
+  // restart once it is in. Errors stay in settings -- a failed background
+  // check is not worth interrupting anybody for.
+  const key = `${status.state}:${status.version}`;
+  const wanted =
+    (status.state === 'available' && status.version !== state.settings?.updateDismissed) ||
+    status.state === 'downloading' ||
+    status.state === 'ready';
+  el.updateBanner.hidden = !wanted || updateBannerHidden === key;
+  if (el.updateBanner.hidden) return;
+
+  if (status.state === 'available') {
+    el.updateBannerText.textContent = `Harmony ${status.version} is available.`;
+  } else if (status.state === 'downloading') {
+    el.updateBannerText.textContent = `Downloading Harmony ${status.version}… ${status.percent ?? 0}%`;
+  } else {
+    el.updateBannerText.textContent = `Harmony ${status.version} is ready to install.`;
+  }
+  el.updateBannerAction.hidden = !label;
+  if (label) el.updateBannerAction.textContent = label;
+  el.updateBannerLater.textContent = status.state === 'downloading' ? 'Hide' : 'Later';
+}
+
+async function runUpdateAction() {
+  const status = updateStatus;
+  try {
+    if (status.state === 'ready') {
+      if (
+        isBroadcasting() &&
+        !(await askConfirm('Restart to update?', {
+          text: 'You are live. Restarting now ends your stream; the update also installs whenever you quit.',
+          okLabel: 'Restart',
+        }))
+      ) {
+        return;
+      }
+      await harmony.updates.install();
+    } else if (status.manual) {
+      await harmony.updates.open();
+    } else {
+      await harmony.updates.download();
+    }
+  } catch (err) {
+    toast(`Could not update: ${err.message}`);
+  }
+}
+
+harmony.updates.onStatus((status) => {
+  updateStatus = status;
+  renderUpdates();
+});
+harmony.updates
+  .get()
+  .then((status) => {
+    updateStatus = status;
+    renderUpdates();
+  })
+  .catch(() => {});
+
+// The answer shows on this row, Download button included -- so a version put
+// off with "Later" can still be had from here without the banner returning.
+el.updateCheck.addEventListener('click', () => {
+  harmony.updates.check().catch(() => {});
+});
+el.updateAction.addEventListener('click', runUpdateAction);
+el.updateBannerAction.addEventListener('click', runUpdateAction);
+el.updateBannerLater.addEventListener('click', async () => {
+  const status = updateStatus;
+  updateBannerHidden = `${status.state}:${status.version}`;
+  el.updateBanner.hidden = true;
+  // "Later" on an offer means that version stops asking, across restarts;
+  // a newer one asks again. Hiding a download or a ready install is only for
+  // this session -- the install happens on quit regardless.
+  if (status.state === 'available' && status.version) {
+    state.settings = await harmony.settings.set({ updateDismissed: status.version });
+  }
 });
 
 // Release the username even if the user closes the window mid-stream.

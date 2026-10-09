@@ -741,6 +741,13 @@ select:focus {
   font-size: 0.95rem;
   letter-spacing: 0.02em;
 }
+/* The server you are on, top left: its logo, its name, your role. */
+.bar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 .channel-list h2,
 .voice-head h2 {
   font-size: 0.95rem;
@@ -1946,29 +1953,60 @@ button.danger {
   flex: 1 1 auto;
   min-width: 0;
 }
+/*
+ * A virtual list (see paintEmojiRows): the spacer is as tall as every row
+ * together, and only the rows in view are in it, each placed absolutely at
+ * its own precomputed top. The gutter is reserved so the width -- and so
+ * the column count -- does not change when search results stop overflowing.
+ */
 .emoji-grid {
   overflow-y: auto;
   min-height: 0;
   flex: 1 1 auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.emoji-space {
+  position: relative;
+  contain: layout paint style;
 }
 .emoji-section-head {
-  position: sticky;
-  top: 0;
+  box-sizing: border-box;
+  height: 26px;
   background: var(--surface);
-  padding: 0.35rem 0.2rem 0.2rem;
+  padding: 0.4rem 0.2rem 0;
   font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.emoji-section {
+.emoji-row-head,
+.emoji-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+/* The heading that stays put: laid over the top of the list, taking no
+   room of its own (the negative margin), always naming the section the
+   topmost row belongs to. */
+.emoji-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin-bottom: -26px;
+}
+.emoji-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(2rem, 1fr));
-  gap: 0.1rem;
+  grid-template-columns: repeat(var(--emoji-cols, 10), 1fr);
+  contain: layout paint style;
 }
 .emoji-cell {
-  aspect-ratio: 1;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1981,6 +2019,18 @@ button.danger {
   cursor: pointer;
   padding: 0;
   font-variant-emoji: emoji;
+  /* Named outright: left to fallback, every new glyph is a search through
+     the system's fonts. Only used until the sprite sheet is ready. */
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+}
+/* One slice of the sprite sheet (buildEmojiAtlas). The image and its size
+   come from a stylesheet made at runtime; the position from the cell. */
+.emoji-sprite {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  background-repeat: no-repeat;
+  pointer-events: none;
 }
 .emoji-cell:hover,
 .emoji-cell:focus-visible {
@@ -1995,6 +2045,7 @@ button.danger {
    row of buttons: the grid is already dense. */
 .emoji-cell-wrap {
   position: relative;
+  display: flex;
 }
 .emoji-cell-wrap .emoji-remove {
   position: absolute;
@@ -2036,6 +2087,7 @@ button.danger {
 .emoji-preview .big {
   font-size: 1.4rem;
   line-height: 1;
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
 }
 .emoji-preview img {
   width: 1.4rem;
@@ -3136,32 +3188,246 @@ button.danger {
 
 /* ---------- the connect screen ---------- */
 
-/*
- * Two columns on a window with room, one on a narrow one. The server and
- * the account are two separate questions and reading them as one list of
- * five boxes is what made the old form confusing.
- */
-.connect-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: 0 1.2rem;
-  align-items: start;
-}
-.connect-col {
+/* One step at a time: the server, then the account. */
+.connect-step {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 12px;
 }
-/* The hint sits under both columns and speaks about the username, so it
-   should not look like it belongs to the Options button below it. */
-#username-hint {
+#account-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.connect-hint {
   display: block;
-  margin: -0.2rem 0 0.8rem;
+  margin-top: -0.2rem;
   color: var(--muted);
   font-size: 0.8rem;
 }
-#continue {
+#continue,
+#server-continue {
   width: 100%;
+}
+
+/*
+ * The server you are signing in to, as a field above the username: the
+ * account fields under it belong to it. Opens the list of saved servers.
+ */
+.server-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  font-weight: 400;
+}
+.server-chip:hover {
+  border-color: var(--border-strong);
+}
+.server-chip-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.server-chip-dot[data-up] {
+  background: var(--live);
+}
+/* Being asked: amber, breathing, until it answers. */
+.server-chip-dot[data-checking] {
+  background: var(--warn);
+  animation: server-checking 1s ease-in-out infinite alternate;
+}
+@keyframes server-checking {
+  from { opacity: 1; }
+  to { opacity: 0.3; }
+}
+/*
+ * A server's face: its logo, or its initial on a tile when it has none,
+ * with the reachability dot as a badge on the corner.
+ */
+.server-badge {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: rgb(var(--accent-rgb) / 0.22);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.server-badge.large {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  font-size: 22px;
+}
+.server-badge img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+.server-badge .server-chip-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 2px var(--surface-2);
+}
+.server-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.server-chip-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.server-chip-text strong,
+.server-chip-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.server-chip-text strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.server-chip-text small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.server-chip-caret {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.server-chip[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+/*
+ * The list of servers. Fixed, placed by script under the selector (or above
+ * it when there is no room), because the card scrolls and would clip it.
+ * Search at the top and "Add a server" at the bottom stay put; only the list
+ * between them scrolls.
+ */
+.server-menu {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(360px, calc(100vh - 16px));
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+/* The same pill as every other search box in the app (.search-field). */
+.server-menu .search-field {
+  flex: none;
+  width: 100%;
+}
+.server-options {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.server-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.server-option:hover {
+  background: rgb(var(--tint-rgb) / 0.06);
+}
+.server-option[aria-selected='true'] {
+  background: rgb(var(--accent-rgb) / 0.16);
+}
+.server-option-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  line-height: 1.25;
+}
+.server-option-text strong,
+.server-option-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.server-option-text strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.server-option-text small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.server-option-tick {
+  flex: none;
+  color: var(--accent);
+}
+.server-option-forget {
+  flex: none;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0;
+}
+.server-option:hover .server-option-forget,
+.server-option-forget:focus-visible {
+  opacity: 1;
+}
+.server-option-forget:hover {
+  color: var(--danger-soft);
+}
+.server-options-empty {
+  margin: 0;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.server-add {
+  flex: none;
+  padding: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+.server-add:hover {
+  border-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 0.08);
 }
 .switch-auth {
   text-align: center;
@@ -3420,20 +3686,12 @@ button.tiny:disabled {
 }
 
 /*
- * 620px, not 420.
- *
- * The two columns above are auto-fit with a 15rem minimum, so they need
- * 240 + 240 + the gap before a second track can exist. At 420px the card
- * could never give them that, and the "two columns" layout had been
- * collapsing to one on every window since the day it was written -- which
- * is both why it did not look like the sketch and why the form was 923px
- * tall in a 713px window, scrolling the Connect button under the fold.
- *
- * 620 is the largest that still leaves room for the 420px live list beside
- * it at 1164px, which is the window this app actually opens at.
+ * One column again, since the form asks one thing at a time. Wide enough for
+ * the title and the server card to share a row without the card's name
+ * being cut to a few letters.
  */
 .connect-card {
-  width: min(620px, 100%);
+  width: min(480px, 100%);
   max-width: 100%;
   /* Never taller than the window; with every optional field showing (password,
      GPU choice, the hybrid-GPU hint) it can be, and then it scrolls itself. */
@@ -3454,6 +3712,25 @@ button.tiny:disabled {
 .brand p {
   color: var(--muted);
   margin-top: 4px;
+}
+.brand-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/*
+ * The logo, drawn in the palette's accent: logo.png is only the SHAPE (a
+ * mask), and the colour is the background behind it. As a plain image it
+ * would be white whatever the palette, which is invisible on Daylight and
+ * on any light Custom palette. Regenerated with client/scripts/make-icons.py.
+ */
+.brand-logo {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  background: var(--accent);
+  -webkit-mask: url('logo.png') center / contain no-repeat;
+  mask: url('logo.png') center / contain no-repeat;
 }
 
 /*
@@ -4181,6 +4458,50 @@ button.tiny:disabled {
 .toast.clickable {
   cursor: pointer;
   border-color: var(--accent);
+}
+
+/* ---------- updates ---------- */
+
+.update-banner {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 61;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(460px, calc(100vw - 32px));
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 12px 10px 16px;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.update-banner > span {
+  flex: 1;
+  min-width: 0;
+}
+.update-banner .small {
+  padding: 6px 12px;
+  font-size: 13px;
+  flex: none;
+}
+
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.update-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.update-text .muted {
+  font-size: 0.78rem;
 }
 
 .tile-status {

@@ -6,6 +6,18 @@ directories:
   output: dist
   buildResources: build
 
+# Where updates come from. With this set, every build writes
+# resources/app-update.yml into the app (what electron-updater reads at
+# runtime) and latest.yml / latest-linux.yml into dist/ -- even with
+# `--publish never`, which is how CI builds: the release itself is created by
+# one job in .github/workflows/release.yml, so three parallel builds never
+# race to create it. The repo is public, so clients need no token to read it.
+publish:
+  provider: github
+  owner: PedroLucasMiguel
+  repo: harmony
+  releaseType: release
+
 # Effectively unused. The NSIS installer's payload is archived by 7-Zip at
 # -mx=9 whatever this says, and the one thing that overrides it -- the
 # ELECTRON_BUILDER_COMPRESSION_LEVEL environment variable -- overrides this
@@ -42,7 +54,10 @@ files:
 asarUnpack:
   - node_modules/loopback-capture/**
 
+# The app icon, from media/iso.png -- regenerate with
+# `python client/scripts/make-icons.py` after changing the logo.
 win:
+  icon: build/icon.ico
   # An installer, not the self-extracting `portable` .exe used up to 2.9.
   #
   # The portable build unpacked ~300 MB of Chromium into %TEMP% on EVERY
@@ -62,6 +77,8 @@ win:
   requestedExecutionLevel: asInvoker
 
 nsis:
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
   # Per-user, one click: installs into %LOCALAPPDATA%\Programs\Harmony with
   # no UAC prompt, the same no-admin promise the portable build made.
   oneClick: true
@@ -79,20 +96,36 @@ nsis:
   # Settings, the session and the media cache live in %APPDATA%; an update
   # (which is an uninstall and reinstall underneath) must not take them.
   deleteAppDataOnUninstall: false
-  # The .blockmap is for electron-updater's differential downloads, which
-  # Harmony does not use. Skipping it is a little less build time and one
-  # less file in dist/.
+  # The .blockmap is for electron-updater's differential downloads. Without
+  # it an update downloads the whole installer (~86 MB) rather than the parts
+  # that changed -- which is nearly all of it anyway when Electron itself
+  # moves. Turning it on is a little build time and one more release file.
   differentialPackage: false
 
 linux:
+  icon: build/icon.png
   target:
     - AppImage
   category: Network
   artifactName: Harmony-${version}-${arch}.AppImage
 
 mac:
+  # 1024 px PNG; electron-builder makes the .icns from it.
+  icon: build/icon.png
   target:
     - dmg
+  # One per architecture; CI builds both (--x64 --arm64).
+  artifactName: Harmony-${version}-${arch}.dmg
+  # Ad-hoc signed: no Apple Developer ID. An Apple Silicon Mac will not run
+  # an arm64 app with no signature at all (packaging changes the bundle, so
+  # Electron's own signature no longer holds), and "-" is the free signature
+  # that satisfies that. Hardened runtime only matters for notarization, and
+  # with an ad-hoc signature it would refuse Electron's frameworks, so off.
+  # Not signed by a known developer means Gatekeeper still asks on first
+  # open (right-click, Open) -- and that updates cannot install themselves on
+  # macOS; the app offers the download page instead (src/main/updater.js).
+  identity: '-'
+  hardenedRuntime: false
   category: public.app-category.social-networking
   # Screen and audio capture need these on macOS 10.15+.
   extendInfo:

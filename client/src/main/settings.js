@@ -24,6 +24,19 @@ const DEFAULTS = {
   // different thing -- a room key, not a personal credential.
   sessionToken: '',
   rememberAccount: true,
+  /*
+   * Every server this client has connected to, each with ITS OWN credentials:
+   * [{ url, password, username, sessionToken, rememberAccount, lastUsed }].
+   *
+   * The five fields above are the CURRENT server's, and the ones main sends
+   * with every request; picking another server copies its profile up into
+   * them. Kept apart per server because nothing about an account carries
+   * over -- a session token from one server must never be sent to another,
+   * and the same person usually has a different nickname on each.
+   *
+   * No server NAME is stored: it is asked for each time, so a rename shows.
+   */
+  servers: [],
   // Disk budget for cached avatars, attachments and soundpad clips. Evicted
   // least-recently-used first, never touching pinned or soundpad files.
   mediaCacheMb: 512,
@@ -140,6 +153,9 @@ const DEFAULTS = {
    */
   hotkeys: { mute: '', deafen: '' },
   clipHotkeys: {},
+  // The update version "Later" was clicked on. That one stops asking; a
+  // newer one asks again.
+  updateDismissed: '',
   // Rolling clip buffer. Off by default: it is memory the user did not ask for.
   clipsEnabled: false,
   // GPU video encoding (NVENC / AMF / Quick Sync). 'auto' leaves Chromium to

@@ -12,6 +12,7 @@ const api = require('./api');
 const clips = require('./clips');
 const gpu = require('./gpu');
 const hotkeys = require('./hotkeys');
+const updater = require('./updater');
 const { RealtimeClient } = require('./realtime');
 const { MediaCache, HASH_RE } = require('./media-cache');
 
@@ -21,6 +22,15 @@ const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
 let mediaServer = '';
 /** @type {MediaCache|null} */
 let mediaCache = null;
+/**
+ * Server logos, apart from the media cache on purpose: that one evicts by
+ * age and only ever downloads from the CURRENT server, while a logo belongs
+ * to a server in the list that may not be current, and has to be there the
+ * next time the list opens. Same class, so the same hash check and atomic
+ * writes; its own folder, and a budget logos will never reach.
+ * @type {MediaCache|null}
+ */
+let logoCache = null;
 const MODULES_DIR = path.join(__dirname, '..', '..', 'node_modules');
 
 // Chromium throttles renderers whose window is hidden, minimised or covered by
@@ -125,6 +135,30 @@ function registerProtocol() {
       }
     }
 
+    // `server-logo/<hash>` serves a cached server logo, and only that: it
+    // never downloads, because a URL cannot say which server -- or which
+    // password -- the logo came from. The renderer asks for it to be fetched
+    // first (logos:ensure), and draws its fallback if it is not here.
+    if (rel.startsWith('server-logo/')) {
+      const hash = rel.slice('server-logo/'.length);
+      if (!HASH_RE.test(hash) || !logoCache?.has(hash)) {
+        return new Response('Not cached', { status: 404 });
+      }
+      const { path: file, contentType } = await logoCache.get(hash, () => {
+        throw new Error('not cached');
+      });
+      const response = await net.fetch(pathToFileURL(file).toString());
+      return new Response(response.body, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Security-Policy': "default-src 'none'; sandbox",
+          'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        },
+      });
+    }
+
     // `vendor/...` serves ES modules straight from node_modules, so third-party
     // libraries stay managed by npm instead of being copied into the repo.
     const underVendor = rel.startsWith('vendor/');
@@ -174,6 +208,10 @@ function createWindow() {
     // Shown at once, in the palette's own background -- see below.
     backgroundColor: windowBackground(),
     title: 'Harmony',
+    // The packaged .exe carries its icon already; this is what `npm start`
+    // and Linux show instead of Electron's. An .ico on Windows, which holds
+    // every size, so the taskbar and Alt+Tab pick a sharp one.
+    icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     autoHideMenuBar: true,
     show: true,
     webPreferences: {
@@ -273,6 +311,10 @@ app.whenReady().then(() => {
     dir: path.join(app.getPath('userData'), 'media'),
     budgetBytes: (settings.read().mediaCacheMb ?? 512) * 1024 * 1024,
   });
+  logoCache = new MediaCache({
+    dir: path.join(app.getPath('userData'), 'server-logos'),
+    budgetBytes: 64 * 1024 * 1024,
+  });
   registerProtocol();
   gpu.watch();
 
@@ -301,6 +343,12 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+
+  // Checks GitHub Releases a little after launch, then every few hours. Only
+  // ever announces: downloading is the person's call (see updater.js).
+  updater.start((status) => {
+    if (win && !win.isDestroyed()) win.webContents.send('updates:status', status);
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -402,6 +450,19 @@ handle('app:relaunch', () => {
 });
 
 handle('api:password', (_e, value) => api.setPassword(value));
+handle('api:probe', (_e, s, serverPassword) => api.probe(s, serverPassword));
+
+/**
+ * Make sure a server's logo is cached, downloading it with that server's own
+ * password if not. Answers with the URL to draw it from. The download is
+ * checked against the hash /api/health reported, so what is cached under a
+ * hash is always what that hash names.
+ */
+handle('logos:ensure', async (_e, server, serverPassword, hash) => {
+  if (!logoCache || !HASH_RE.test(String(hash))) return null;
+  await logoCache.get(hash, () => api.fetchServerLogo(server, serverPassword));
+  return `harmony://app/server-logo/${hash}`;
+});
 handle('api:session-token', (_e, value) => api.setSessionToken(value));
 handle('api:register', (_e, s, n, p, k) => api.register(s, n, p, k));
 handle('api:login', (_e, s, n, p, k) => api.login(s, n, p, k));
@@ -473,6 +534,13 @@ function applyScale(percent) {
 handle('app:scale', (_e, percent) => applyScale(percent));
 
 handle('hotkeys:set', (_e, bindings) => hotkeys.set(bindings));
+
+handle('updates:get', () => updater.get());
+handle('updates:check', () => updater.check());
+handle('updates:download', () => updater.download());
+handle('updates:install', () => updater.install());
+handle('updates:open', () => updater.open());
+handle('app:version', () => app.getVersion());
 
 handle('media:stats', () => mediaCache?.stats() ?? null);
 

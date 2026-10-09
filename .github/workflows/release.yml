@@ -1,0 +1,100 @@
+# A release, built for every OS and published -- from one tag.
+#
+#   1. bump "version" in client/package.json and commit
+#   2. git tag v3.1.0 && git push origin v3.1.0
+#
+# The tag has to match the version exactly, or nothing is published: the
+# installed apps compare versions from latest.yml, which is built from
+# package.json, and a release named one thing holding another would offer an
+# update forever or never.
+#
+# Three builds run side by side and only upload what they made. One last job
+# creates the GitHub Release with all of it, so there is never a race between
+# builds to create it. Running clients find it within six hours (see
+# client/src/main/updater.js).
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            targets: --win nsis
+          - name: linux
+            os: ubuntu-latest
+            targets: --linux AppImage
+          - name: macos
+            os: macos-latest
+            targets: --mac dmg --x64 --arm64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: client
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Tag matches the version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match client/package.json version $version (expected v$version)."
+            exit 1
+          fi
+
+      - run: npm ci
+
+      # --publish never: this job only builds. The publish config in
+      # electron-builder.yml still makes it write latest*.yml into dist/.
+      - name: Build
+        run: node scripts/build.js release ${{ matrix.targets }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harmony-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            client/dist/*.exe
+            client/dist/*.AppImage
+            client/dist/*.dmg
+            client/dist/latest*.yml
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - run: ls -la release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true

@@ -7,6 +7,12 @@
 // mixed-content blocking, and MediaMTX's allow-origin settings stop mattering.
 
 const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * How long to wait for a server to say whether it is there. Shorter than an
+ * ordinary request, because a server that is down would otherwise hold the
+ * connect screen for the full ten seconds before saying so.
+ */
+const HEALTH_TIMEOUT_MS = 5_000;
 const SDP_TIMEOUT_MS = 20_000;
 
 /**
@@ -56,20 +62,32 @@ function normalizeBase(serverUrl) {
   return withScheme.replace(/\/+$/, '');
 }
 
-async function requestJson(serverUrl, pathname, { method = 'GET', body } = {}) {
+/**
+ * @param {object} [options]
+ * @param {string} [options.serverPassword]  send THIS instead of the current
+ *   server's password, and no session token at all. For asking a server that
+ *   is not the current one about itself: the current server's credentials
+ *   must never be sent to another.
+ * @param {number} [options.timeoutMs]
+ */
+async function requestJson(serverUrl, pathname, {
+  method = 'GET', body, serverPassword, timeoutMs = REQUEST_TIMEOUT_MS,
+} = {}) {
   const url = `${normalizeBase(serverUrl)}${pathname}`;
+  const foreign = serverPassword !== undefined;
   let res;
   try {
     const headers = {};
     if (body) headers['Content-Type'] = 'application/json';
-    if (password) headers['X-Harmony-Password'] = password;
-    if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+    const door = foreign ? serverPassword : password;
+    if (door) headers['X-Harmony-Password'] = door;
+    if (sessionToken && !foreign) headers.Authorization = `Bearer ${sessionToken}`;
 
     res = await fetch(url, {
       method,
       headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     throw new ApiError(
@@ -150,6 +168,32 @@ async function sdpExchange(url, offerSdp) {
  * media cache verifies the sha256 of what arrives -- it needs the buffer, not
  * a parsed body.
  */
+/**
+ * Any saved server's logo, with THAT server's password and no session token
+ * -- the same rule as probe(): one server's credentials never go to another.
+ * Shaped like fetchUpload, for the logo cache to verify and store.
+ */
+async function fetchServerLogo(serverUrl, serverPassword) {
+  const url = `${normalizeBase(serverUrl)}/api/server/logo`;
+  const headers = {};
+  if (serverPassword) headers['X-Harmony-Password'] = serverPassword;
+  let res;
+  try {
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (err) {
+    throw new ApiError(`Could not download the logo: ${err.message}`, { code: 'unreachable' });
+  }
+  if (!res.ok) {
+    throw new ApiError(`The server returned ${res.status} for its logo.`, {
+      status: res.status, code: res.status === 404 ? 'no_logo' : 'media_error',
+    });
+  }
+  return {
+    buffer: Buffer.from(await res.arrayBuffer()),
+    contentType: res.headers.get('content-type') ?? 'application/octet-stream',
+  };
+}
+
 async function fetchUpload(serverUrl, hash) {
   const url = `${normalizeBase(serverUrl)}/api/uploads/${hash}`;
   const headers = {};
@@ -220,7 +264,12 @@ module.exports = {
   ApiError,
   setPassword,
   setSessionToken,
-  health: (s) => requestJson(s, '/api/health'),
+  // The current server, with a shorter wait than an ordinary request: this
+  // is what the connect screen shows a spinner for.
+  health: (s) => requestJson(s, '/api/health', { timeoutMs: HEALTH_TIMEOUT_MS }),
+  // Any saved server, with ITS OWN password (or none) and no session token.
+  probe: (s, serverPassword) =>
+    requestJson(s, '/api/health', { serverPassword: serverPassword ?? '', timeoutMs: HEALTH_TIMEOUT_MS }),
 
   // Accounts. All of these sit behind the shared server password, so they
   // inherit the X-Harmony-Password header above without doing anything.
@@ -293,6 +342,7 @@ module.exports = {
   sdpExchange,
   deleteResource,
   fetchUpload,
+  fetchServerLogo,
   uploadFile,
 
   // Messages

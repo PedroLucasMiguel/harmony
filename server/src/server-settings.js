@@ -12,6 +12,7 @@ import { secretsMatch } from './auth.js';
 
 const NAME_KEY = 'server_name';
 const DOOR_KEY = 'door_password';
+const LOGO_KEY = 'server_logo';
 
 /** What a server with no name of its own is called. */
 export const DEFAULT_NAME = 'Harmony';
@@ -72,6 +73,25 @@ export class ServerSettings {
     if (clean) this.#meta.set(NAME_KEY, clean);
     else this.#meta.delete(NAME_KEY);
     return this.name;
+  }
+
+  /**
+   * The server's logo, as the hash of an upload, or null for none.
+   *
+   * Only the hash lives here. The file is an ordinary upload, reference
+   * counted like an avatar -- the route that sets this retains the new one
+   * and releases the old, so a logo nobody uses any more can be evicted.
+   */
+  get logo() {
+    return this.#meta.get(LOGO_KEY) || null;
+  }
+
+  /** @returns {string|null} the logo it replaced, for its reference to be released */
+  setLogo(hash) {
+    const previous = this.logo;
+    if (hash) this.#meta.set(LOGO_KEY, hash);
+    else this.#meta.delete(LOGO_KEY);
+    return previous;
   }
 
   /** The override, or null when the environment is still in charge. */
@@ -147,6 +167,7 @@ export class ServerSettings {
   publicView() {
     return {
       name: this.name,
+      logo: this.logo,
       passwordRequired: this.passwordRequired,
       restartRequired: this.restartRequired,
     };

@@ -215,6 +215,9 @@ app.get('/api/health', (req, res) => {
     ...(authed
       ? {
           name: serverSettings.name,
+          // The hash, not the picture: a client compares it with the copy it
+          // cached and only downloads on a change (GET /api/server/logo).
+          logo: serverSettings.logo,
           signalingBase: config.signalingBase,
           liveStreams: rooms.listLive().length,
           // Lets the client show "create the first account" rather than a
@@ -293,6 +296,16 @@ app.post('/api/accounts/register', async (req, res) => {
 
   const user = accounts.find(result.user.nickname);
   const token = accounts.startSession(user.id);
+  /*
+   * Everybody else learns there is somebody new.
+   *
+   * The member list is drawn from the accounts each client already holds,
+   * crossed with who is online -- so a new account appeared in nobody's
+   * list until they restarted, even once its owner was online. user:updated
+   * is what every client already handles by adding to that map; a new
+   * account is just one nobody had yet.
+   */
+  realtime?.broadcast({ type: 'user:updated', user: publicUser(user) });
   return res.status(201).json({
     user: publicUser(user),
     token,
@@ -558,12 +571,65 @@ app.get('/api/server', requireLogin, (_req, res) => {
  * have to be told apart rather than both treated as falsy.
  */
 app.post('/api/server', requireRole('owner'), (req, res) => {
+  /*
+   * The logo: the hash of something already uploaded (POST /api/uploads),
+   * or null to take it away -- the same two steps as an avatar, and the same
+   * order of references: the new one retained BEFORE the old is released,
+   * so setting the same picture again never drops it to zero.
+   */
+  if (req.body?.logo !== undefined) {
+    const hash = req.body.logo === null ? null : String(req.body.logo);
+    if (hash !== null) {
+      if (!/^[0-9a-f]{64}$/.test(hash)) {
+        return res.status(400).json({ error: 'bad_hash', message: 'That is not an uploaded file.' });
+      }
+      const upload = chat.fileInfo(hash);
+      if (!upload) {
+        return res.status(400).json({ error: 'no_such_upload', message: 'Upload the logo first.' });
+      }
+      if (mediaTypeOf(upload.content_type) !== 'image') {
+        return res.status(400).json({ error: 'not_an_image', message: 'A logo has to be an image.' });
+      }
+      if (upload.bytes > MAX_AVATAR_BYTES) {
+        return res.status(400).json({
+          error: 'logo_too_large',
+          message: `Server logos are limited to ${Math.round(MAX_AVATAR_BYTES / 1024)} KB.`,
+        });
+      }
+      chat.retain(hash);
+    }
+    const previous = serverSettings.setLogo(hash);
+    if (previous && previous !== hash) chat.release(previous);
+  }
+
   if (req.body?.name !== undefined) serverSettings.setName(req.body.name);
   if (typeof req.body?.password === 'string') serverSettings.setPassword(req.body.password);
 
   const view = serverSettings.publicView();
   realtime?.broadcast({ type: 'server', server: view });
   return res.json({ server: view });
+});
+
+/**
+ * The server's logo, as an image.
+ *
+ * Behind the door password like everything else, but NOT behind a login:
+ * the client's server list asks every saved server for its logo with that
+ * server's own password and no session token -- which is the point, since a
+ * session belongs to one server and is never sent to another. The file is
+ * content-addressed, so it can be cached forever; a new logo is a new hash,
+ * which /api/health reports.
+ */
+app.get('/api/server/logo', (_req, res) => {
+  const hash = serverSettings.logo;
+  const info = hash ? chat.fileInfo(hash) : null;
+  if (!info) return res.status(404).json({ error: 'no_logo' });
+  res.set('Content-Type', info.content_type);
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.set('X-Harmony-Hash', hash);
+  return res.sendFile(info.path);
 });
 
 app.get('/api/streams', (_req, res) => {

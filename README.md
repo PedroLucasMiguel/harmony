@@ -34,11 +34,27 @@ sudo server/install.sh
 
 or with Docker. See [docker/](docker/).
 
-**Client** (Windows):
+**Client:** download it from
+[Releases](https://github.com/PedroLucasMiguel/harmony/releases/latest).
+Windows (`-setup.exe`), Linux (`.AppImage`) and macOS (`.dmg`). The app
+offers new versions itself: it installs them itself on Windows and Linux,
+and on macOS it opens the download page.
+
+The builds are unsigned:
+- **Windows:** SmartScreen may ask on the first install. Choose *More info → Run anyway*.
+- **macOS:** right-click the app → *Open* the first time.
+
+To build it yourself:
 
 ```bash
 cd client && npm install && npm run build   # -> dist/Harmony-<version>-setup.exe
 ```
+
+**Releasing:**
+1. Bump `version` in `client/package.json` and commit.
+2. Push a matching tag: `git tag v3.1.0 && git push origin v3.1.0`.
+
+GitHub Actions builds all three and publishes the release.
 
 TLS, dynamic IPs, ports and troubleshooting are covered in
 **[DEPLOYMENT.md](DEPLOYMENT.md)**.

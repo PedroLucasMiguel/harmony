@@ -15,47 +15,89 @@
       <div class="connect-layout">
       <div class="connect-card">
         <header class="brand">
-          <h1>Harmony</h1>
+          <div class="brand-title">
+            <!-- The logo as a mask, not an <img>: it is white lines, which
+                 would vanish on Daylight, so it is filled with the palette's
+                 accent instead -- see .brand-logo. -->
+            <span class="brand-logo" aria-hidden="true"></span>
+            <h1>Harmony</h1>
+          </div>
           <p>Share a screen, or watch someone else's.</p>
         </header>
 
         <!--
-          Two columns, because there are two unrelated things being asked
-          for and stacking them made one list of five boxes with no clue
-          which belonged to what. The left is the SERVER -- where it is and
-          the key to the front door. The right is YOU.
+          Two steps, one question each: WHERE, then WHO.
 
-          Everything is present at all times, including both password
-          fields. They used to appear and disappear as the server was
-          probed, which meant the form you filled in was not the form you
-          were looking at a second earlier, and a password box that is not
-          there yet is one people assume is not wanted.
+          It used to be one form with both, which asked a first-time user for
+          a password before they could know whether the server had one, and
+          for an account before they could know whether the server had
+          accounts. Asking for the server first means every later question is
+          one the server has actually asked.
         -->
-        <div class="connect-columns">
-          <div class="connect-col">
-            <label class="field">
-              <span>Server address</span>
-              <input
-                id="server-url"
-                type="text"
-                spellcheck="false"
-                autocomplete="off"
-                placeholder="https://stream.example.com or 192.168.1.50:8080"
-              />
-            </label>
+        <div class="connect-step" id="step-server">
+          <label class="field">
+            <span>Server address</span>
+            <input
+              id="server-url"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="https://harmony.example.com or 192.168.1.50:8080"
+            />
+          </label>
 
-            <label class="field" id="password-field">
-              <span>Server password</span>
-              <input
-                id="server-password"
-                type="password"
-                autocomplete="off"
-                placeholder="If this server has one"
-              />
-            </label>
+          <!-- Only once the server has said it wants one. -->
+          <label class="field" id="password-field" hidden>
+            <span>Server password</span>
+            <input
+              id="server-password"
+              type="password"
+              autocomplete="off"
+              placeholder="This server asks for one"
+            />
+          </label>
+
+          <small class="connect-hint" id="server-hint"
+            >The address you were given for your Harmony server.</small
+          >
+
+          <button class="primary" id="server-continue">Continue</button>
+          <!-- Only when step one was opened from "Add a server": a way back
+               to the server you were already on, untouched. -->
+          <p class="switch-auth" id="server-back-row" hidden>
+            <button type="button" class="linklike" id="server-back">Back to my servers</button>
+          </p>
+        </div>
+
+        <div class="connect-step" id="step-account" hidden>
+          <!--
+            Which server, above who you are on it -- the account fields below
+            belong to this server and change when it does.
+
+            The list opens as a fixed-position panel (placed by script) rather
+            than inside the card, because the card scrolls and would clip it.
+            Search and the list scroll; "Add a server" is outside the list so
+            it never scrolls away.
+          -->
+          <div class="field server-picker">
+            <span>Server</span>
+            <button
+              type="button"
+              class="server-chip"
+              id="server-chip"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <span class="server-badge" id="server-chip-badge"></span>
+              <span class="server-chip-text">
+                <strong id="server-chip-name"></strong>
+                <small id="server-chip-host"></small>
+              </span>
+              <span class="server-chip-caret" aria-hidden="true">&#9662;</span>
+            </button>
           </div>
 
-          <div class="connect-col" id="account-fields">
+          <div id="account-fields">
             <label class="field">
               <span>Username</span>
               <input
@@ -99,25 +141,35 @@
               <span>Remember me</span>
             </label>
           </div>
+
+          <small class="connect-hint" id="username-hint"
+            >Free name &rarr; you start streaming. Name already live &rarr; you join and
+            watch.</small
+          >
+
+          <button class="primary" id="continue">Connect</button>
+
+          <p class="switch-auth">
+            <span id="auth-mode-text"></span>
+            <button type="button" class="linklike" id="auth-mode-toggle"></button>
+          </p>
         </div>
 
-        <small id="username-hint"
-          >Free name &rarr; you start streaming. Name already live &rarr; you join and
-          watch.</small
-        >
-
-        <button class="primary" id="continue">Connect</button>
-
-        <!-- Always on screen, never behind a condition: somebody arriving at
-             a server for the first time needs it, and a link that appears
-             only once the server has been probed is one they will not find
-             because they were not looking when it arrived. -->
-        <p class="switch-auth">
-          <span id="auth-mode-text"></span>
-          <button type="button" class="linklike" id="auth-mode-toggle"></button>
-        </p>
-
         <p class="error" id="connect-error" hidden></p>
+
+        <div class="server-menu" id="server-menu" hidden>
+          <input
+            type="search"
+            id="server-search"
+            class="search-field"
+            placeholder="Search servers"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <ul class="server-options" id="server-options" role="listbox"></ul>
+          <p class="server-options-empty" id="server-options-empty" hidden>No servers match.</p>
+          <button type="button" class="server-add" id="server-add">+ Add a server</button>
+        </div>
 
         <!-- Shown outside the collapsed section on purpose: nobody opens a
              panel they have no reason to suspect contains something useful,
@@ -232,6 +284,8 @@
           <!-- Who you are lives at the bottom of the sidebar now; see
                .self-strip. All that is left up here is the server. -->
           <!-- The server's own name, once it says what it is. -->
+          <!-- Its logo, or its initial while it has none. -->
+          <span class="server-badge" id="server-icon" aria-hidden="true"></span>
           <strong class="brand-small" id="server-name">Harmony</strong>
           <span class="muted" id="channels-role"></span>
         </div>
@@ -790,6 +844,20 @@
           <input id="server-name-input" type="text" maxlength="32" autocomplete="off" />
           <small>What it is called in the title bar, for everybody.</small>
         </label>
+        <!--
+          The logo everybody sees beside this server in their server list.
+          Picking one only stages it -- with a preview -- and Save sends it,
+          like the name and the password beside it.
+        -->
+        <div class="field">
+          <span>Logo</span>
+          <div class="server-logo-row">
+            <span class="server-badge large" id="server-logo-preview"></span>
+            <button type="button" class="ghost small" id="server-logo-pick">Choose image&hellip;</button>
+            <button type="button" class="ghost small" id="server-logo-remove">Remove</button>
+          </div>
+          <small>Shown in everybody's server list. Square works best; it is shrunk to 256 px.</small>
+        </div>
         <label class="field">
           <span>Password</span>
           <input
@@ -1122,11 +1190,39 @@
           <div class="hotkey-list" id="hotkey-list"></div>
         </section>
 
+        <!--
+          Updates come from the project's GitHub Releases. Nothing downloads
+          until somebody presses the button; on macOS the button opens the
+          release page instead, since an unsigned Mac app cannot install its
+          own update.
+        -->
+        <section class="settings-section">
+          <h3>Updates</h3>
+          <div class="update-row">
+            <div class="update-text">
+              <strong id="update-version">Harmony</strong>
+              <span class="muted" id="update-status">Not checked yet.</span>
+            </div>
+            <button type="button" class="ghost small" id="update-check">Check now</button>
+            <button type="button" class="primary" id="update-action" hidden>Download</button>
+          </div>
+        </section>
+
         <div class="ask-buttons">
           <button type="submit" class="primary" id="devices-close">Done</button>
         </div>
       </form>
     </dialog>
+
+    <!--
+      A newer version exists. Its own small card rather than the toast: it
+      needs two answers (do it / later), and it stays until one is given.
+    -->
+    <div class="update-banner" id="update-banner" role="status" hidden>
+      <span id="update-banner-text"></span>
+      <button type="button" class="primary small" id="update-banner-action">Download</button>
+      <button type="button" class="ghost small" id="update-banner-later">Later</button>
+    </div>
 
     <!-- ================= Add-stream picker ================= -->
     <div class="modal" id="add-stream" hidden>

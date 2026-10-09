@@ -1,0 +1,74 @@
+# Every push to main and every pull request: the server's tests, and the
+# client built for all three OSes -- so a build that only breaks on macOS or
+# Linux is found here, not on release day. Nothing is uploaded or published;
+# that is release.yml, on a tag.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push makes the older run's answer moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  client:
+    name: Client build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            targets: --win nsis
+          - name: linux
+            os: ubuntu-latest
+            targets: --linux AppImage
+          - name: macos
+            os: macos-latest
+            targets: --mac dmg --x64 --arm64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: client
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      # fast: the quick compression level. This only has to prove it builds.
+      - name: Build
+        run: node scripts/build.js fast ${{ matrix.targets }} --publish never
+      # What the installed app reads to find an update. macOS is left out:
+      # its update check asks the GitHub API instead (it cannot self-update
+      # unsigned), so whether a latest-mac.yml appears does not matter.
+      - name: Update metadata was written
+        if: matrix.name != 'macos'
+        run: ls dist/latest*.yml
