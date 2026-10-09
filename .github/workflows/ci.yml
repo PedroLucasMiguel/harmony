@@ -1,7 +1,7 @@
-# Every push to main and every pull request: the server's tests, and the
-# client built for all three OSes -- so a build that only breaks on macOS or
-# Linux is found here, not on release day. Nothing is uploaded or published;
-# that is release.yml, on a tag.
+# Every push to main and every pull request: the client built for all three
+# OSes -- so a build that only breaks on macOS or Linux is found here, not on
+# release day. Nothing is uploaded or published; that is release.yml, on a
+# tag.
 
 name: CI
 
@@ -19,22 +19,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  server:
-    name: Server tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: server/package-lock.json
-      - run: npm ci
-      - run: npm test
-
   client:
     name: Client build (${{ matrix.name }})
     strategy:

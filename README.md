@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="client/build/icon.png" alt="Harmony" width="112">
+</p>
+
 # Harmony
 
 **Self-hosted, low-latency screen sharing and voice chat for a group of friends.**

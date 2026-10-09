@@ -104,6 +104,10 @@ nsis:
 
 linux:
   icon: build/icon.png
+  # The binary's name inside the AppImage. Left unset it comes from the
+  # package name, "@harmony/client", which electron-builder refuses as a
+  # file name. Windows and macOS name theirs after productName instead.
+  executableName: harmony
   target:
     - AppImage
   category: Network
