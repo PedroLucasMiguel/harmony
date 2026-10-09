@@ -64,6 +64,8 @@ const desktop = () => ({
     stop: async () => null,
   },
   setScale: lift(raw.setScale),
+  // What Reset goes back to; see SCALE_DEFAULT in app.js.
+  scaleDefault: 115,
   logos: {
     ensure: lift(raw.logos.ensure),
   },

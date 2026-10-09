@@ -4862,6 +4862,51 @@ input[type='range'][data-boosted] {
   .emoji-cell-wrap .emoji-remove {
     opacity: 0.8;
   }
+
+  /*
+   * A stream's buttons, for a finger.
+   *
+   * On a desktop they appear on hover and are small, which keeps a grid of
+   * eight streams from being mostly buttons. Neither works on a touchscreen:
+   * there is no hover to reveal them (the first tap would be spent finding
+   * them), and a 12 px glyph is not something a fingertip can hit. So here
+   * they are always shown, and every one of them is at least 40 px square
+   * with room between -- the size Android itself asks of touch targets.
+   */
+  .channel-tile .tile-controls,
+  .tile-corner,
+  .tile-controls {
+    opacity: 1;
+    gap: 6px;
+  }
+  .channel-tile figcaption {
+    padding: 4px 6px;
+    font-size: 0.85rem;
+  }
+  .channel-tile .tile-btn,
+  .tile-corner .tile-btn,
+  .tile-btn {
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0 10px;
+    font-size: 1.05rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .tile-corner {
+    top: 6px;
+    right: 6px;
+    gap: 6px;
+  }
+  /* A slider is a touch target too: a taller track area to grab. */
+  .channel-tile .tile-volume,
+  .tile-volume {
+    width: 6rem;
+    height: 32px;
+  }
 }
 
 /* ---------- what this build cannot do ---------- */

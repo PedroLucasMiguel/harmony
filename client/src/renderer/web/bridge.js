@@ -58,6 +58,48 @@ function writeSettings(patch) {
   return settingsCache;
 }
 
+// --- size ----------------------------------------------------------------------
+
+/*
+ * The Size setting, without Electron's window zoom.
+ *
+ * The viewport tag's scale does the same job: at 120% the page is laid out
+ * 1/1.2 as wide in CSS pixels and drawn 1.2 times bigger, so everything --
+ * type, icons, spacing -- grows together, and every measurement the page
+ * takes (getBoundingClientRect, style.left on a popover) stays in one unit.
+ * CSS `zoom` on the root would scale the drawing but not the measurements,
+ * and every popover positioned by script would land in the wrong place.
+ *
+ * Capped lower than the desktop's 180: a phone is already narrow, and at
+ * 180% there is about 200 px of page left to lay out in.
+ */
+const SCALE_MIN = 70;
+const SCALE_MAX = 150;
+
+let scaleInUse = 100;
+
+function applyViewportScale(percent) {
+  const wanted = Number(percent);
+  const used = Math.min(SCALE_MAX, Math.max(SCALE_MIN, Number.isFinite(wanted) ? wanted : 100));
+  scaleInUse = used;
+  const meta = document.querySelector('meta[name="viewport"]');
+  if (meta) {
+    const s = used / 100;
+    // The width has to be given, as the screen's divided by the scale.
+    // Measured on a phone: with a scale and no width, Android lays the page
+    // out 980 px wide (its desktop default) and shows a corner of it.
+    const width = Math.round(screen.width / s);
+    meta.setAttribute('content',
+      `width=${width}, initial-scale=${s}, minimum-scale=${s}, maximum-scale=${s}, `
+      + 'user-scalable=no, viewport-fit=cover');
+  }
+  return used;
+}
+
+// Turning the phone swaps the screen's width for its height, and the width
+// above was worked out from the old one.
+screen.orientation?.addEventListener?.('change', () => applyViewportScale(scaleInUse));
+
 // --- media -------------------------------------------------------------------
 
 /*
@@ -254,7 +296,9 @@ export const harmony = {
     hotkeys: false,
     clips: false,
     gpu: false,
-    scale: false,
+    // A viewport scale only means something where the page IS the window:
+    // the Android app. A desktop browser ignores the viewport tag.
+    scale: NATIVE,
     updates: NATIVE,
     reveal: false,
   },
@@ -272,8 +316,8 @@ export const harmony = {
     window.location.reload();
     return true;
   },
-  // Chromium's page zoom is a desktop thing; a phone has its own text size.
-  setScale: async () => 100,
+  setScale: async (percent) => applyViewportScale(percent),
+  scaleDefault: PLATFORM_DEFAULTS.uiScale,
 
   logos: {
     ensure: (server, serverPassword, hash) => ensureLogo(server, serverPassword, hash),

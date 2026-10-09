@@ -28,6 +28,10 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
 
         WebView webView = getBridge().getWebView();
+        // Honour the page's <meta name="viewport"> as Chrome does. The page's
+        // Size setting works by changing that tag's scale (setScale in
+        // web/bridge.js), and a WebView ignores it without this.
+        webView.getSettings().setUseWideViewPort(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             // A voice call runs in this renderer. By default Android lowers a
             // WebView renderer's priority once the app is not visible, which

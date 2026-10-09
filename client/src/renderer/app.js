@@ -719,6 +719,11 @@ function applyCapabilities() {
 async function boot() {
   applyCapabilities();
   state.settings = await harmony.settings.get();
+  // The desktop's main process applies the size as the window opens; a
+  // build without one applies it here, before anything is laid out.
+  if (harmony.platform === 'android') {
+    applyScale(state.settings.uiScale ?? SCALE_DEFAULT, { save: false });
+  }
   // First, before anything is drawn. Applying it later means the window
   // opens in the default palette and flashes into the chosen one.
   applyTheme(state.settings.theme);
@@ -7060,7 +7065,8 @@ let soundpadFilter = '';
  * answer rather than from what was asked for, and a value out of range
  * corrects itself on screen instead of lying.
  */
-const SCALE_DEFAULT = 115;
+// 115 on the desktop, 100 on a phone, which has its own text size setting.
+const SCALE_DEFAULT = harmony.scaleDefault ?? 115;
 
 async function applyScale(percent, { save = true } = {}) {
   const used = await harmony.setScale(percent);
