@@ -2984,20 +2984,67 @@ button.danger {
   flex: 1 1 auto;
   min-height: 0;
 }
+/*
+ * One stream in focus, filling the space; the rest in a row underneath.
+ * See renderChannelVideo.
+ */
 .channel-video {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  grid-auto-rows: min-content;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 0.5rem;
-  overflow-y: auto;
   min-height: 0;
   flex: 1 1 auto;
 }
-/* One share, which is the usual case, should fill the column rather than
-   sit as a small square in the top-left of an empty third of the window. */
-.channel-video:has(> .channel-tile:only-child) {
-  grid-template-columns: 1fr;
+.channel-focus {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.channel-focus > .channel-tile {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The picture takes whatever height the column has, letterboxed inside it,
+   rather than a fixed 16:9 box that would leave the rest of it empty. */
+.channel-focus > .channel-tile video {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  aspect-ratio: auto;
+}
+/* Its controls stay up: this is the stream being watched, and its volume
+   should not need a hover to find. */
+.channel-focus > .channel-tile .tile-controls,
+.channel-focus > .channel-tile .tile-corner {
+  opacity: 1;
+}
+
+.channel-strip {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+.channel-strip > .channel-tile {
+  flex: 0 0 auto;
+  width: 200px;
+  cursor: pointer;
+}
+.channel-strip > .channel-tile:not(.ghost-tile):hover {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* A thumbnail is for picking, not for adjusting: mute and close stay, the
+   slider and fullscreen are for the one in focus. */
+.channel-strip .tile-volume,
+.channel-strip .tile-volume-label,
+.channel-strip .tile-btn[data-role='fullscreen'] {
+  display: none;
 }
 .channel-tile {
   margin: 0;
@@ -3051,8 +3098,7 @@ button.danger {
   transition: opacity 120ms ease-out;
 }
 .channel-tile:hover .tile-controls,
-.channel-tile:focus-within .tile-controls,
-.channel-tile[data-big] .tile-controls {
+.channel-tile:focus-within .tile-controls {
   opacity: 1;
 }
 .channel-tile .tile-btn {
@@ -3070,11 +3116,6 @@ button.danger {
 }
 .channel-tile .tile-volume {
   width: 4.5rem;
-}
-/* Minimized: still there, still live, out of the way. */
-.channel-tile[data-small] video {
-  max-height: 3.2rem;
-  object-fit: cover;
 }
 /*
  * With the preview off there is no picture at all, so the tile needs a
@@ -3130,13 +3171,6 @@ button.danger {
   transform: none;
 }
 
-/* Click one to fill the row; click again to put it back. */
-.channel-tile[data-big] {
-  grid-column: 1 / -1;
-}
-.channel-tile[data-big] video {
-  max-height: 72vh;
-}
 
 /* ---------- the one dialog ---------- */
 
@@ -3622,7 +3656,6 @@ button.danger {
 }
 .channel-tile:hover .tile-corner,
 .channel-tile:focus-within .tile-corner,
-.channel-tile[data-big] .tile-corner,
 .tile-corner:has([data-on]) {
   opacity: 1;
 }
@@ -4842,8 +4875,8 @@ input[type='range'][data-boosted] {
     min-height: 40px;
   }
 
-  .channel-video {
-    grid-template-columns: minmax(0, 1fr);
+  .channel-strip > .channel-tile {
+    width: 140px;
   }
 
   .ask {

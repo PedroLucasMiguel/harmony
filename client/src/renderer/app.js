@@ -3140,7 +3140,7 @@ async function onChannelClick(channel) {
  */
 function applyStage() {
   const chatting = Boolean(state.chat.channelId);
-  const tiles = el.channelVideo.childElementCount > 0;
+  const tiles = Boolean(el.channelVideo.querySelector('.channel-tile'));
 
   el.chatActive.hidden = !chatting;
   el.channelVideo.hidden = chatting || !tiles;
@@ -4902,6 +4902,49 @@ function stopOwnMonitor() {
   ownMonitor = null;
 }
 
+/*
+ * The channel's streams: one in focus, the rest in a strip below it.
+ *
+ * There used to be a grid of equal tiles with a maximize button on each.
+ * In use somebody is always watching ONE thing -- the share everybody is
+ * there for -- and the grid gave it a quarter of the space until they went
+ * looking for the button. Now one stream always has the space, and the
+ * others wait underneath at thumbnail size, still live; clicking one brings
+ * it up and sends the old one down.
+ *
+ * Which one is in focus is the key the person last clicked
+ * (channelFocusKey). When that stream ends -- or before anything has been
+ * clicked -- it falls to the first one that is not your own: what you came
+ * to see is somebody else's screen, not the preview of yours.
+ */
+let channelFocusKey = null;
+let channelFocusArea = null;
+let channelStripArea = null;
+
+function channelVideoAreas() {
+  if (!channelFocusArea) {
+    channelFocusArea = document.createElement('div');
+    channelFocusArea.className = 'channel-focus';
+    channelStripArea = document.createElement('div');
+    channelStripArea.className = 'channel-strip';
+    el.channelVideo.replaceChildren(channelFocusArea, channelStripArea);
+  }
+  return { focus: channelFocusArea, strip: channelStripArea };
+}
+
+function focusChannelTile(key) {
+  if (channelFocusKey === key) return;
+  channelFocusKey = key;
+  renderChannelVideo();
+  /*
+   * Your own stream can be brought into focus like anyone else's. Its
+   * preview is off until asked for (it costs GPU, see the tile's eye), and
+   * putting it in focus IS asking for it -- a big empty tile would not be.
+   */
+  const focused = channelFocusArea?.querySelector('.channel-tile[data-own][data-preview-off]');
+  focused?.querySelector('.tile-btn[data-role="preview"]')?.click();
+}
+
 function renderChannelVideo() {
   const tiles = state.voice.channelId
     ? [...ownChannelTiles(), ...state.voice.videoTiles]
@@ -4910,11 +4953,13 @@ function renderChannelVideo() {
   // Stopping the share leaves nothing to listen to, and a monitor left
   // open on a dead stream is a node graph nobody can reach to close.
   if (ownMonitor && !tiles.some((t) => t.own && t.kind === 's')) stopOwnMonitor();
+  const areas = channelVideoAreas();
   const existing = new Map(
-    [...el.channelVideo.children].map((node) => [node.dataset.key, node]),
+    [...el.channelVideo.querySelectorAll('.channel-tile[data-key]')]
+      .map((node) => [node.dataset.key, node]),
   );
 
-  el.channelVideo.replaceChildren(...tiles.map((tile) => {
+  const figures = tiles.map((tile) => {
     const { mid, kind, stream, own } = tile;
     const key = own ? `me:${kind}` : tile.key;
     const caption = `${own ? 'you' : nameOfMid(mid)} \u00B7 ${KIND_LABEL[kind] ?? kind}`;
@@ -5087,26 +5132,14 @@ function renderChannelVideo() {
       controls.append(muteBtn, volume, level);
     }
 
-    const bigBtn = document.createElement('button');
-    bigBtn.className = 'tile-btn';
-    bigBtn.type = 'button';
-    bigBtn.dataset.role = 'maximize';
-    bigBtn.innerHTML = '&#10530;';
-    bigBtn.title = 'Maximize, without leaving the channel';
-
+    // No maximize or minimize: one stream is always in focus, and the others
+    // are already the small row underneath it. See renderChannelVideo.
     const fsBtn = document.createElement('button');
     fsBtn.className = 'tile-btn';
     fsBtn.type = 'button';
     fsBtn.dataset.role = 'fullscreen';
     fsBtn.innerHTML = '&#9974;';
     fsBtn.title = 'Fullscreen';
-
-    const hideBtn = document.createElement('button');
-    hideBtn.className = 'tile-btn';
-    hideBtn.type = 'button';
-    hideBtn.dataset.role = 'minimize';
-    hideBtn.innerHTML = '&#8211;';
-    hideBtn.title = 'Minimize to a strip';
 
     /*
      * Close, which is not the same thing as minimize.
@@ -5132,46 +5165,51 @@ function renderChannelVideo() {
       });
     }
 
-    const maximize = () => {
-      const wasBig = figure.hasAttribute('data-big');
-      for (const node of el.channelVideo.children) node.removeAttribute('data-big');
-      if (!wasBig) figure.setAttribute('data-big', '');
-      bigBtn.title = wasBig ? 'Maximize, without leaving the channel' : 'Back to the grid';
-    };
-
-    bigBtn.addEventListener('click', (event) => { event.stopPropagation(); maximize(); });
     fsBtn.addEventListener('click', (event) => {
       event.stopPropagation();
       toggleFullscreen(figure);
     });
-    hideBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      figure.toggleAttribute('data-small');
-      figure.removeAttribute('data-big');
-    });
 
-    controls.append(bigBtn, fsBtn, hideBtn);
+    controls.append(fsBtn);
     if (closeBtn) controls.append(closeBtn);
     label.append(controls);
 
     /*
-     * The tile itself is NOT a maximize target.
-     *
-     * It was, on the reasoning that clicking the picture is what people
-     * reach for before they find the button. In use that is wrong twice
-     * over: the thing on the tile is a live screen somebody is watching,
-     * so resizing it is the last thing a stray click should do -- and the
-     * controls sit inside the tile, so every press of the volume slider
-     * bubbled up and resized the video underneath the finger.
-     *
-     * stopPropagation on the controls would have fixed the second half
-     * and left the first, and it is a rule that has to be remembered by
-     * every control added later. Not having the handler cannot be
-     * forgotten.
+     * The tile in focus does nothing when clicked: it is a live screen
+     * somebody is watching, and a stray click on it should not change what
+     * they are looking at. Only a tile in the strip is a click target --
+     * see below.
      */
     figure.append(video, label);
+
+    /*
+     * In the strip, the whole tile is the way to bring it into focus.
+     *
+     * A click that started on one of its own controls (mute, close) is that
+     * control's, not the tile's -- checked here rather than trusting every
+     * control to stop its event, which is the rule that broke the old
+     * click-to-maximize: the volume slider's clicks bubbled up and resized
+     * the video under the finger.
+     */
+    figure.addEventListener('click', (event) => {
+      if (figure.hasAttribute('data-focus')) return;
+      if (event.target.closest('button, input, .tile-controls, .tile-corner')) return;
+      focusChannelTile(figure.dataset.key);
+    });
     return figure;
-  }));
+  });
+
+  // The one in focus: what was clicked, else the first that is not yours.
+  const live = figures.filter((f) => !f.hasAttribute('data-own'));
+  const focused = figures.find((f) => f.dataset.key === channelFocusKey)
+    ?? live[0] ?? figures[0] ?? null;
+  for (const figure of figures) {
+    const on = figure === focused;
+    figure.toggleAttribute('data-focus', on);
+    figure.title = on ? '' : 'Show this one big';
+  }
+  areas.focus.replaceChildren(...(focused ? [focused] : []));
+  areas.strip.replaceChildren(...figures.filter((f) => f !== focused));
 
   /*
    * A square for every tile that is closed but still being published.
@@ -5203,8 +5241,9 @@ function renderChannelVideo() {
         .then((r) => { if (r.changed) renderChannelVideo(); })
         .catch(() => { /* the reconciliation tick comes back */ });
     });
-    el.channelVideo.append(node);
+    areas.strip.append(node);
   }
+  areas.strip.hidden = areas.strip.childElementCount === 0;
 
   // After the children exist, not before: applyStage counts them to decide
   // whether there is a stage at all.

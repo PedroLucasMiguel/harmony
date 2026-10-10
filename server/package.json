@@ -1,6 +1,6 @@
 {
   "name": "@harmony/server",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "private": true,
   "description": "Harmony control server: username reservation + MediaMTX auth hook",
   "type": "module",
