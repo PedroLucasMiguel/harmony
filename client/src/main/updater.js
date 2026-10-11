@@ -22,14 +22,30 @@
 // build run from anywhere but its AppImage -- report 'unsupported' and never
 // touch the network.
 
-const { app, net, shell } = require('electron');
+const { app, net, powerMonitor, shell } = require('electron');
 
 const OWNER = 'PedroLucasMiguel';
 const REPO = 'harmony';
 
 /** Late enough that a check never competes with the app opening. */
 const FIRST_CHECK_MS = 15_000;
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+/*
+ * Every half hour, and again whenever the window is focused or the machine
+ * wakes -- if the last check is more than ten minutes old.
+ *
+ * It was every six hours, which in practice meant "at start-up": Harmony is
+ * left open for days in the tray, and somebody who had it open when a fix
+ * went out was not told until they happened to restart it.
+ */
+const CHECK_EVERY_MS = 30 * 60 * 1000;
+const RECHECK_AFTER_MS = 10 * 60 * 1000;
+/*
+ * A check that has been "checking" this long is presumed dead. Without
+ * this, one request that stalled -- a network that went away mid-check --
+ * left the state at 'checking' for good, and the guard in check() then
+ * skipped every check after it until the app was restarted.
+ */
+const CHECK_STALE_MS = 60 * 1000;
 
 /**
  * What the renderer is told, whole, every time anything changes.
@@ -42,6 +58,7 @@ let notify = () => {};
 /** electron-updater's autoUpdater; loaded only where it can actually work. */
 let updater = null;
 let timer = null;
+let lastCheckAt = 0;
 
 const releasePage = (version) =>
   version
@@ -132,10 +149,16 @@ async function check() {
     set({ state: 'unsupported', error: reason });
     return status;
   }
-  // Already found, fetching or fetched: checking again would only lose that.
-  if (['checking', 'downloading', 'ready'].includes(status.state)) return status;
+  // Fetching or fetched: checking again would only lose that. A check that
+  // has hung is not a reason to stop checking, though.
+  if (['downloading', 'ready'].includes(status.state)) return status;
+  if (status.state === 'checking' && Date.now() - lastCheckAt < CHECK_STALE_MS) return status;
 
-  set({ state: 'checking' });
+  lastCheckAt = Date.now();
+  // Something already found stays on screen while the check runs: a banner
+  // that flickered to "checking" every half hour would be noise.
+  const found = status.state === 'available' ? status : null;
+  if (!found) set({ state: 'checking' });
   try {
     if (process.platform === 'darwin') {
       await checkManually();
@@ -189,6 +212,14 @@ function start(onStatus) {
   setTimeout(() => check(), FIRST_CHECK_MS).unref?.();
   timer = setInterval(() => check(), CHECK_EVERY_MS);
   timer.unref?.();
+
+  // Coming back to the app, or the machine waking up, is when a release
+  // that went out in the meantime is worth hearing about.
+  const soon = () => {
+    if (Date.now() - lastCheckAt > RECHECK_AFTER_MS) check();
+  };
+  app.on('browser-window-focus', soon);
+  powerMonitor.on('resume', soon);
 }
 
 module.exports = {

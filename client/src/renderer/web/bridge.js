@@ -215,6 +215,7 @@ window.addEventListener('online', () => realtime.nudge());
  * Android's own installer takes it from there.
  */
 const updateListeners = new Set();
+let lastUpdateCheck = 0;
 let updateStatus = { state: NATIVE ? 'idle' : 'unsupported', current: VERSION };
 
 function setUpdate(patch) {
@@ -235,8 +236,11 @@ async function checkUpdates() {
     setUpdate({ state: 'unsupported', error: 'This version of Harmony is updated by reloading the page.' });
     return updateStatus;
   }
-  if (updateStatus.state === 'checking') return updateStatus;
-  setUpdate({ state: 'checking' });
+  // A check that hung is not a reason to stop checking: see the desktop's
+  // CHECK_STALE_MS in src/main/updater.js.
+  if (updateStatus.state === 'checking' && Date.now() - lastUpdateCheck < 60_000) return updateStatus;
+  lastUpdateCheck = Date.now();
+  if (updateStatus.state !== 'available') setUpdate({ state: 'checking' });
   try {
     const res = await fetch(RELEASES, { headers: { Accept: 'application/vnd.github+json' } });
     if (!res.ok) throw new Error(`GitHub answered ${res.status}.`);
@@ -272,8 +276,13 @@ if (NATIVE) {
   // Android installed, whatever this copy of the page was built as.
   currentVersion = (await native.info().catch(() => null))?.version ?? VERSION;
   updateStatus = { ...updateStatus, current: currentVersion };
+  // The same cadence as the desktop (src/main/updater.js): half-hourly,
+  // and on coming back to the app if the last check is ten minutes old.
   setTimeout(() => checkUpdates(), 15_000);
-  setInterval(() => checkUpdates(), 6 * 60 * 60 * 1000);
+  setInterval(() => checkUpdates(), 30 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastUpdateCheck > 10 * 60 * 1000) checkUpdates();
+  });
 }
 await warmLogos();
 
