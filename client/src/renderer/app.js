@@ -5,6 +5,7 @@ import { AudioBridge } from './audio-bridge.js';
 import { runConnectionTest } from './connection-test.js';
 import { ClipBuffer, CLIP_SECONDS } from './clip-buffer.js';
 import { VoiceSession } from './voice.js';
+import { Compositor, openCompositionEditor } from './compositor.js';
 import {
   createSink, MAX_GAIN, asPercent, playSample, setOutputDevice, monitorStream, playCue,
   setCueVolume,
@@ -332,6 +333,7 @@ const el = {
   liveFramerate: $('live-framerate'),
   livePriority: $('live-priority'),
   changeSource: $('change-source'),
+  editComposition: $('edit-composition'),
   monitorToggle: $('monitor-toggle'),
   audioNote: $('audio-note'),
   startStream: $('start-stream'),
@@ -4967,6 +4969,8 @@ function renderChannelVideo() {
     const kept = existing.get(key);
     if (kept) {
       kept.querySelector('figcaption .tile-name').textContent = caption;
+      const compose = kept.querySelector('.tile-btn[data-role="compose"]');
+      if (compose) compose.hidden = !state.live.compositor;
       // Changing source mints a new preview stream; a preview that is
       // showing follows it rather than freezing on the old capture.
       const shown = own ? kept.querySelector('video') : null;
@@ -5062,6 +5066,24 @@ function renderChannelVideo() {
       listen.dataset.role = 'monitor';
       listen.innerHTML = '&#127911;';
       listen.title = 'Hear your own stream';
+      /*
+       * Back into the composition's editor. On your own share's tile
+       * because that is where you look at what you are sending; hidden for
+       * an ordinary share, which has no layout to edit.
+       */
+      const compose = document.createElement('button');
+      compose.className = 'tile-btn';
+      compose.type = 'button';
+      compose.dataset.role = 'compose';
+      compose.innerHTML = '&#9638;';
+      compose.title = 'Edit the layout';
+      compose.hidden = !state.live.compositor;
+      compose.addEventListener('click', (event) => {
+        event.stopPropagation();
+        editComposition();
+      });
+      corner.append(compose);
+
       listen.addEventListener('click', (event) => {
         event.stopPropagation();
         if (ownMonitor) {
@@ -8118,7 +8140,76 @@ function message(text) {
   return p;
 }
 
+/*
+ * Composite sharing: the picker's fourth tab.
+ *
+ * Every screen, window and camera, any number of them chosen at once, as the
+ * sources the composition starts with -- none is fine too, since more are
+ * added from the editor while live. The "source" handed to startBroadcast is
+ * then the composition itself, and openCapture turns it into a Compositor.
+ */
+function compositeSource() {
+  return {
+    kind: 'composite',
+    id: 'composite',
+    name: 'Composition',
+    initial: [...(state.compositeInitial ?? [])],
+  };
+}
+
+function renderCompositeSources() {
+  state.compositeInitial ??= [];
+  // Sources that have gone away since they were ticked are dropped.
+  const all = [...state.sources, ...state.cameras];
+  state.compositeInitial = state.compositeInitial.filter((c) => all.some((s) => s.id === c.id));
+  state.selectedSource = compositeSource();
+  el.startStream.disabled = false;
+
+  el.sourceGrid.replaceChildren(message(
+    'Pick any number to start with, or none. Once you are live you can add, '
+    + 'move, resize and crop them: right-click the preview.',
+  ));
+  for (const source of all) {
+    const button = document.createElement('button');
+    button.className = 'source';
+    button.type = 'button';
+    if (source.thumbnail) {
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.src = source.thumbnail;
+      img.alt = '';
+      button.append(img);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = `${source.kind === 'camera' ? '\u{1F4F7} ' : ''}${source.name}`;
+    label.title = source.name;
+    meta.append(label);
+    button.append(meta);
+    const at = state.compositeInitial.findIndex((c) => c.id === source.id);
+    if (at >= 0) button.setAttribute('data-selected', '');
+    button.addEventListener('click', () => {
+      const i = state.compositeInitial.findIndex((c) => c.id === source.id);
+      if (i >= 0) state.compositeInitial.splice(i, 1);
+      else state.compositeInitial.push(source);
+      renderCompositeSources();
+    });
+    el.sourceGrid.append(button);
+  }
+}
+
 function renderSources() {
+  if (state.activeKind === 'composite') {
+    renderCompositeSources();
+    return;
+  }
+  // Leaving the composite tab: the composition is not a source here.
+  if (state.selectedSource?.kind === 'composite') {
+    state.selectedSource = null;
+    el.startStream.disabled = true;
+  }
   const items =
     state.activeKind === 'camera'
       ? state.cameras
@@ -8189,6 +8280,24 @@ function audioPlan(forSource) {
   const source = forSource ?? state.selectedSource;
   const kind = source?.kind ?? state.activeKind;
 
+  // A composition sounds like a whole-screen share: everything the machine
+  // plays, minus whatever is excluded. Only through the native capture --
+  // Chromium's loopback needs a getDisplayMedia call a composition never
+  // makes.
+  if (kind === 'composite') {
+    if (!state.audioAvailable) {
+      return { via: 'none', note: 'A composition is shared without sound on this machine.', warn: true };
+    }
+    const excluded = state.processes.find((p) => String(p.pid) === el.excludeApp.value);
+    return {
+      via: 'native',
+      note: excluded
+        ? `Viewers will hear system audio, except ${excluded.name}.`
+        : 'Viewers will hear all system audio.',
+      warn: false,
+    };
+  }
+
   // A camera or capture card has no loopback audio of its own; its sound comes
   // from whichever input the user picked.
   if (kind === 'camera') {
@@ -8237,7 +8346,7 @@ function updateAudioNote() {
 
   el.fallbackField.hidden = state.audioAvailable || kind !== 'window';
   // Excluding an app needs the native per-process capture.
-  el.excludeField.hidden = kind !== 'screen' || !state.audioAvailable;
+  el.excludeField.hidden = !['screen', 'composite'].includes(kind) || !state.audioAvailable;
   el.audioInputField.hidden = kind !== 'camera';
 
   const plan = audioPlan();
@@ -8281,8 +8390,40 @@ async function confirmLive({ timeoutMs = 15_000 } = {}) {
  * sent never changes.
  */
 async function acquireVideo(source, preset, plan) {
-  const { track, rawStream } = await openCapture(source, preset, plan);
-  return { track, rawStream, previewTrack: await previewCopy(track) };
+  const { track, rawStream, compositor = null } = await openCapture(source, preset, plan);
+  return { track, rawStream, compositor, previewTrack: await previewCopy(track) };
+}
+
+/**
+ * The size a composition is drawn at: the picker's resolution, or for
+ * "native" the screen's own pixels, capped at 4K.
+ */
+function compositeSize(preset) {
+  if (preset.width && preset.height) return { width: preset.width, height: preset.height };
+  const even = (n) => Math.round(n / 2) * 2;
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.min(3840, even(screen.width * dpr));
+  return { width, height: even((width * screen.height) / screen.width) };
+}
+
+/** Everything a composition can take: screens, windows and cameras. */
+async function compositeSources() {
+  const desktop = await harmony.sources.list();
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  const cameras = devices
+    .filter((d) => d.kind === 'videoinput')
+    .map((d, i) => ({ id: d.deviceId, kind: 'camera', name: d.label || `Camera ${i + 1}` }));
+  return [...desktop, ...cameras];
+}
+
+/** The editor over the live composition. Closing it keeps streaming. */
+function editComposition() {
+  const comp = state.live.compositor;
+  if (!comp) return;
+  openCompositionEditor(comp, {
+    listSources: compositeSources,
+    onError: (text) => toast(text),
+  });
 }
 
 /**
@@ -8302,6 +8443,17 @@ async function previewCopy(track) {
 }
 
 async function openCapture(source, preset, plan) {
+  if (source.kind === 'composite') {
+    const { width, height } = compositeSize(preset);
+    const compositor = new Compositor({ width, height, fps: preset.fps });
+    // One at a time, in the order they were ticked: that order is the
+    // stacking order, first at the bottom.
+    for (const initial of source.initial ?? []) {
+      await compositor.addLayer(initial).catch((err) => toast(`Could not add ${initial.name}: ${err.message}`));
+    }
+    return { track: compositor.track, rawStream: compositor.stream, compositor };
+  }
+
   if (source.kind === 'camera') {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -8354,11 +8506,14 @@ async function routeAudio(source, plan) {
 
   if (plan.via === 'native') {
     const result = await harmony.audio.start({
-      kind: source.kind,
+      // A composition's sound is a screen's: see audioPlan.
+      kind: source.kind === 'composite' ? 'screen' : source.kind,
       sourceId: source.id,
       sourceName: source.name,
       fallback: el.fallback.value,
-      excludePid: source.kind === 'screen' ? Number(el.excludeApp.value) || null : null,
+      excludePid: ['screen', 'composite'].includes(source.kind)
+        ? Number(el.excludeApp.value) || null
+        : null,
     });
     if (result.mode !== 'none' && result.mode !== 'chromium-loopback') state.bridge.attachPcm();
     return { mode: result.mode, note: result.note ?? plan.note };
@@ -8389,9 +8544,10 @@ async function startBroadcast() {
   try {
     // Video first: picking a capture source is what grants the user activation
     // an AudioContext needs to leave the suspended state.
-    const { track: videoTrack, rawStream, previewTrack } = await acquireVideo(source, preset, plan);
+    const { track: videoTrack, rawStream, previewTrack, compositor } = await acquireVideo(source, preset, plan);
     state.live.rawStream = rawStream;
     state.live.source = source;
+    state.live.compositor = compositor;
     state.preview.stream = new MediaStream([previewTrack]);
     state.preview.hiddenByUser = true;
 
@@ -8490,6 +8646,10 @@ async function startBroadcast() {
      * compositing it as soon as the view is inactive.
      */
     showView(state.share.target ? 'view-channels' : 'view-broadcast');
+    applyCompositionControls();
+    // A composition opens straight into its editor: arranging it is the
+    // point, and the canvas is empty until something is added.
+    if (compositor) editComposition();
 
     pc.addEventListener('connectionstatechange', () => {
       if (['failed', 'closed'].includes(pc.connectionState)) {
@@ -8765,10 +8925,12 @@ async function changeLiveSource(source) {
   const previousStream = state.live.rawStream;
   const previousPreview = state.preview.stream;
 
-  const { track, rawStream, previewTrack } = await acquireVideo(source, preset, plan);
+  const previousCompositor = state.live.compositor;
+  const { track, rawStream, previewTrack, compositor } = await acquireVideo(source, preset, plan);
   state.preview.stream = new MediaStream([previewTrack]);
   state.live.rawStream = rawStream;
   state.live.source = source;
+  state.live.compositor = compositor;
   state.selectedSource = source;
 
   track.contentHint = priority.contentHint;
@@ -8780,6 +8942,13 @@ async function changeLiveSource(source) {
   previousTrack?.stop();
   previousStream?.getTracks().forEach((t) => t.stop());
   previousPreview?.getTracks().forEach((t) => t.stop());
+  // A composition holds its own captures open: they go with it.
+  if (previousCompositor && previousCompositor !== compositor) {
+    document.querySelector('.composer')?.remove();
+    previousCompositor.destroy();
+  }
+  applyCompositionControls();
+  if (compositor) editComposition();
 
   const audio = await routeAudio(source, plan);
   state.live.audioMode = audio.mode;
@@ -9683,9 +9852,14 @@ async function teardown() {
   el.watchClip.hidden = true;
 
   state.live.rawStream?.getTracks().forEach((t) => t.stop());
+  // A composition's sources are captures of their own, not part of the
+  // stream above; and its editor has nothing left to edit.
+  document.querySelector('.composer')?.remove();
+  state.live.compositor?.destroy();
   state.preview.stream?.getTracks().forEach((t) => t.stop());
   state.preview.stream = null;
   state.live = { videoSender: null, videoTrack: null, rawStream: null, source: null, audioMode: null };
+  applyCompositionControls();
   state.changingSource = false;
   el.preview.srcObject = null;
   el.remote.srcObject = null;
@@ -10633,6 +10807,15 @@ async function openChangeSource() {
 }
 
 el.changeSource.addEventListener('click', () => openChangeSource());
+el.editComposition.addEventListener('click', () => editComposition());
+
+/** "Edit layout" exists only while a composition is what is going out. */
+function applyCompositionControls() {
+  el.editComposition.hidden = !state.live.compositor;
+  for (const button of el.channelVideo.querySelectorAll('.tile-btn[data-role="compose"]')) {
+    button.hidden = !state.live.compositor;
+  }
+}
 
 /** Chromium reads the adapter switch once, at startup, so this needs a restart. */
 async function setGpuPreference(value) {

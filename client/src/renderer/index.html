@@ -650,6 +650,8 @@
             <button type="button" class="tab" data-kind="screen" data-active>Screens</button>
             <button type="button" class="tab" data-kind="window">Windows</button>
             <button type="button" class="tab" data-kind="camera">Cameras &amp; capture cards</button>
+            <!-- Several of the above, arranged into one stream. See compositor.js. -->
+            <button type="button" class="tab" data-kind="composite">Composite</button>
           </div>
           <button type="button" class="ghost small" id="picker-refresh" title="Look for sources again">
             Refresh
@@ -720,6 +722,7 @@
             <select id="live-priority"></select>
           </label>
           <button class="ghost" id="change-source">Change source</button>
+          <button class="ghost" id="edit-composition" hidden>Edit layout</button>
           <button class="ghost" id="toggle-preview" title="Stop drawing the preview — the stream keeps running">
             Hide preview
           </button>
