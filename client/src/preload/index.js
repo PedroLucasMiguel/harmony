@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('harmony', {
 
   version: invoke('app:version'),
 
+  secrets: {
+    protect: invoke('secrets:protect'),
+    reveal: invoke('secrets:reveal'),
+  },
+
   updates: {
     get: invoke('updates:get'),
     check: invoke('updates:check'),

@@ -72,6 +72,10 @@ const desktop = () => ({
   // Served by main from its logo cache; see logos:ensure.
   logoUrl: (hash) => `harmony://app/server-logo/${hash}`,
   version: lift(raw.version),
+  secrets: {
+    protect: lift(raw.secrets.protect),
+    reveal: lift(raw.secrets.reveal),
+  },
   updates: {
     get: lift(raw.updates.get),
     check: lift(raw.updates.check),

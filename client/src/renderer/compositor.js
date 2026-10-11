@@ -66,7 +66,7 @@ export class Compositor {
     this.canvas = document.createElement('canvas');
     this.canvas.width = width;
     this.canvas.height = height;
-    this.canvas.className = 'composer-canvas';
+    this.canvas.className = 'comp-canvas';
     this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.ctx.imageSmoothingQuality = 'high';
     /** Bottom first: drawn in order, so the last is on top. */
@@ -356,38 +356,38 @@ export class Compositor {
  * @returns {{ close: () => void }}
  */
 export function openCompositionEditor(comp, { listSources, onError = () => {} }) {
-  document.querySelector('.composer')?.remove();
+  document.querySelector('.comp-editor')?.remove();
 
   const root = document.createElement('div');
-  root.className = 'composer';
+  root.className = 'comp-editor';
   root.innerHTML = `
-    <header class="composer-bar">
+    <header class="comp-bar">
       <strong>Composition</strong>
-      <span class="muted composer-hint">Live as you edit. Drag to move, drag a corner to resize, right-click for more.</span>
-      <span class="composer-actions">
+      <span class="muted comp-hint">Live as you edit. Drag to move, drag a corner to resize, right-click for more.</span>
+      <span class="comp-actions">
         <button type="button" class="ghost small" data-act="add">+ Add source</button>
         <button type="button" class="primary small" data-act="done">Done</button>
       </span>
     </header>
-    <div class="composer-stage">
-      <div class="composer-frame">
-        <div class="composer-empty muted">Right-click to add a screen, window or camera.</div>
-        <div class="composer-select" hidden>
-          <span class="composer-name"></span>
+    <div class="comp-stage">
+      <div class="comp-frame">
+        <div class="comp-empty muted">Right-click to add a screen, window or camera.</div>
+        <div class="comp-select" hidden>
+          <span class="comp-name"></span>
         </div>
       </div>
     </div>`;
-  const frame = root.querySelector('.composer-frame');
-  const selectBox = root.querySelector('.composer-select');
-  const nameTag = root.querySelector('.composer-name');
-  const empty = root.querySelector('.composer-empty');
+  const frame = root.querySelector('.comp-frame');
+  const selectBox = root.querySelector('.comp-select');
+  const nameTag = root.querySelector('.comp-name');
+  const empty = root.querySelector('.comp-empty');
   frame.style.aspectRatio = `${comp.width} / ${comp.height}`;
   frame.style.setProperty('--ar', String(comp.width / comp.height));
   frame.prepend(comp.canvas);
 
   for (const handle of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
     const h = document.createElement('span');
-    h.className = 'composer-handle';
+    h.className = 'comp-handle';
     h.dataset.handle = handle;
     selectBox.append(h);
   }
@@ -437,7 +437,7 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
     if (event.button !== 0) return;
     closeMenu();
     const p = point(event);
-    const handle = event.target.closest?.('.composer-handle')?.dataset.handle;
+    const handle = event.target.closest?.('.comp-handle')?.dataset.handle;
     let layer = selected ? comp.layer(selected) : null;
     if (!handle) {
       const hit = comp.hit(p.x, p.y);
@@ -571,7 +571,7 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
   function openMenu(event, items) {
     closeMenu();
     menu = document.createElement('div');
-    menu.className = 'composer-menu';
+    menu.className = 'comp-menu';
     for (const item of items) {
       if (item === '-') {
         menu.append(Object.assign(document.createElement('hr'), {}));
@@ -636,14 +636,14 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
   async function openChooser() {
     closeChooser();
     chooser = document.createElement('div');
-    chooser.className = 'composer-chooser';
+    chooser.className = 'comp-chooser';
     chooser.innerHTML = `
       <header><strong>Add a source</strong>
         <button type="button" class="ghost small" data-act="close">Cancel</button></header>
-      <div class="composer-sources"><p class="muted">Looking for sources…</p></div>`;
+      <div class="comp-sources"><p class="muted">Looking for sources…</p></div>`;
     root.append(chooser);
     chooser.querySelector('[data-act="close"]').addEventListener('click', closeChooser);
-    const grid = chooser.querySelector('.composer-sources');
+    const grid = chooser.querySelector('.comp-sources');
     let sources = [];
     try {
       sources = await listSources();

@@ -984,7 +984,7 @@ function findProfile(address) {
  * to make five or six of them in a row. settings.set answers with the whole
  * merged settings, so there is no read-back either.
  */
-async function saveProfile(extra = {}) {
+async function saveProfile(extra = {}, { accountSecret } = {}) {
   const url = el.serverUrl.value.trim();
   if (!url) {
     if (Object.keys(extra).length) state.settings = await harmony.settings.set(extra);
@@ -997,12 +997,33 @@ async function saveProfile(extra = {}) {
     username: normalizeName(el.username.value) || '',
     sessionToken: remember ? state.auth.token : '',
     rememberAccount: remember,
+    /*
+     * The account password, sealed (harmony.secrets), so that signing out
+     * does not mean typing it again. Only with "Remember me": unticking it
+     * forgets the password along with the session.
+     */
+    accountSecret: remember ? (accountSecret ?? findProfile(url)?.accountSecret ?? '') : '',
     // Kept, not rebuilt from the screen: only syncLogo changes it.
     logo: findProfile(url)?.logo ?? null,
     lastUsed: Date.now(),
   };
   const others = savedServers().filter((p) => serverKey(p.url) !== serverKey(url));
   state.settings = await harmony.settings.set({ ...extra, servers: [profile, ...others] });
+}
+
+/**
+ * Put the current server's remembered account password back in the box.
+ *
+ * Signing out ends the SESSION -- the token is revoked on the server -- but
+ * it is not a reason to forget a password the person asked to have
+ * remembered: the next sign-in, as the same account, is then one click.
+ */
+async function restoreAccountPassword() {
+  const sealed = findProfile(el.serverUrl.value)?.accountSecret;
+  if (!sealed || state.auth.user) return;
+  const password = await harmony.secrets.reveal(sealed).catch(() => '');
+  // Never over something already typed.
+  if (password && !state.auth.user && !el.accountPassword.value) el.accountPassword.value = password;
 }
 
 /** The top-level settings that make `server` the current one, from the screen. */
@@ -1101,6 +1122,9 @@ async function loadProfile(profile) {
   el.rememberAccount.checked = profile ? profile.rememberAccount !== false : true;
   if (!el.password.value && profile?.password) el.password.value = profile.password;
   connectServer = null;
+  // A remembered session can still have expired (a restart of the server, a
+  // sign-out elsewhere); the remembered password is the way back in.
+  if (!state.auth.token) restoreAccountPassword();
 }
 
 /**
@@ -1541,10 +1565,13 @@ function applyAuthMode() {
   document.body.dataset.authMode = on ? state.auth.mode : 'none';
 
   if (signedIn) {
-    // Nothing to type: the password box would only invite somebody to
-    // re-enter a password they do not need.
+    // Nothing to type: drawn as a saved password -- dots, in the text's own
+    // colour -- and read-only, since a password typed here would be ignored.
+    // The value itself stays empty: no password is kept, only the session.
     el.accountPassword.value = '';
-    el.accountPassword.placeholder = 'Already signed in';
+    el.accountPassword.placeholder = '•'.repeat(10);
+    el.accountPassword.readOnly = true;
+    el.accountPassword.setAttribute('data-saved', '');
     el.accountPasswordLabel.textContent = 'Password';
     el.accountConfirmField.hidden = true;
     el.ownerKeyField.hidden = true;
@@ -1558,6 +1585,8 @@ function applyAuthMode() {
   }
 
   const registering = state.auth.mode === 'register';
+  el.accountPassword.readOnly = false;
+  el.accountPassword.removeAttribute('data-saved');
   el.accountPasswordLabel.textContent = registering ? 'Choose a password' : 'Password';
   el.accountPassword.placeholder = registering ? 'At least 6 characters' : '';
   el.accountConfirmField.hidden = !registering;
@@ -1613,6 +1642,11 @@ async function authenticate(server, nickname) {
 
   await adoptSession(result.token);
   state.auth.user = result.user;
+  if (el.rememberAccount.checked && password
+      && serverKey(server) === serverKey(el.serverUrl.value)) {
+    const sealed = await harmony.secrets.protect(password).catch(() => '');
+    if (sealed) await saveProfile({}, { accountSecret: sealed });
+  }
 
   // Say so rather than silently making them a member -- someone pasting a key
   // that does not work needs to know before they wonder why they cannot
@@ -8944,7 +8978,7 @@ async function changeLiveSource(source) {
   previousPreview?.getTracks().forEach((t) => t.stop());
   // A composition holds its own captures open: they go with it.
   if (previousCompositor && previousCompositor !== compositor) {
-    document.querySelector('.composer')?.remove();
+    document.querySelector('.comp-editor')?.remove();
     previousCompositor.destroy();
   }
   applyCompositionControls();
@@ -9854,7 +9888,7 @@ async function teardown() {
   state.live.rawStream?.getTracks().forEach((t) => t.stop());
   // A composition's sources are captures of their own, not part of the
   // stream above; and its editor has nothing left to edit.
-  document.querySelector('.composer')?.remove();
+  document.querySelector('.comp-editor')?.remove();
   state.live.compositor?.destroy();
   state.preview.stream?.getTracks().forEach((t) => t.stop());
   state.preview.stream = null;
@@ -10012,6 +10046,7 @@ el.channelsSignout.addEventListener('click', async () => {
   // Same server, someone else perhaps: straight to who, not where.
   showConnectStep('account');
   applyAuthMode();
+  await restoreAccountPassword();
 });
 
 el.voiceMute.addEventListener('click', async () => {
@@ -10699,6 +10734,7 @@ el.authModeToggle.addEventListener('click', async () => {
     state.auth.mode = 'login';
     showError('');
     applyAuthMode();
+    await restoreAccountPassword();
     el.accountPassword.focus();
     return;
   }

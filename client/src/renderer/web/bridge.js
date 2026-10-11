@@ -325,6 +325,16 @@ export const harmony = {
   logoUrl: (hash) => logoUrls.get(hash) ?? '',
   version: async () => currentVersion,
 
+  /*
+   * A remembered account password. A page has no keychain to seal it with;
+   * it lives in this app's own storage, which on Android no other app can
+   * read. Marked plain, the same as the desktop's no-keyring fallback.
+   */
+  secrets: {
+    protect: async (text) => (text ? `plain:${text}` : ''),
+    reveal: async (sealed) => (String(sealed ?? '').startsWith('plain:') ? String(sealed).slice(6) : ''),
+  },
+
   updates: {
     get: async () => updateStatus,
     check: () => checkUpdates(),

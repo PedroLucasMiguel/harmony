@@ -4949,7 +4949,7 @@ input[type='range'][data-boosted] {
    DOM over it -- never on the canvas, which is what viewers receive.
    --------------------------------------------------------------------------- */
 
-.composer {
+.comp-editor {
   position: fixed;
   inset: 0;
   z-index: 70;
@@ -4957,7 +4957,7 @@ input[type='range'][data-boosted] {
   flex-direction: column;
   background: rgb(0 0 0 / 0.88);
 }
-.composer-bar {
+.comp-bar {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -4966,7 +4966,7 @@ input[type='range'][data-boosted] {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-.composer-hint {
+.comp-hint {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 0.85rem;
@@ -4974,16 +4974,16 @@ input[type='range'][data-boosted] {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.composer-actions {
+.comp-actions {
   display: flex;
   gap: 8px;
   flex: none;
 }
-.composer-actions .primary.small {
+.comp-actions .primary.small {
   padding: 6px 14px;
   font-size: 13px;
 }
-.composer-stage {
+.comp-stage {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -4992,7 +4992,7 @@ input[type='range'][data-boosted] {
   padding: 24px;
 }
 /* As big as fits, at the output's own aspect ratio (--ar, set by script). */
-.composer-frame {
+.comp-frame {
   position: relative;
   width: min(100%, calc((100vh - 120px) * var(--ar, 1.7778)));
   background: #000;
@@ -5000,12 +5000,12 @@ input[type='range'][data-boosted] {
   touch-action: none;
   user-select: none;
 }
-.composer-canvas {
+.comp-canvas {
   display: block;
   width: 100%;
   height: 100%;
 }
-.composer-empty {
+.comp-empty {
   position: absolute;
   inset: 0;
   display: flex;
@@ -5015,19 +5015,19 @@ input[type='range'][data-boosted] {
   padding: 1rem;
   pointer-events: none;
 }
-.composer-select {
+.comp-select {
   position: absolute;
   box-sizing: border-box;
   outline: 2px solid var(--accent);
   pointer-events: none;
 }
-.composer-select[data-crop] {
+.comp-select[data-crop] {
   outline: 2px dashed #f5b942;
 }
-.composer-select[data-stretch] {
+.comp-select[data-stretch] {
   outline: 2px dashed var(--accent);
 }
-.composer-name {
+.comp-name {
   position: absolute;
   left: -2px;
   bottom: 100%;
@@ -5039,10 +5039,10 @@ input[type='range'][data-boosted] {
   color: #fff;
   background: var(--accent);
 }
-.composer-select[data-crop] .composer-name {
+.comp-select[data-crop] .comp-name {
   background: #b07a12;
 }
-.composer-handle {
+.comp-handle {
   position: absolute;
   width: 12px;
   height: 12px;
@@ -5053,24 +5053,24 @@ input[type='range'][data-boosted] {
   background: #fff;
   pointer-events: auto;
 }
-.composer-select[data-crop] .composer-handle {
+.comp-select[data-crop] .comp-handle {
   border-color: #f5b942;
 }
-.composer-handle[data-handle='nw'] { left: 0; top: 0; cursor: nwse-resize; }
-.composer-handle[data-handle='n'] { left: 50%; top: 0; cursor: ns-resize; }
-.composer-handle[data-handle='ne'] { left: 100%; top: 0; cursor: nesw-resize; }
-.composer-handle[data-handle='e'] { left: 100%; top: 50%; cursor: ew-resize; }
-.composer-handle[data-handle='se'] { left: 100%; top: 100%; cursor: nwse-resize; }
-.composer-handle[data-handle='s'] { left: 50%; top: 100%; cursor: ns-resize; }
-.composer-handle[data-handle='sw'] { left: 0; top: 100%; cursor: nesw-resize; }
-.composer-handle[data-handle='w'] { left: 0; top: 50%; cursor: ew-resize; }
+.comp-handle[data-handle='nw'] { left: 0; top: 0; cursor: nwse-resize; }
+.comp-handle[data-handle='n'] { left: 50%; top: 0; cursor: ns-resize; }
+.comp-handle[data-handle='ne'] { left: 100%; top: 0; cursor: nesw-resize; }
+.comp-handle[data-handle='e'] { left: 100%; top: 50%; cursor: ew-resize; }
+.comp-handle[data-handle='se'] { left: 100%; top: 100%; cursor: nwse-resize; }
+.comp-handle[data-handle='s'] { left: 50%; top: 100%; cursor: ns-resize; }
+.comp-handle[data-handle='sw'] { left: 0; top: 100%; cursor: nesw-resize; }
+.comp-handle[data-handle='w'] { left: 0; top: 50%; cursor: ew-resize; }
 /* Plain resizing keeps the aspect, so only the corners do anything. */
-.composer-select:not([data-crop]):not([data-stretch]) .composer-handle:is(
+.comp-select:not([data-crop]):not([data-stretch]) .comp-handle:is(
   [data-handle='n'], [data-handle='e'], [data-handle='s'], [data-handle='w']) {
   display: none;
 }
 
-.composer-menu {
+.comp-menu {
   position: fixed;
   z-index: 72;
   min-width: 220px;
@@ -5082,7 +5082,7 @@ input[type='range'][data-boosted] {
   border-radius: 8px;
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.55);
 }
-.composer-menu button {
+.comp-menu button {
   text-align: left;
   background: none;
   border: 0;
@@ -5092,19 +5092,19 @@ input[type='range'][data-boosted] {
   font-size: 13px;
   cursor: pointer;
 }
-.composer-menu button:hover {
+.comp-menu button:hover {
   background: rgb(var(--accent-rgb) / 0.18);
 }
-.composer-menu button.danger-text {
+.comp-menu button.danger-text {
   color: var(--danger-soft, var(--danger));
 }
-.composer-menu hr {
+.comp-menu hr {
   border: 0;
   border-top: 1px solid var(--border);
   margin: 4px 2px;
 }
 
-.composer-chooser {
+.comp-chooser {
   position: fixed;
   z-index: 71;
   left: 50%;
@@ -5119,19 +5119,29 @@ input[type='range'][data-boosted] {
   border-radius: 10px;
   box-shadow: 0 16px 48px rgb(0 0 0 / 0.6);
 }
-.composer-chooser header {
+.comp-chooser header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
-.composer-sources {
+.comp-sources {
   overflow-y: auto;
   padding: 12px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 10px;
+}
+
+/* Signed in already: the password box reads as a saved password (applyAuthMode). */
+input[data-saved]::placeholder {
+  color: var(--text);
+  opacity: 1;
+  letter-spacing: 0.15em;
+}
+input[data-saved] {
+  cursor: default;
 }
 
 /* ---------- what this build cannot do ---------- */

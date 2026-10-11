@@ -1,5 +1,5 @@
 const {
-  app, BrowserWindow, desktopCapturer, dialog, ipcMain, net, protocol, session, shell,
+  app, BrowserWindow, desktopCapturer, dialog, ipcMain, net, protocol, safeStorage, session, shell,
 } = require('electron');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
@@ -534,6 +534,34 @@ function applyScale(percent) {
 handle('app:scale', (_e, percent) => applyScale(percent));
 
 handle('hotkeys:set', (_e, bindings) => hotkeys.set(bindings));
+
+/*
+ * A remembered account password, sealed by the operating system.
+ *
+ * safeStorage is Windows' DPAPI (the macOS keychain, libsecret on Linux):
+ * what it encrypts can only be decrypted by the same user on the same
+ * machine, so settings.json copied anywhere else is useless. Where it is not
+ * available -- a Linux desktop with no keyring -- the password is kept as
+ * plain text rather than not at all, marked so it is obvious which it is.
+ */
+handle('secrets:protect', (_e, text) => {
+  const value = String(text ?? '');
+  if (!value) return '';
+  if (safeStorage.isEncryptionAvailable()) {
+    return `ss1:${safeStorage.encryptString(value).toString('base64')}`;
+  }
+  return `plain:${value}`;
+});
+handle('secrets:reveal', (_e, sealed) => {
+  const value = String(sealed ?? '');
+  try {
+    if (value.startsWith('ss1:')) return safeStorage.decryptString(Buffer.from(value.slice(4), 'base64'));
+    if (value.startsWith('plain:')) return value.slice(6);
+  } catch {
+    // Sealed by another user or machine: as good as nothing stored.
+  }
+  return '';
+});
 
 handle('updates:get', () => updater.get());
 handle('updates:check', () => updater.check());
