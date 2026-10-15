@@ -310,6 +310,8 @@ export const harmony = {
     scale: NATIVE,
     updates: NATIVE,
     reveal: false,
+    // Android has its notification for the call instead; a page has neither.
+    tray: false,
   },
 
   settings: {
@@ -360,6 +362,12 @@ export const harmony = {
     set: async (bindings) =>
       (bindings ?? []).map((b) => ({ id: b.id, ok: false, error: 'unsupported' })),
     onFired: () => () => {},
+  },
+
+  voiceTray: {
+    setPictures: async () => false,
+    setState: async () => false,
+    onCommand: () => () => {},
   },
 
   onWindowVisibility(handler) {

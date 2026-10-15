@@ -56,6 +56,21 @@ contextBridge.exposeInMainWorld('harmony', {
     },
   },
 
+  /** The tray icon and the taskbar thumbnail's buttons (main/voice-tray.js). */
+  voiceTray: {
+    setPictures: invoke('voice-tray:pictures'),
+    setState: invoke('voice-tray:state'),
+    /**
+     * A button on the thumbnail or in the tray menu: 'mute', 'deafen', 'leave'.
+     * @returns {() => void} unsubscribe
+     */
+    onCommand(handler) {
+      const listener = (_event, command) => handler(command);
+      ipcRenderer.on('voice-tray:command', listener);
+      return () => ipcRenderer.removeListener('voice-tray:command', listener);
+    },
+  },
+
   hotkeys: {
     set: invoke('hotkeys:set'),
 

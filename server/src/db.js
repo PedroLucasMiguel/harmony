@@ -296,6 +296,18 @@ const MIGRATIONS = [
   (db) => {
     db.exec('ALTER TABLE messages ADD COLUMN edited_at INTEGER');
   },
+
+  /*
+   * v-next -- replies.
+   *
+   * The id of the message this one answers. No foreign key, on purpose: a
+   * reply whose original was deleted is still a reply, and says so ("the
+   * original was deleted") rather than quietly turning into an ordinary
+   * message, which is what ON DELETE SET NULL would make it.
+   */
+  (db) => {
+    db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER');
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

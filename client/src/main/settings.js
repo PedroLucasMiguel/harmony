@@ -156,6 +156,20 @@ const DEFAULTS = {
   // The update version "Later" was clicked on. That one stops asking; a
   // newer one asks again.
   updateDismissed: '',
+  // Whether the "still running in the tray" balloon has been shown. Once.
+  trayHintShown: false,
+  /*
+   * The channel and member columns, in CSS pixels, as last dragged. null is
+   * the full width, which is also the widest either may be.
+   */
+  sideWidth: null,
+  membersWidth: null,
+  /*
+   * The login screen's privacy mask: server addresses and names, the
+   * username and the server list drawn as dots, like a password. For a
+   * screen that is being shared or streamed.
+   */
+  hideDetails: false,
   // Rolling clip buffer. Off by default: it is memory the user did not ask for.
   clipsEnabled: false,
   // GPU video encoding (NVENC / AMF / Quick Sync). 'auto' leaves Chromium to

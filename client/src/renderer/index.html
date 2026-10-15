@@ -10,6 +10,7 @@
     />
     <title>Harmony</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="icons.css" />
   </head>
   <body>
     <!-- ================= Connect ================= -->
@@ -23,6 +24,11 @@
                  accent instead -- see .brand-logo. -->
             <span class="brand-logo" aria-hidden="true"></span>
             <h1>Harmony</h1>
+            <!-- Masks the address, the server names and the username, like
+                 the password, for a screen being shared. See applyPrivacy. -->
+            <button type="button" class="ghost small icon-only privacy-toggle" id="privacy-toggle"
+                    data-icon="eye" title="Hide your details" aria-label="Hide your details"
+                    aria-pressed="false"></button>
           </div>
           <p>Share a screen, or watch someone else's.</p>
         </header>
@@ -290,7 +296,7 @@
           <!-- A phone only: the channel list is a drawer there, and this opens
                it. See the narrow-screen rules at the end of styles.css. -->
           <button class="ghost small narrow-only" id="channels-menu"
-                  title="Channels" aria-label="Channels">&#9776;</button>
+                  title="Channels" aria-label="Channels" data-icon="list"></button>
           <span class="server-badge" id="server-icon" aria-hidden="true"></span>
           <strong class="brand-small" id="server-name">Harmony</strong>
           <span class="muted" id="channels-role"></span>
@@ -311,25 +317,29 @@
             on every screen.
           -->
           <button
-            class="ghost small"
+            class="ghost small icon-only"
             id="server-settings"
-            title="Rename this server, or change its password"
+            data-icon="gear-six"
+            title="Server settings"
+            aria-label="Server settings"
             hidden
-          >
-            Server
-          </button>
-          <button class="ghost small" id="channels-members" title="Show or hide the member list">
-            Members
-          </button>
-          <button class="ghost small" id="channels-signout">Sign out</button>
+          ></button>
+          <button class="ghost small icon-only" id="channels-members" data-icon="users"
+                  title="Show or hide the member list" aria-label="Members"></button>
+          <button class="ghost small icon-only" id="channels-signout" data-icon="sign-out"
+                  title="Sign out" aria-label="Sign out"></button>
         </div>
       </header>
 
       <div class="channels-layout">
         <aside class="channel-list">
+          <!-- Drag to narrow the column; double-click for full width. -->
+          <div class="col-resizer" data-resize="side" role="separator"
+               aria-orientation="vertical" aria-label="Resize the channel list"></div>
           <div class="channel-list-head">
             <h2>Channels</h2>
-            <button class="ghost small" id="channel-add" hidden>+ New</button>
+            <button class="ghost small icon-only" id="channel-add" data-icon="plus"
+                    title="Create a channel" aria-label="Create a channel" hidden></button>
           </div>
           <ul id="channel-items"></ul>
           <p class="error" id="channels-error" hidden></p>
@@ -386,7 +396,7 @@
               <button
                 class="icon-btn hangup"
                 id="voice-leave"
-                data-glyph="&#9742;"
+                data-icon="phone-disconnect"
                 title="Disconnect"
               >
                 Disconnect
@@ -396,7 +406,7 @@
               <button
                 class="voice-action"
                 id="voice-cam"
-                data-glyph="&#128247;"
+                data-icon="video-camera"
                 title="Start camera"
               >
                 Start camera
@@ -407,7 +417,7 @@
               <button
                 class="voice-action"
                 id="voice-flip"
-                data-glyph="&#128260;"
+                data-icon="camera-rotate"
                 title="Switch camera"
                 hidden
               >
@@ -417,7 +427,7 @@
                 class="voice-action"
                 id="voice-screen"
                 data-cap="screenshare"
-                data-glyph="&#128421;"
+                data-icon="screencast"
                 title="Share screen here"
               >
                 Share screen here
@@ -425,7 +435,7 @@
               <button
                 class="voice-action"
                 id="voice-soundboard"
-                data-glyph="&#127928;"
+                data-icon="music-notes"
                 title="Soundboard"
               >
                 Soundboard
@@ -464,11 +474,11 @@
             </button>
             <input id="avatar-file" type="file" accept="image/*" hidden />
             <div class="self-actions">
-              <button class="icon-btn" id="voice-mute" data-glyph="&#127897;"
+              <button class="icon-btn" id="voice-mute" data-icon="microphone"
                       title="Mute mic">Mute mic</button>
-              <button class="icon-btn" id="voice-deafen" data-glyph="&#127911;"
+              <button class="icon-btn" id="voice-deafen" data-icon="headphones"
                       title="Deafen">Deafen</button>
-              <button class="icon-btn" id="voice-config" data-glyph="&#9881;"
+              <button class="icon-btn" id="voice-config" data-icon="gear-six"
                       title="Devices and appearance">Devices</button>
             </div>
           </div>
@@ -541,6 +551,12 @@
             -->
             <form id="chat-form" class="chat-form">
               <div class="composer">
+                <!-- The message this one will answer, if any. See setReply. -->
+                <div class="composer-reply" id="chat-reply" hidden>
+                  <span class="composer-reply-text">Replying to <strong id="chat-reply-name"></strong></span>
+                  <button type="button" class="composer-btn" id="chat-reply-clear"
+                          data-icon="x" title="Cancel the reply">Cancel reply</button>
+                </div>
                 <!-- What is about to be sent with the message, if anything. -->
                 <div class="composer-file" id="chat-pending" hidden>
                   <img class="composer-thumb" id="chat-pending-thumb" alt="" hidden />
@@ -549,7 +565,7 @@
                     type="button"
                     class="composer-btn"
                     id="chat-pending-clear"
-                    data-glyph="&#10005;"
+                    data-icon="x"
                     title="Don't send this"
                   >Remove</button>
                 </div>
@@ -559,7 +575,7 @@
                     type="button"
                     class="composer-btn composer-plus"
                     id="chat-attach"
-                    data-glyph="&#43;"
+                    data-icon="plus-circle"
                     title="Attach a file"
                   >Attach</button>
 
@@ -581,14 +597,14 @@
                     type="button"
                     class="composer-btn"
                     id="chat-emoji"
-                    data-glyph="&#128578;"
+                    data-icon="smiley"
                     title="Emoji"
                   >Emoji</button>
                   <button
                     type="submit"
                     class="composer-btn composer-send"
                     id="chat-send"
-                    data-glyph="&#10148;"
+                    data-icon="paper-plane-right"
                     title="Send"
                   >Send</button>
                 </div>
@@ -609,6 +625,8 @@
           presence follows.
         -->
         <aside class="member-list" id="member-list" hidden>
+          <div class="col-resizer" data-resize="members" role="separator"
+               aria-orientation="vertical" aria-label="Resize the member list"></div>
           <div class="member-list-head">
             <h2>Members</h2>
             <span class="muted" id="member-count"></span>
@@ -727,7 +745,7 @@
             Hide preview
           </button>
           <button class="ghost" id="broadcast-watch">Watch others</button>
-          <button class="ghost icon" id="monitor-toggle" title="Hear my own audio">&#127911;</button>
+          <button class="ghost icon" id="monitor-toggle" title="Hear my own audio" aria-label="Hear my own audio" data-icon="headphones"></button>
           <button class="ghost" id="broadcast-clip" data-cap="clips" hidden>&#9986; Clip</button>
           <button class="danger" id="stop-stream">Stop streaming</button>
         </div>
@@ -776,11 +794,11 @@
 
       <footer class="bar bottom">
         <div class="controls">
-          <button class="ghost icon" id="toggle-play" title="Pause">&#10074;&#10074;</button>
-          <button class="ghost icon" id="toggle-mute" title="Mute">&#128266;</button>
+          <button class="ghost icon" id="toggle-play" title="Pause" aria-label="Pause" data-icon="pause"></button>
+          <button class="ghost icon" id="toggle-mute" title="Mute" aria-label="Mute" data-icon="speaker-high"></button>
           <input id="volume" type="range" min="0" max="350" value="100" />
           <span class="volume-value" id="volume-label">100%</span>
-          <button class="ghost icon" id="watch-fullscreen" title="Fullscreen">&#9974;</button>
+          <button class="ghost icon" id="watch-fullscreen" title="Fullscreen" aria-label="Fullscreen" data-icon="corners-out"></button>
           <button class="ghost" id="watch-clip" data-cap="clips" hidden>&#9986; Clip</button>
         </div>
         <p class="stats" id="watch-stats"></p>
@@ -806,7 +824,7 @@
       <footer class="bar bottom">
         <div class="controls">
           <span class="muted">All volumes</span>
-          <button class="ghost icon" id="mosaic-mute" title="Mute everything">&#128266;</button>
+          <button class="ghost icon" id="mosaic-mute" title="Mute everything" aria-label="Mute everything" data-icon="speaker-high"></button>
           <input id="mosaic-volume" type="range" min="0" max="350" value="100" />
           <span class="volume-value" id="mosaic-volume-label">100%</span>
         </div>
@@ -843,7 +861,7 @@
           cached copy, so there is nothing to broadcast and turning an
           airhorn down is about your ears.
         -->
-        <button class="ghost tiny peer-mute" id="soundpad-mute" type="button">&#128266;</button>
+        <button class="ghost tiny peer-mute" id="soundpad-mute" type="button" aria-label="Mute the soundpad" data-icon="speaker-high"></button>
         <input
           id="soundpad-volume"
           class="peer-volume"
@@ -982,14 +1000,14 @@
           type="button"
           class="msg-tool"
           id="lightbox-save"
-          data-glyph="&#11015;"
+          data-icon="download-simple"
           title="Save a copy"
         >Save</button>
         <button
           type="button"
           class="msg-tool"
           id="lightbox-close"
-          data-glyph="&#10005;"
+          data-icon="x"
           title="Close"
         >Close</button>
       </div>

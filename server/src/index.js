@@ -973,6 +973,7 @@ app.post('/api/channels/:id/messages', requireLogin, (req, res) => {
     body: req.body?.body,
     attachmentHash: req.body?.attachmentHash ?? null,
     attachmentName: req.body?.attachmentName ?? null,
+    replyTo: req.body?.replyTo ?? null,
   });
   if (!result.ok) return res.status(400).json({ error: result.error });
 

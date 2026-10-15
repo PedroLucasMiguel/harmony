@@ -583,7 +583,9 @@ select:focus {
  */
 .channels-layout {
   display: grid;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  /* --side-col and --members-col are set when a column has been dragged
+     narrower (applyColumnWidth); unset, they are the full widths. */
+  grid-template-columns: var(--side-col, minmax(200px, 260px)) minmax(0, 1fr);
   gap: 1rem;
   padding: 1rem;
   height: calc(100% - 3.5rem);
@@ -612,7 +614,60 @@ select:focus {
  * the stage wider than the window.
  */
 .channels-layout[data-members] {
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr) minmax(150px, 200px);
+  grid-template-columns:
+    var(--side-col, minmax(200px, 260px))
+    minmax(0, 1fr)
+    var(--members-col, minmax(150px, 200px));
+}
+
+/*
+ * The handles that resize the side columns: a strip a few pixels wide over
+ * each column's divider line, which lights up in the accent on hover and
+ * while dragging.
+ */
+.channel-list,
+.member-list {
+  position: relative;
+}
+.col-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+.col-resizer[data-resize='side'] {
+  right: -5px;
+}
+.col-resizer[data-resize='members'] {
+  left: -5px;
+}
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.col-resizer:hover::after,
+.col-resizer[data-dragging]::after {
+  background: var(--accent);
+}
+:root[data-resizing],
+:root[data-resizing] * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+@media (max-width: 720px) {
+  .col-resizer {
+    display: none;
+  }
 }
 
 .member-list {
@@ -781,6 +836,12 @@ select:focus {
   padding: 0.4rem 0.5rem;
   border-radius: 6px;
   cursor: pointer;
+}
+/* A little air between channels, so each row reads as its own target
+   rather than as one block of names. */
+.channel-list li.channel-row {
+  margin: 3px 0;
+  padding: 0.45rem 0.55rem;
 }
 .channel-list li:hover {
   background: rgb(var(--tint-rgb) / 0.06);
@@ -2438,6 +2499,8 @@ button.danger {
  * textarea and the thing that should show it is the box around it.
  */
 .composer {
+  /* One line of text with its padding; also every button's height. */
+  --composer-line: 2.375rem;
   display: flex;
   flex-direction: column;
   background: var(--surface-2);
@@ -2466,12 +2529,19 @@ button.danger {
   resize: none;
   overflow-y: auto;
   max-height: 11rem;
-  line-height: 1.4;
   font: inherit;
+  /*
+   * After the font shorthand, which would reset it. One line is exactly
+   * --composer-line tall, the same as the buttons beside it: a row taller
+   * than the box puts the box at its bottom and leaves a gap above the text.
+   */
+  line-height: 1.375rem;
+  min-height: var(--composer-line);
+  box-sizing: border-box;
   background: none;
   border: 0;
   outline: none;
-  padding: 0.45rem 0.35rem;
+  padding: 0.5rem 0.35rem;
   color: var(--text);
 }
 .composer textarea:focus {
@@ -2488,15 +2558,25 @@ button.danger {
 .composer-btn {
   flex: 0 0 auto;
   align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--composer-line);
+  height: var(--composer-line);
   border: 0;
   background: none;
   color: var(--muted);
   border-radius: 6px;
-  padding: 0.35rem 0.4rem;
-  margin: 0.1rem 0;
+  padding: 0;
+  margin: 0;
   cursor: pointer;
   font-size: 0;
   line-height: 1;
+}
+.composer-btn[data-icon]::before {
+  width: 1.3rem;
+  height: 1.3rem;
+  vertical-align: 0;
 }
 .composer-btn::before {
   content: attr(data-glyph);
@@ -2513,6 +2593,10 @@ button.danger {
 .composer-plus::before {
   font-size: 1.3rem;
   font-weight: 300;
+}
+.composer-plus[data-icon]::before {
+  width: 1.45rem;
+  height: 1.45rem;
 }
 .composer-send::before {
   color: var(--accent);
@@ -2549,9 +2633,17 @@ button.danger {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer-file .composer-btn {
+.composer-file .composer-btn,
+.composer-reply .composer-btn {
   margin-left: auto;
   align-self: center;
+  width: 1.75rem;
+  height: 1.75rem;
+}
+.composer-file .composer-btn[data-icon]::before,
+.composer-reply .composer-btn[data-icon]::before {
+  width: 1rem;
+  height: 1rem;
 }
 
 /* ---------- markdown in a message ---------- */
@@ -3762,6 +3854,27 @@ button.tiny:disabled {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.privacy-toggle {
+  margin-left: auto;
+  align-self: flex-start;
+}
+
+/*
+ * The login screen's privacy mask (applyPrivacy): what would say who you
+ * are or where you connect, drawn as dots the way a password is. Typing
+ * still works; it is only the drawing that changes.
+ */
+:root[data-private] :is(
+  #server-url,
+  #username,
+  #server-chip-name,
+  #server-chip-host,
+  #view-connect .server-badge,
+  .server-option-text,
+  #server-search
+) {
+  -webkit-text-security: disc;
 }
 /*
  * The logo, drawn in the palette's accent: logo.png is only the SHAPE (a
@@ -5142,6 +5255,178 @@ input[data-saved]::placeholder {
 }
 input[data-saved] {
   cursor: default;
+}
+
+/* ---------------------------------------------------------------------------
+   Icons (scripts/make-ui-icons.js)
+
+   [data-icon] draws its icon as a mask over currentColor: the colour of the
+   text around it, in every palette, and the hover and "on" colours the
+   control already has. icons.css maps each name to its file through --icon.
+   The ::before already has a font-size where a control styles one, so 1.2em
+   is that size; elsewhere it is the text's.
+   --------------------------------------------------------------------------- */
+[data-icon]::before {
+  content: '';
+  display: inline-block;
+  flex: none;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.2em;
+  background-color: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+/* The state a toggle is in, shown by the icon itself as Discord does. */
+#voice-mute[data-on] { --icon: url('icons/microphone-slash.svg'); }
+#voice-deafen[data-on] { --icon: url('icons/speaker-slash.svg'); }
+#voice-cam[data-on] { --icon: url('icons/video-camera-slash.svg'); }
+#voice-mute[data-on],
+#voice-deafen[data-on] {
+  color: var(--danger-soft);
+}
+/* The icon carries the slash now; the drawn one would cross it twice. */
+.status-dot::after {
+  display: none !important;
+}
+.status-dot[data-icon]::before {
+  width: 1.15em;
+  height: 1.15em;
+}
+.channel-list li .kind[data-icon]::before {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+/* Icon-only buttons in the top bar: square, the icon centred. */
+.icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 30px;
+  padding: 4px 8px;
+}
+.icon-only::before {
+  width: 18px;
+  height: 18px;
+}
+.icon-only[data-on] {
+  color: var(--accent);
+}
+.tile-btn[data-icon],
+.ghost.icon[data-icon],
+.peer-mute[data-icon] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 200;
+  max-width: 260px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.4);
+  pointer-events: none;
+  white-space: pre-line;
+}
+
+/* ---------------------------------------------------------------------------
+   Replies
+
+   A reply wraps: the line naming what it answers runs the full width on
+   top, and the picture and the message go underneath. A curved line comes
+   up out of the picture's centre and turns right into that line, as in
+   Discord. Sizes are in em of the line's own (smaller) font: the picture is
+   1.8em of the row's font wide, which is 2.2em of 0.82em.
+   --------------------------------------------------------------------------- */
+.chat-msg[data-reply] {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.msg-reply {
+  position: relative;
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  min-width: 0;
+  font-size: 0.82em;
+  line-height: 1.4;
+  padding: 0.1em 0 0.15em calc(2.2em + 0.6rem);
+  box-sizing: border-box;
+  cursor: pointer;
+  color: var(--muted);
+}
+.msg-reply::before {
+  content: '';
+  position: absolute;
+  left: 1.1em;
+  top: 50%;
+  bottom: -0.2em;
+  width: calc(1.1em + 0.6rem - 6px);
+  border-left: 2px solid rgb(var(--tint-rgb) / 0.3);
+  border-top: 2px solid rgb(var(--tint-rgb) / 0.3);
+  border-top-left-radius: 6px;
+  pointer-events: none;
+}
+.avatar.reply-avatar {
+  width: 1.35em;
+  height: 1.35em;
+  font-size: 0.6em;
+  flex: none;
+}
+.msg-reply-who {
+  flex: none;
+  font-weight: 600;
+  color: var(--accent);
+  opacity: 0.9;
+}
+.msg-reply:hover .msg-reply-who {
+  text-decoration: underline;
+}
+.msg-reply-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.msg-reply-text .emoji-img {
+  height: 1.1em;
+  width: auto;
+  vertical-align: -0.2em;
+}
+.msg-reply-gone {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+/* "Replying to ..." above the box. */
+.composer-reply {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.25rem 0.3rem 0.4rem;
+  margin-bottom: 0.15rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.composer-reply-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-reply-text strong {
+  color: var(--text);
 }
 
 /* ---------- what this build cannot do ---------- */

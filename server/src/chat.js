@@ -79,6 +79,18 @@ export const MAX_EMOJIS = 200;
 /** Messages returned by one history request. */
 const PAGE_SIZE = 50;
 
+/*
+ * Every message query brings the message it replies to along with it: who
+ * wrote it and the start of what they said, which is all the line above a
+ * reply shows. One LEFT JOIN rather than a lookup per message, and a deleted
+ * original simply comes back as nulls.
+ */
+const REPLY_COLUMNS = ', r.id AS r_id, r.user_id AS r_user_id, ru.nickname AS r_nickname, '
+  + 'r.body AS r_body, r.media_type AS r_media_type, r.attachment_name AS r_attachment_name';
+const REPLY_JOIN = 'LEFT JOIN messages r ON r.id = m.reply_to LEFT JOIN users ru ON ru.id = r.user_id';
+/** How much of the original a reply carries: one line's worth. */
+const REPLY_SNIPPET = 200;
+
 /**
  * Turn arbitrary text into one FTS5 phrase.
  *
@@ -155,8 +167,8 @@ export class Chat {
     this.#q = {
       insertMessage: db.prepare(
         'INSERT INTO messages '
-        + '(channel_id, user_id, body, attachment_hash, attachment_name, media_type, created_at) '
-        + 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        + '(channel_id, user_id, body, attachment_hash, attachment_name, media_type, reply_to, created_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       ),
       insertFts: db.prepare(
         'INSERT INTO messages_fts (rowid, body, nickname, media_type) VALUES (?, ?, ?, ?)',
@@ -169,30 +181,35 @@ export class Chat {
       ),
       deleteMessage: db.prepare('DELETE FROM messages WHERE id = ?'),
       messageById: db.prepare(`
-        SELECT m.*, u.nickname FROM messages m JOIN users u ON u.id = m.user_id
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
         WHERE m.id = ?
       `),
       history: db.prepare(`
-        SELECT m.*, u.nickname FROM messages m JOIN users u ON u.id = m.user_id
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
         WHERE m.channel_id = ? AND m.id < ?
         ORDER BY m.id DESC LIMIT ?
       `),
       pinned: db.prepare(`
-        SELECT m.*, u.nickname FROM messages m JOIN users u ON u.id = m.user_id
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
         WHERE m.channel_id = ? AND m.pinned = 1
         ORDER BY m.id DESC
       `),
       setPinned: db.prepare('UPDATE messages SET pinned = ? WHERE id = ?'),
 
       searchFts: db.prepare(`
-        SELECT m.*, u.nickname FROM messages_fts f
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages_fts f
         JOIN messages m ON m.id = f.rowid
         JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
         WHERE messages_fts MATCH ? AND m.channel_id = ?
         ORDER BY m.id DESC LIMIT ?
       `),
       searchLike: db.prepare(`
-        SELECT m.*, u.nickname FROM messages m JOIN users u ON u.id = m.user_id
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
         WHERE m.channel_id = ?
           AND (m.body LIKE ? OR u.nickname LIKE ? OR IFNULL(m.media_type, '') LIKE ?)
         ORDER BY m.id DESC LIMIT ?
@@ -342,9 +359,19 @@ export class Chat {
     return safe || null;
   }
 
-  post({ channelId, user, body = '', attachmentHash = null, attachmentName = null }) {
+  post({ channelId, user, body = '', attachmentHash = null, attachmentName = null, replyTo = null }) {
     const text = String(body ?? '').slice(0, 4000);
     if (!text.trim() && !attachmentHash) return { ok: false, error: 'empty_message' };
+
+    // A reply answers a message in the same channel, and one that exists:
+    // anything else would be a quote of something the readers here cannot
+    // see.
+    let replyId = null;
+    if (replyTo !== null && replyTo !== undefined) {
+      replyId = Number.parseInt(replyTo, 10);
+      const original = Number.isSafeInteger(replyId) ? this.#q.messageById.get(replyId) : null;
+      if (!original || original.channel_id !== channelId) return { ok: false, error: 'bad_reply' };
+    }
 
     let mediaType = null;
     if (attachmentHash) {
@@ -362,6 +389,7 @@ export class Chat {
         attachmentHash,
         attachmentHash ? Chat.cleanFilename(attachmentName) : null,
         mediaType,
+        replyId,
         Date.now(),
       );
       const id = Number(info.lastInsertRowid);
@@ -923,6 +951,23 @@ export const publicMessage = (m, reactions = [], mentions = null) => (m ? {
   mediaType: m.media_type ?? null,
   pinned: Boolean(m.pinned),
   editedAt: m.edited_at ?? null,
+  /*
+   * What this answers: who, and the start of what they said -- or, when the
+   * original has since been deleted, just that it was.
+   */
+  replyTo: m.reply_to ?? null,
+  reply: m.reply_to
+    ? (m.r_id
+      ? {
+        id: m.r_id,
+        userId: m.r_user_id,
+        nickname: m.r_nickname,
+        body: String(m.r_body ?? '').slice(0, REPLY_SNIPPET),
+        mediaType: m.r_media_type ?? null,
+        attachmentName: m.r_attachment_name ?? null,
+      }
+      : { id: m.reply_to, deleted: true })
+    : null,
   reactions,
   // Ids, not names: the client already has the roster and would otherwise
   // have to fold and match nicknames a second time to know whether one of

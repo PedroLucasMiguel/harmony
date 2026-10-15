@@ -962,6 +962,59 @@ describe('mentions on a message', () => {
   });
 });
 
+describe('replies', () => {
+  const post = (body, token, channelId = textChannelId) => api(`/api/channels/${channelId}/messages`, {
+    method: 'POST', body, token,
+  });
+
+  it('carries who it answers and the start of what they said', async () => {
+    const original = (await post({ body: 'the original message' }, ownerToken)).body.message;
+    const reply = await post({ body: 'answering it', replyTo: original.id }, memberToken);
+    assert.equal(reply.status, 201);
+    assert.equal(reply.body.message.replyTo, original.id);
+    assert.equal(reply.body.message.reply.id, original.id);
+    assert.equal(reply.body.message.reply.userId, original.userId);
+    assert.equal(reply.body.message.reply.body, 'the original message');
+
+    // History, not only the post's answer: the field has to survive a reload.
+    const history = await api(`/api/channels/${textChannelId}/messages`, { token: memberToken });
+    const row = history.body.messages.find((m) => m.id === reply.body.message.id);
+    assert.equal(row.reply.nickname, original.nickname);
+  });
+
+  it('is an ordinary message when it answers nothing', async () => {
+    const plain = await post({ body: 'not a reply' }, memberToken);
+    assert.equal(plain.body.message.replyTo, null);
+    assert.equal(plain.body.message.reply, null);
+  });
+
+  it('refuses to answer a message from another channel, or none', async () => {
+    const elsewhere = await api(`/api/channels/${lockedChannelId}/join`, {
+      method: 'POST', body: { password: 'letmein' }, token: ownerToken,
+    }).catch(() => null);
+    void elsewhere;
+    const other = await post({ body: 'over here' }, ownerToken, lockedChannelId);
+    if (other.status === 201) {
+      const cross = await post({ body: 'cross', replyTo: other.body.message.id }, ownerToken);
+      assert.equal(cross.status, 400);
+      assert.equal(cross.body.error, 'bad_reply');
+    }
+    const ghost = await post({ body: 'to nothing', replyTo: 99999999 }, ownerToken);
+    assert.equal(ghost.status, 400);
+    assert.equal(ghost.body.error, 'bad_reply');
+  });
+
+  it('says so when the original is deleted, instead of forgetting it was a reply', async () => {
+    const original = (await post({ body: 'about to go' }, memberToken)).body.message;
+    const reply = (await post({ body: 'still answering', replyTo: original.id }, ownerToken)).body.message;
+    const gone = await api(`/api/messages/${original.id}/delete`, { method: 'POST', token: memberToken });
+    assert.equal(gone.status, 200);
+    const history = await api(`/api/channels/${textChannelId}/messages`, { token: ownerToken });
+    const row = history.body.messages.find((m) => m.id === reply.id);
+    assert.deepEqual(row.reply, { id: original.id, deleted: true });
+  });
+});
+
 describe('the disk quota', () => {
   it('refuses an upload that would exceed it', async () => {
     // Restart with a quota smaller than the file we are about to send.

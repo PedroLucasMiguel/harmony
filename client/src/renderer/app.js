@@ -6,6 +6,7 @@ import { runConnectionTest } from './connection-test.js';
 import { ClipBuffer, CLIP_SECONDS } from './clip-buffer.js';
 import { VoiceSession } from './voice.js';
 import { Compositor, openCompositionEditor } from './compositor.js';
+import { drawTrayIcons } from './tray-icons.js';
 import {
   createSink, MAX_GAIN, asPercent, playSample, setOutputDevice, monitorStream, playCue,
   setCueVolume,
@@ -191,6 +192,7 @@ const el = {
   memberMenuBody: $('member-menu-body'),
   channelsMembers: $('channels-members'),
   memberList: $('member-list'),
+  privacyToggle: $('privacy-toggle'),
   memberItems: $('member-items'),
   memberCount: $('member-count'),
   channelsSignout: $('channels-signout'),
@@ -232,6 +234,9 @@ const el = {
   lightboxSave: $('lightbox-save'),
   lightboxClose: $('lightbox-close'),
   chatPending: $('chat-pending'),
+  chatReply: $('chat-reply'),
+  chatReplyName: $('chat-reply-name'),
+  chatReplyClear: $('chat-reply-clear'),
   chatPendingThumb: $('chat-pending-thumb'),
   chatPendingName: $('chat-pending-name'),
   chatPendingClear: $('chat-pending-clear'),
@@ -503,7 +508,7 @@ const state = {
   share: { target: null },
   /** Android's screen share, published natively: { channelId } while on. */
   nativeShare: null,
-  chat: { channelId: null, messages: [], pinned: [], searching: false, pendingFile: null },
+  chat: { channelId: null, messages: [], pinned: [], searching: false, pendingFile: null, replyTo: null },
   soundpad: { clips: [] },
   /**
    * The server's own emoji.
@@ -694,6 +699,79 @@ function showError(message) {
 }
 
 // ---------------------------------------------------------------------------
+// Icons and tooltips
+// ---------------------------------------------------------------------------
+
+/**
+ * Show an icon on a control (see scripts/make-ui-icons.js and icons.css).
+ *
+ * The control's text is cleared rather than kept beside the icon; what it
+ * is called goes in aria-label, and the tooltip comes from its title.
+ */
+function setIcon(node, name) {
+  if (!node) return;
+  node.dataset.icon = name;
+  if (node.textContent) {
+    if (!node.getAttribute('aria-label')) node.setAttribute('aria-label', node.title || node.textContent);
+    node.textContent = '';
+  }
+}
+
+/*
+ * One tooltip for every icon-only control.
+ *
+ * A native title tooltip takes a second to appear, ignores the palette and
+ * cannot be styled; an icon with no words needs a better one. The title is
+ * moved into data-tip on hover -- read fresh each time, because plenty of
+ * code rewrites a button's title as its state changes -- so the native one
+ * never shows as well.
+ */
+const TIP_TARGETS = '[data-tip], [data-icon][title], .icon-btn[title], .voice-action[title], '
+  + '.tile-btn[title], .msg-tool[title], .composer-btn[title]';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+tooltip.hidden = true;
+tooltip.setAttribute('role', 'tooltip');
+document.body.append(tooltip);
+let tipTarget = null;
+let tipTimer = null;
+
+function hideTooltip() {
+  clearTimeout(tipTimer);
+  tipTarget = null;
+  tooltip.hidden = true;
+}
+
+document.addEventListener('mouseover', (event) => {
+  const target = event.target.closest?.(TIP_TARGETS);
+  if (target === tipTarget) return;
+  hideTooltip();
+  if (!target) return;
+  if (target.title) {
+    target.dataset.tip = target.title;
+    target.removeAttribute('title');
+  }
+  if (!target.dataset.tip) return;
+  tipTarget = target;
+  tipTimer = setTimeout(() => {
+    if (tipTarget !== target || !target.isConnected) return;
+    tooltip.textContent = target.dataset.tip;
+    tooltip.hidden = false;
+    const box = target.getBoundingClientRect();
+    const tip = tooltip.getBoundingClientRect();
+    const left = Math.min(Math.max(6, box.left + box.width / 2 - tip.width / 2), innerWidth - tip.width - 6);
+    const above = box.top - tip.height - 6;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${above >= 4 ? above : box.bottom + 6}px`;
+  }, 250);
+});
+document.addEventListener('mouseout', (event) => {
+  if (tipTarget && !tipTarget.contains(event.relatedTarget)) hideTooltip();
+});
+document.addEventListener('pointerdown', hideTooltip, true);
+document.addEventListener('scroll', hideTooltip, true);
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 
@@ -729,6 +807,11 @@ async function boot() {
   // First, before anything is drawn. Applying it later means the window
   // opens in the default palette and flashes into the chosen one.
   applyTheme(state.settings.theme);
+  // As early, and for the same reason: a masked screen that shows the
+  // address for a moment first has not masked it.
+  applyPrivacy(Boolean(state.settings.hideDetails), { render: false });
+  applyColumnWidth('side', state.settings.sideWidth);
+  applyColumnWidth('members', state.settings.membersWidth);
   el.serverUrl.value = state.settings.serverUrl;
   el.username.value = state.settings.username;
   el.password.value = state.settings.password ?? '';
@@ -740,6 +823,13 @@ async function boot() {
   // Mute and deafen are bound from the start; clips join once the soundpad
   // of a server has loaded, since their ids mean nothing before that.
   syncHotkeys();
+  if (harmony.capabilities.tray) {
+    // Off the critical path: the tray shows the app's own icon until these
+    // arrive, which is what it shows outside a call anyway.
+    drawTrayIcons()
+      .then((pictures) => harmony.voiceTray.setPictures(pictures))
+      .catch((err) => console.warn('[tray] could not draw the icons:', err.message));
+  }
 
   el.rememberAccount.checked = state.settings.rememberAccount !== false;
   if (state.settings.sessionToken) {
@@ -1227,7 +1317,7 @@ function renderServerMenu() {
     li.className = 'server-option';
     li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(key === current));
-    li.title = p.url;
+    if (!hidingDetails()) li.title = p.url;
 
     const status = serverStatus.get(key);
     const badge = document.createElement('span');
@@ -1345,7 +1435,8 @@ function renderServerChip() {
     reachable: connectServer?.reachable,
     checking: connectServer?.checking,
   });
-  el.serverChip.title = connectServer?.checking
+  el.serverChip.title = hidingDetails() ? 'Click to switch or add a server'
+    : connectServer?.checking
     ? `Checking ${address}…`
     : connectServer?.reachable
     ? `${address} -- click to switch or add a server`
@@ -2390,7 +2481,7 @@ function channelNodes(channel) {
   const kind = document.createElement('span');
   kind.className = 'kind';
   kind.dataset.kind = channel.kind;
-  kind.textContent = channel.kind === 'voice' ? '\u{1F50A}' : '#';
+  kind.dataset.icon = channel.kind === 'voice' ? 'speaker-high' : 'hash';
 
   const name = document.createElement('span');
   name.className = 'channel-name';
@@ -3564,6 +3655,35 @@ function applyVoiceButtons() {
   const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
   el.voiceWhere.textContent = channel ? channel.name : '';
 
+  syncVoiceTray();
+}
+
+/*
+ * The tray icon and the taskbar thumbnail's buttons (main/voice-tray.js).
+ *
+ * Told only what changed, and talking only with a short hold after the last
+ * word: the ring is polled ten times a second, and an icon that flickered
+ * between every syllable would be noise in the corner of the screen.
+ */
+const TRAY_TALK_HOLD_MS = 400;
+let selfSpokeAt = 0;
+let voiceTrayKey = '';
+
+function syncVoiceTray() {
+  if (!harmony.capabilities.tray) return;
+  const inVoice = Boolean(state.voice.channelId);
+  const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
+  const now = {
+    inVoice,
+    muted: inVoice && state.voice.muted,
+    deafened: inVoice && state.voice.deafened,
+    speaking: inVoice && performance.now() - selfSpokeAt < TRAY_TALK_HOLD_MS,
+    channel: channel?.name ?? '',
+  };
+  const key = JSON.stringify(now);
+  if (key === voiceTrayKey) return;
+  voiceTrayKey = key;
+  harmony.voiceTray.setState(now).catch(() => { /* the tray is cosmetic */ });
 }
 
 /*
@@ -3636,11 +3756,11 @@ function applyVoiceConnection(up) {
  * the tooltip carry.
  */
 const STATUS = [
-  { key: 'forced', glyph: '\u{1F3A4}', title: 'muted by an admin' },
-  { key: 'muted', glyph: '\u{1F3A4}', title: 'muted themselves' },
-  { key: 'deaf', glyph: '\u{1F3A7}', title: 'deafened -- cannot hear anybody' },
-  { key: 'cam', glyph: '\u{1F4F7}', title: 'camera on' },
-  { key: 'screen', glyph: '\u{1F5A5}', title: 'sharing a screen' },
+  { key: 'forced', icon: 'microphone-slash', title: 'muted by an admin' },
+  { key: 'muted', icon: 'microphone-slash', title: 'muted themselves' },
+  { key: 'deaf', icon: 'speaker-slash', title: 'deafened -- cannot hear anybody' },
+  { key: 'cam', icon: 'video-camera', title: 'camera on' },
+  { key: 'screen', icon: 'monitor', title: 'sharing a screen' },
 ];
 
 function statusKeys(member) {
@@ -3659,11 +3779,11 @@ function statusKeys(member) {
 function renderStatus(container, member) {
   const keys = statusKeys(member);
   container.replaceChildren(...keys.map((key) => {
-    const { glyph, title } = STATUS.find((x) => x.key === key);
+    const { icon, title } = STATUS.find((x) => x.key === key);
     const span = document.createElement('span');
     span.className = 'status-dot';
     span.dataset.kind = key;
-    span.textContent = glyph;
+    span.dataset.icon = icon;
     span.title = title;
     return span;
   }));
@@ -4069,6 +4189,8 @@ function renderVoiceRoster(roster) {
 function renderSpeaking() {
   if (!state.voice.channelId) return;
   const speaking = state.voice.speakingMids();
+  if (speaking.has(state.voice.mid)) selfSpokeAt = performance.now();
+  syncVoiceTray();
 
   for (const li of el.voiceRoster.children) {
     li.toggleAttribute('data-speaking', speaking.has(Number(li.dataset.mid)));
@@ -4654,6 +4776,16 @@ function renderHotkeyList() {
  * The cue matters more here than anywhere: it is the only confirmation
  * somebody gets without alt-tabbing.
  */
+harmony.voiceTray.onCommand((command) => {
+  if (!state.voice.channelId) return;
+  if (command === 'leave') {
+    leaveVoice();
+    return;
+  }
+  const button = command === 'mute' ? el.voiceMute : command === 'deafen' ? el.voiceDeafen : null;
+  if (button && !button.disabled) button.click();
+});
+
 harmony.hotkeys.onFired((id) => {
   if (id === 'mute' || id === 'deafen') {
     const button = id === 'mute' ? el.voiceMute : el.voiceDeafen;
@@ -5050,7 +5182,7 @@ function renderChannelVideo() {
       eye.className = 'tile-btn';
       eye.type = 'button';
       eye.dataset.role = 'preview';
-      eye.innerHTML = '&#128065;';
+      setIcon(eye, 'eye');
       eye.title = 'Show a preview of what you are sharing';
       eye.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -5098,7 +5230,7 @@ function renderChannelVideo() {
       listen.className = 'tile-btn';
       listen.type = 'button';
       listen.dataset.role = 'monitor';
-      listen.innerHTML = '&#127911;';
+      setIcon(listen, 'headphones');
       listen.title = 'Hear your own stream';
       /*
        * Back into the composition's editor. On your own share's tile
@@ -5109,7 +5241,7 @@ function renderChannelVideo() {
       compose.className = 'tile-btn';
       compose.type = 'button';
       compose.dataset.role = 'compose';
-      compose.innerHTML = '&#9638;';
+      setIcon(compose, 'squares-four');
       compose.title = 'Edit the layout';
       compose.hidden = !state.live.compositor;
       compose.addEventListener('click', (event) => {
@@ -5155,7 +5287,7 @@ function renderChannelVideo() {
       muteBtn.className = 'tile-btn';
       muteBtn.type = 'button';
       muteBtn.dataset.role = 'mute';
-      muteBtn.innerHTML = '&#128266;';
+      setIcon(muteBtn, 'speaker-high');
       muteBtn.title = 'Mute this share';
 
       const volume = document.createElement('input');
@@ -5171,7 +5303,7 @@ function renderChannelVideo() {
       const apply = (percent) => {
         state.voice.setTileGain(key, percent / 100);
         showVolume(volume, level, percent);
-        muteBtn.innerHTML = percent === 0 ? '&#128263;' : '&#128266;';
+        setIcon(muteBtn, percent === 0 ? 'speaker-x' : 'speaker-high');
       };
       showVolume(volume, level, Number(volume.value));
       volume.addEventListener('input', (event) => {
@@ -5194,7 +5326,7 @@ function renderChannelVideo() {
     fsBtn.className = 'tile-btn';
     fsBtn.type = 'button';
     fsBtn.dataset.role = 'fullscreen';
-    fsBtn.innerHTML = '&#9974;';
+    setIcon(fsBtn, 'corners-out');
     fsBtn.title = 'Fullscreen';
 
     /*
@@ -5212,7 +5344,7 @@ function renderChannelVideo() {
       closeBtn.className = 'tile-btn';
       closeBtn.type = 'button';
       closeBtn.dataset.role = 'close';
-      closeBtn.innerHTML = '&#10005;';
+      setIcon(closeBtn, 'x');
       closeBtn.title = 'Stop watching this, and stop downloading it';
       closeBtn.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -5312,6 +5444,7 @@ function renderChannelVideo() {
 
 async function openTextChannel(channel) {
   state.chat.channelId = channel.id;
+  setReply(null);
   // Whatever was waiting to be sent was waiting to be sent HERE. Carrying
   // it into the next channel is how a screenshot ends up in the wrong one.
   setPendingFile(null);
@@ -5394,7 +5527,9 @@ function mentionNode(raw, name) {
 
 /** True if this message is addressed to the person reading it. */
 const mentionsMe = (message) => Boolean(
-  message.mentionsEveryone || message.mentions?.includes(state.auth.user?.id),
+  message.mentionsEveryone || message.mentions?.includes(state.auth.user?.id)
+  // Answering somebody tells them, as Discord's replies do by default.
+  || (message.reply?.userId && message.reply.userId === state.auth.user?.id),
 );
 
 /**
@@ -6606,7 +6741,7 @@ function attachmentNode(message) {
   const save = document.createElement('button');
   save.type = 'button';
   save.className = 'msg-tool';
-  save.dataset.glyph = '\u2b07';
+  save.dataset.icon = 'download-simple';
   save.textContent = 'Save';
   save.title = 'Save a copy';
   save.addEventListener('click', async (event) => {
@@ -6644,7 +6779,7 @@ function attachmentNode(message) {
     const swap = document.createElement('button');
     swap.type = 'button';
     swap.className = 'msg-tool';
-    swap.dataset.glyph = '\u270E';
+    swap.dataset.icon = 'pencil-simple';
     swap.textContent = 'Replace';
     swap.title = 'Replace this file';
     swap.addEventListener('click', (event) => {
@@ -6721,6 +6856,67 @@ function closeLightbox() {
   lightboxOf = null;
 }
 
+// --- replies ------------------------------------------------------------------
+
+/**
+ * The line above a reply: who it answers, and the start of what they said.
+ *
+ * Drawn from the original as it is NOW if this client has it -- so an edit
+ * or a rename shows -- and from the server's copy otherwise. Clicking it
+ * goes to the original, loading older pages if it has to (jumpToMessage).
+ */
+function replyLine(reply) {
+  const line = document.createElement('div');
+  line.className = 'msg-reply';
+
+  if (reply.deleted) {
+    const gone = document.createElement('span');
+    gone.className = 'msg-reply-text msg-reply-gone';
+    gone.textContent = 'The original message was deleted.';
+    line.append(gone);
+    return line;
+  }
+
+  const current = state.chat.messages.find((m) => m.id === reply.id);
+  const userId = current?.userId ?? reply.userId;
+  const nickname = current?.nickname ?? reply.nickname;
+  const body = current?.body ?? reply.body ?? '';
+  const attachment = current ? current.attachmentName ?? (current.attachmentHash ? 'attachment' : null)
+    : reply.attachmentName ?? (reply.mediaType ? 'attachment' : null);
+
+  const who = document.createElement('span');
+  who.className = 'msg-reply-who';
+  who.textContent = `@${displayOf(userId, nickname)}`;
+
+  const text = document.createElement('span');
+  text.className = 'msg-reply-text';
+  if (body.trim()) {
+    // Emoji and mentions as they are drawn in the message itself, kept to
+    // one line by CSS. renderBody builds text nodes and images only.
+    renderBody(text, body.replace(/\s+/g, ' '));
+  } else {
+    text.classList.add('msg-reply-gone');
+    text.textContent = attachment ? 'Click to see the attachment' : '';
+  }
+
+  line.append(avatarEl(faceOf(userId, nickname), 'reply-avatar'), who, text);
+  line.title = 'Go to the message this answers';
+  line.addEventListener('click', () => jumpToMessage(reply.id));
+  return line;
+}
+
+/**
+ * Answer a message: the bar above the box says which, and the next message
+ * sent carries it. null puts the composer back to an ordinary message.
+ */
+function setReply(message) {
+  state.chat.replyTo = message ?? null;
+  el.chatReply.hidden = !message;
+  if (!message) return;
+  el.chatReplyName.textContent = displayOf(message.userId, message.nickname);
+  el.chatInput.focus();
+}
+
 /**
  * How close together two messages from the same person stay one block.
  *
@@ -6762,6 +6958,9 @@ function messageRow(message, previous) {
     // was pinned.
     && !previous.pinned
     && !message.pinned
+    // A reply shows what it answers above its name, so it always starts a
+    // block of its own.
+    && !message.reply
     && message.createdAt - previous.createdAt < GROUP_WINDOW_MS;
   if (grouped) row.setAttribute('data-grouped', '');
 
@@ -6809,9 +7008,16 @@ function messageRow(message, previous) {
   const tools = document.createElement('span');
   tools.className = 'msg-tools';
 
+  const reply = document.createElement('button');
+  reply.className = 'msg-tool';
+  reply.dataset.icon = 'arrow-bend-up-left';
+  reply.textContent = 'Reply';
+  reply.title = 'Reply';
+  reply.addEventListener('click', () => setReply(message));
+
   const react = document.createElement('button');
   react.className = 'msg-tool react-btn';
-  react.dataset.glyph = '\u{1F600}';
+  react.dataset.icon = 'smiley';
   react.textContent = 'React';
   react.title = 'Add a reaction';
   react.addEventListener('click', () => openEmojiPicker(react, (value) => {
@@ -6821,7 +7027,7 @@ function messageRow(message, previous) {
 
   const pin = document.createElement('button');
   pin.className = 'msg-tool';
-  pin.dataset.glyph = '\u{1F4CC}';
+  pin.dataset.icon = 'push-pin';
   pin.textContent = message.pinned ? 'Unpin' : 'Pin';
   pin.title = pin.textContent;
   if (message.pinned) pin.setAttribute('data-on', '');
@@ -6833,7 +7039,7 @@ function messageRow(message, previous) {
     }
   });
 
-  tools.append(react, pin);
+  tools.append(reply, react, pin);
 
   /*
    * The left column, and what fills it.
@@ -6880,7 +7086,7 @@ function messageRow(message, previous) {
   if (message.userId === state.auth.user?.id) {
     const change = document.createElement('button');
     change.className = 'msg-tool';
-    change.dataset.glyph = '\u270E';
+    change.dataset.icon = 'pencil-simple';
     change.textContent = 'Edit';
     change.title = 'Edit';
     change.addEventListener('click', async () => {
@@ -6907,13 +7113,17 @@ function messageRow(message, previous) {
     tools.append(change);
   }
   row.append(gutter, main, tools);
+  if (message.reply) {
+    row.setAttribute('data-reply', '');
+    row.prepend(replyLine(message.reply));
+  }
 
   // Your own, or anybody's if you are an admin -- the same rule the server
   // enforces, so a button that appears always works.
   if (message.userId === state.auth.user?.id || isAdmin()) {
     const remove = document.createElement('button');
     remove.className = 'msg-tool msg-tool-danger';
-    remove.dataset.glyph = '\u{1F5D1}';
+    remove.dataset.icon = 'trash';
     remove.textContent = 'Delete';
     remove.title = 'Delete';
     remove.addEventListener('click', async () => {
@@ -7038,6 +7248,8 @@ async function sendMessage() {
   const body = el.chatInput.value.trim();
   const file = state.chat.pendingFile;
   if (!body && !file) return;
+  const replying = state.chat.replyTo;
+  setReply(null);
 
   el.chatInput.value = '';
   // Back to one row. Without this the box keeps the height of the message
@@ -7063,11 +7275,13 @@ async function sendMessage() {
     }
     await harmony.api.postMessage(state.server, state.chat.channelId, {
       body, attachmentHash, attachmentName,
+      ...(replying ? { replyTo: replying.id } : {}),
     });
     // The server echoes it back over the socket, so nothing is appended here.
   } catch (err) {
     el.chatNote.textContent = err.message;
     el.chatInput.value = body; // give them their text back
+    setReply(replying); // and what it was answering
     applyComposer();
   }
 }
@@ -7143,7 +7357,7 @@ function applySoundpadVolume() {
   // a clip amplified three and a half times is exactly as likely to distort
   // as a person is, and it is the same slider doing the same thing.
   showVolume(el.soundpadVolume, el.soundpadVolumeLabel, percent, false);
-  el.soundpadMute.innerHTML = percent === 0 ? '&#128263;' : '&#128266;';
+  setIcon(el.soundpadMute, percent === 0 ? 'speaker-x' : 'speaker-high');
   el.soundpadMute.title = percent === 0 ? 'Unmute the soundpad' : 'Mute the soundpad';
   el.soundpadMute.toggleAttribute('data-on', percent === 0);
 }
@@ -9241,7 +9455,7 @@ async function enterMosaic(usernames = null) {
   })();
   el.mosaicGrid.replaceChildren();
   showVolume(el.mosaicVolume, el.mosaicVolumeLabel, 100);
-  el.mosaicMute.innerHTML = '&#128266;';
+  setIcon(el.mosaicMute, 'speaker-high');
   showView('view-mosaic');
 
   await syncMosaic();
@@ -9424,7 +9638,7 @@ function openTile({ username, whepUrl }) {
   muteBtn.className = 'tile-btn';
   muteBtn.type = 'button';
   muteBtn.dataset.role = 'mute';
-  muteBtn.innerHTML = '&#128266;';
+  setIcon(muteBtn, 'speaker-high');
   muteBtn.title = `Mute ${username}`;
 
   const volume = document.createElement('input');
@@ -9444,28 +9658,28 @@ function openTile({ username, whepUrl }) {
   maxBtn.className = 'tile-btn';
   maxBtn.type = 'button';
   maxBtn.dataset.role = 'maximize';
-  maxBtn.innerHTML = '&#10530;';
+  setIcon(maxBtn, 'arrows-out');
   maxBtn.title = `Maximize ${username}`;
 
   const fsBtn = document.createElement('button');
   fsBtn.className = 'tile-btn';
   fsBtn.type = 'button';
   fsBtn.dataset.role = 'fullscreen';
-  fsBtn.innerHTML = '&#9974;';
+  setIcon(fsBtn, 'corners-out');
   fsBtn.title = 'Fullscreen';
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'tile-btn';
   closeBtn.type = 'button';
   closeBtn.dataset.role = 'close';
-  closeBtn.innerHTML = '&#10005;';
+  setIcon(closeBtn, 'x');
   closeBtn.title = `Close ${username}`;
 
   const clipBtn = document.createElement('button');
   clipBtn.className = 'tile-btn';
   clipBtn.type = 'button';
   clipBtn.dataset.role = 'clip';
-  clipBtn.innerHTML = '&#9986;';
+  setIcon(clipBtn, 'scissors');
   clipBtn.title = `Save the last ${CLIP_SECONDS} seconds`;
   clipBtn.hidden = true;
 
@@ -9503,7 +9717,7 @@ function openTile({ username, whepUrl }) {
   muteBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     entry.muted = !entry.muted;
-    muteBtn.innerHTML = entry.muted ? '&#128263;' : '&#128266;';
+    setIcon(muteBtn, entry.muted ? 'speaker-x' : 'speaker-high');
     muteBtn.title = `${entry.muted ? 'Unmute' : 'Mute'} ${username}`;
     showVolume(volume, level, Number(volume.value), entry.muted);
     applyTileAudio();
@@ -9515,7 +9729,7 @@ function openTile({ username, whepUrl }) {
     entry.volume = Number(volume.value) / 100;
     if (entry.volume > 0 && entry.muted) {
       entry.muted = false;
-      muteBtn.innerHTML = '&#128266;';
+      setIcon(muteBtn, 'speaker-high');
     }
     showVolume(volume, level, Number(volume.value), entry.muted);
     applyTileAudio();
@@ -9642,7 +9856,7 @@ function toggleMaximized(username) {
 
   for (const [name, entry] of mosaic.tiles) {
     const on = mosaic.maximized === name;
-    entry.maxBtn.innerHTML = on ? '&#10529;' : '&#10530;';
+    setIcon(entry.maxBtn, on ? 'arrows-in' : 'arrows-out');
     entry.maxBtn.title = on ? 'Back to the grid' : `Maximize ${name}`;
   }
   layoutMosaic();
@@ -9673,7 +9887,7 @@ function applyWatchAudio() {
   el.remote.dataset.muted = String(muted);
 
   showVolume(el.volume, el.volumeLabel, asPercent(volume), muted);
-  el.toggleMute.innerHTML = muted ? '&#128263;' : '&#128266;';
+  setIcon(el.toggleMute, muted ? 'speaker-x' : 'speaker-high');
   el.toggleMute.title = muted ? 'Unmute' : 'Mute';
 }
 
@@ -9763,11 +9977,11 @@ document.addEventListener('fullscreenchange', () => {
   const active = document.fullscreenElement;
   for (const entry of state.mosaic.tiles.values()) {
     const on = entry.el === active;
-    entry.fsBtn.innerHTML = on ? '&#10005;' : '&#9974;';
+    setIcon(entry.fsBtn, on ? 'x' : 'corners-out');
     entry.fsBtn.title = on ? 'Exit fullscreen (Esc)' : 'Fullscreen';
   }
   const watching = el.watchView === active;
-  el.watchFullscreen.innerHTML = watching ? '&#10005;' : '&#9974;';
+  setIcon(el.watchFullscreen, watching ? 'x' : 'corners-out');
   el.watchFullscreen.title = watching ? 'Exit fullscreen (Esc)' : 'Fullscreen';
 
   // Start every fullscreen session with the chrome out of the way; the pointer
@@ -9951,6 +10165,105 @@ harmony.realtime.onEvent(onRealtimeEvent);
  * because an empty grid track still reserves its width -- the same reason
  * the stage column collapses when there is nothing on it.
  */
+// --- column widths ------------------------------------------------------------
+
+/*
+ * The channel list and the member list can be dragged narrower, never
+ * wider than they are by default -- the layout was drawn for those widths,
+ * and wider only takes room from the stage. Remembered in settings.json.
+ *
+ * Applied as a whole grid track through a CSS variable: minmax(floor, w),
+ * so a narrow window can still squeeze the column below what was dragged,
+ * as it could before.
+ */
+const COLUMNS = {
+  side: { setting: 'sideWidth', css: '--side-col', min: 180, floor: 200, max: 260 },
+  members: { setting: 'membersWidth', css: '--members-col', min: 130, floor: 150, max: 200 },
+};
+
+/** Set a column's width; null or anything at the maximum is the default. */
+function applyColumnWidth(key, width) {
+  const col = COLUMNS[key];
+  const wanted = Number(width);
+  if (width == null || !Number.isFinite(wanted) || wanted >= col.max) {
+    el.channelsLayout.style.removeProperty(col.css);
+    return null;
+  }
+  const w = Math.round(Math.max(col.min, wanted));
+  el.channelsLayout.style.setProperty(col.css, `minmax(${Math.min(col.floor, w)}px, ${w}px)`);
+  return w;
+}
+
+async function saveColumnWidth(key, width) {
+  await harmony.settings.set({ [COLUMNS[key].setting]: width });
+  state.settings = await harmony.settings.get();
+}
+
+for (const handle of document.querySelectorAll('.col-resizer')) {
+  const key = handle.dataset.resize;
+  const column = handle.parentElement;
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = column.getBoundingClientRect().width;
+    // The member list is on the right: dragging its edge left widens it.
+    const sign = key === 'members' ? -1 : 1;
+    let width = applyColumnWidth(key, startWidth);
+    handle.toggleAttribute('data-dragging', true);
+    document.documentElement.toggleAttribute('data-resizing', true);
+
+    const move = (e) => {
+      // getBoundingClientRect and clientX are both in the zoomed page's own
+      // pixels, so the UI size setting needs no correction here.
+      width = applyColumnWidth(key, startWidth + sign * (e.clientX - startX));
+    };
+    const done = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', done);
+      handle.removeEventListener('pointercancel', done);
+      handle.removeAttribute('data-dragging');
+      document.documentElement.removeAttribute('data-resizing');
+      saveColumnWidth(key, width);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', done);
+    handle.addEventListener('pointercancel', done);
+  });
+  // Back to the full width.
+  handle.addEventListener('dblclick', () => saveColumnWidth(key, applyColumnWidth(key, null)));
+}
+
+// --- the login screen's privacy mask --------------------------------------------
+
+const hidingDetails = () => document.documentElement.hasAttribute('data-private');
+
+/**
+ * Draw the address, server names, username and server list as dots (CSS:
+ * :root[data-private]), for a login screen somebody is streaming. Hover
+ * text that would spell the address out goes too.
+ */
+function applyPrivacy(on, { render = true } = {}) {
+  document.documentElement.toggleAttribute('data-private', on);
+  setIcon(el.privacyToggle, on ? 'eye-slash' : 'eye');
+  el.privacyToggle.toggleAttribute('data-on', on);
+  el.privacyToggle.setAttribute('aria-pressed', String(on));
+  const label = on ? 'Show your details' : 'Hide your details';
+  el.privacyToggle.title = label;
+  el.privacyToggle.setAttribute('aria-label', label);
+  if (!render) return;
+  renderServerChip();
+  if (!el.serverMenu.hidden) renderServerMenu();
+}
+
+el.privacyToggle.addEventListener('click', async () => {
+  const on = !hidingDetails();
+  applyPrivacy(on);
+  await harmony.settings.set({ hideDetails: on });
+  state.settings = await harmony.settings.get();
+});
+
 function applyMemberList(show) {
   el.memberList.hidden = !show;
   el.channelsLayout.toggleAttribute('data-members', show);
@@ -10049,35 +10362,54 @@ el.channelsSignout.addEventListener('click', async () => {
   await restoreAccountPassword();
 });
 
+/*
+ * Whether the microphone is off only because of deafen.
+ *
+ * Deafening mutes as well -- hearing nobody while still talking is never
+ * what anyone means by it, and it is how people end up broadcasting a
+ * conversation they think is private. Undeafening gives back what deafen
+ * took and no more: a microphone that was live comes back live, and one you
+ * had muted yourself first stays muted.
+ */
+let mutedByDeafen = false;
+
+const sendMuteState = () => harmony.realtime
+  .request('voice:mute', {
+    channelId: state.voice.channelId,
+    muted: state.voice.muted,
+    deafened: state.voice.deafened,
+  })
+  .catch(() => { /* the local state still applies */ });
+
 el.voiceMute.addEventListener('click', async () => {
   const before = state.voice.muted;
+  // Unmuting while deafened undeafens too, as Discord does: you asked to
+  // talk, and talking to people you cannot hear is the case deafen exists
+  // to prevent.
+  const undeafen = before && state.voice.deafened;
+  if (undeafen) state.voice.setDeafened(false);
+  mutedByDeafen = false;
   const muted = state.voice.setMuted(!before);
   // From what actually happened, not from what was asked: an admin's mute
   // can refuse the unmute, and a cue saying otherwise would be a lie told
   // to somebody who is not looking at the screen.
-  if (muted !== before) voiceCue(muted ? 'mute' : 'unmute');
+  if (undeafen) voiceCue('undeafen');
+  else if (muted !== before) voiceCue(muted ? 'mute' : 'unmute');
   applyVoiceButtons();
-  await harmony.realtime
-    .request('voice:mute', {
-      channelId: state.voice.channelId, muted, deafened: state.voice.deafened,
-    })
-    .catch(() => { /* local mute still applies */ });
+  await sendMuteState();
 });
 
 el.voiceDeafen.addEventListener('click', () => {
-  // Deafening implies muting: being able to hear nobody while still talking is
-  // never what anyone means by it, and it is how people end up broadcasting a
-  // conversation they think is private.
-  state.voice.setDeafened(!state.voice.deafened);
-  if (state.voice.deafened && !state.voice.muted) state.voice.setMuted(true);
-  voiceCue(state.voice.deafened ? 'deafen' : 'undeafen');
-  harmony.realtime
-    .request('voice:mute', {
-      channelId: state.voice.channelId,
-      muted: state.voice.muted,
-      deafened: state.voice.deafened,
-    })
-    .catch(() => { /* local state still applies */ });
+  const deafen = state.voice.setDeafened(!state.voice.deafened);
+  if (deafen) {
+    mutedByDeafen = !state.voice.muted;
+    if (mutedByDeafen) state.voice.setMuted(true);
+  } else if (mutedByDeafen) {
+    mutedByDeafen = false;
+    state.voice.setMuted(false);
+  }
+  voiceCue(deafen ? 'deafen' : 'undeafen');
+  sendMuteState();
   applyVoiceButtons();
 });
 
@@ -10843,6 +11175,15 @@ async function openChangeSource() {
 }
 
 el.changeSource.addEventListener('click', () => openChangeSource());
+el.chatReplyClear.addEventListener('click', () => {
+  setReply(null);
+  el.chatInput.focus();
+});
+el.chatInput.addEventListener('keydown', (event) => {
+  // Escape lets go of a reply, the way it does in Discord -- but only when
+  // nothing else (the mention list) wanted it first.
+  if (event.key === 'Escape' && state.chat.replyTo && !event.defaultPrevented) setReply(null);
+});
 el.editComposition.addEventListener('click', () => editComposition());
 
 /** "Edit layout" exists only while a composition is what is going out. */
@@ -11037,7 +11378,7 @@ el.mosaicLeave.addEventListener('click', leaveMosaic);
 el.mosaicMute.addEventListener('click', () => {
   const { master } = state.mosaic;
   master.muted = !master.muted;
-  el.mosaicMute.innerHTML = master.muted ? '&#128263;' : '&#128266;';
+  setIcon(el.mosaicMute, master.muted ? 'speaker-x' : 'speaker-high');
   el.mosaicMute.title = master.muted ? 'Unmute everything' : 'Mute everything';
   applyTileAudio();
 });
@@ -11048,7 +11389,7 @@ el.mosaicVolume.addEventListener('input', () => {
   showVolume(el.mosaicVolume, el.mosaicVolumeLabel, value);
   if (value > 0 && state.mosaic.master.muted) {
     state.mosaic.master.muted = false;
-    el.mosaicMute.innerHTML = '&#128266;';
+    setIcon(el.mosaicMute, 'speaker-high');
   }
   applyTileAudio();
 });
@@ -11072,11 +11413,11 @@ el.leaveStream.addEventListener('click', async () => {
 el.togglePlay.addEventListener('click', () => {
   if (el.remote.paused) {
     el.remote.play();
-    el.togglePlay.innerHTML = '&#10074;&#10074;';
+    setIcon(el.togglePlay, 'pause');
     el.togglePlay.title = 'Pause';
   } else {
     el.remote.pause();
-    el.togglePlay.innerHTML = '&#9654;';
+    setIcon(el.togglePlay, 'play');
     el.togglePlay.title = 'Resume';
   }
 });

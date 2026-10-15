@@ -41,6 +41,7 @@ const desktop = () => ({
     scale: true,
     updates: true,
     reveal: true,
+    tray: true,
   },
 
   settings: {
@@ -87,6 +88,11 @@ const desktop = () => ({
   hotkeys: {
     set: lift(raw.hotkeys.set),
     onFired: (handler) => raw.hotkeys.onFired(handler),
+  },
+  voiceTray: {
+    setPictures: lift(raw.voiceTray.setPictures),
+    setState: lift(raw.voiceTray.setState),
+    onCommand: (handler) => raw.voiceTray.onCommand(handler),
   },
   onWindowVisibility: (handler) => raw.onWindowVisibility(handler),
 

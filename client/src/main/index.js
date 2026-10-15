@@ -13,10 +13,22 @@ const clips = require('./clips');
 const gpu = require('./gpu');
 const hotkeys = require('./hotkeys');
 const updater = require('./updater');
+const voiceTray = require('./voice-tray');
 const { RealtimeClient } = require('./realtime');
 const { MediaCache, HASH_RE } = require('./media-cache');
 
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
+
+/*
+ * One Harmony at a time. Closing the window only hides it now (voice-tray.js),
+ * so launching it again from the Start menu would otherwise open a second
+ * copy, signed in twice, beside the one in the tray. The second launch shows
+ * the first instead -- also the only way back in on a Linux desktop with no
+ * tray to click. Per profile: --user-data-dir runs, as the tests use, are
+ * separate.
+ */
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', () => voiceTray.showWindow());
 
 /** Set once the renderer tells us which server it is talking to. */
 let mediaServer = '';
@@ -300,6 +312,9 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // Closing hides it to the tray; Quit there, or the app menu, really quits.
+  voiceTray.attach(win);
+
   win.on('closed', () => {
     appAudio.stop();
     win = null;
@@ -344,6 +359,13 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  voiceTray.start({
+    window: () => win,
+    onCommand: (command) => {
+      if (win && !win.isDestroyed()) win.webContents.send('voice-tray:command', command);
+    },
+  });
+
   // Checks GitHub Releases a little after launch, then every few hours. Only
   // ever announces: downloading is the person's call (see updater.js).
   updater.start((status) => {
@@ -351,7 +373,9 @@ app.whenReady().then(() => {
   });
 
   app.on('activate', () => {
+    // The Dock icon: a window closed to the tray is hidden, not gone.
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else voiceTray.showWindow();
   });
 });
 
@@ -534,6 +558,9 @@ function applyScale(percent) {
 handle('app:scale', (_e, percent) => applyScale(percent));
 
 handle('hotkeys:set', (_e, bindings) => hotkeys.set(bindings));
+
+handle('voice-tray:pictures', (_e, pictures) => voiceTray.setPictures(pictures));
+handle('voice-tray:state', (_e, voice) => voiceTray.setState(voice));
 
 /*
  * A remembered account password, sealed by the operating system.
