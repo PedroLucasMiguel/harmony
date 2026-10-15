@@ -522,6 +522,14 @@
           -->
           <div class="channel-video" id="channel-video" hidden></div>
           <div id="chat-active" hidden>
+            <!-- Over the chat while a file is dragged onto the window. See the drop handlers. -->
+            <div class="chat-drop" id="chat-drop" hidden aria-hidden="true">
+              <div class="chat-drop-box">
+                <span class="chat-drop-icon" data-icon="plus-circle"></span>
+                <strong id="chat-drop-title"></strong>
+                <small>One file per message. It is attached, ready to send.</small>
+              </div>
+            </div>
             <header class="voice-head">
               <h2 id="chat-name"></h2>
               <input

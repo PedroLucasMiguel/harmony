@@ -2766,10 +2766,51 @@ button.danger {
   overflow-wrap: anywhere;
 }
 #chat-active {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
+}
+
+/* A file dragged over the window: where it will go. */
+.chat-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+.chat-drop-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 1.6rem 2.2rem;
+  border: 2px dashed var(--accent);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+}
+.chat-drop-box strong {
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+.chat-drop-box small {
+  color: var(--muted);
+}
+.chat-drop-icon {
+  color: var(--accent);
+  font-size: 2.2rem;
+  line-height: 1;
 }
 /*
  * The two search boxes, which are the same control in two places and used

@@ -216,6 +216,8 @@ const el = {
   voiceCount: $('voice-count'),
   voiceRoster: $('voice-roster'),
   chatActive: $('chat-active'),
+  chatDrop: $('chat-drop'),
+  chatDropTitle: $('chat-drop-title'),
   chatName: $('chat-name'),
   chatSearch: $('chat-search'),
   chatSearchClear: $('chat-search-clear'),
@@ -11116,6 +11118,75 @@ el.lightboxSave.addEventListener('click', async (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !el.lightbox.hidden) closeLightbox();
+});
+
+/*
+ * Drag a file onto the window to attach it, as Discord does.
+ *
+ * Anywhere in the window while a text channel is open, not only on the box:
+ * a file is dropped roughly, wherever the pointer happens to be. Only drags
+ * that carry files count -- reordering channels in the sidebar is a drag
+ * too, and must go on working underneath this.
+ *
+ * Every file drag is cancelled when there is nowhere for it to go, not just
+ * ignored: Electron's default for a file dropped on a page is to NAVIGATE
+ * the window to it, replacing the whole app with the file.
+ */
+const draggingFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes('Files');
+
+function chatAcceptsDrop() {
+  return Boolean(state.chat.channelId)
+    && !el.chatActive.hidden
+    && document.getElementById('view-channels')?.hasAttribute('data-active');
+}
+
+function hideChatDrop() {
+  el.chatDrop.hidden = true;
+}
+
+for (const type of ['dragenter', 'dragover']) {
+  document.addEventListener(type, (event) => {
+    if (!draggingFiles(event)) return;
+    event.preventDefault();
+    const accepts = chatAcceptsDrop();
+    event.dataTransfer.dropEffect = accepts ? 'copy' : 'none';
+    if (!accepts) return;
+    if (el.chatDrop.hidden) {
+      const channel = state.channels.list.find((c) => c.id === state.chat.channelId);
+      el.chatDropTitle.textContent = `Drop to send in #${channel?.name ?? 'this channel'}`;
+      el.chatDrop.hidden = false;
+    }
+  });
+}
+
+// Out of the window altogether: dragleave with nowhere it went to.
+document.addEventListener('dragleave', (event) => {
+  if (!event.relatedTarget) hideChatDrop();
+});
+document.addEventListener('dragend', hideChatDrop);
+
+document.addEventListener('drop', (event) => {
+  if (!draggingFiles(event)) return;
+  event.preventDefault();
+  hideChatDrop();
+  if (!chatAcceptsDrop()) return;
+
+  // A folder arrives as a "file" with no type and no readable bytes; the
+  // entry is the only thing that can tell them apart, and only now.
+  const items = [...(event.dataTransfer.items ?? [])].filter((item) => item.kind === 'file');
+  if (items.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) {
+    showChannelsError('Folders cannot be sent. Zip it first, or drop the files inside it.');
+    return;
+  }
+  const files = [...event.dataTransfer.files];
+  if (!files.length) return;
+  const [file] = files;
+  if (!fitsUploadLimit(file)) return;
+  setPendingFile(file);
+  el.chatNote.textContent = files.length > 1
+    ? `One file per message: ${file.name} is attached. Send it, then drop the next.`
+    : '';
+  el.chatInput.focus();
 });
 
 el.chatPendingClear.addEventListener('click', () => {
