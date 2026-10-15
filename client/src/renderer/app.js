@@ -2188,6 +2188,9 @@ async function enterChannels() {
   // to be told separately where to download from.
   await harmony.media.setServer(state.server);
   showChannelsError('');
+  // A new session starts with no text channel open, whatever the last one
+  // on this or another server had open. See resetChat.
+  resetChat();
   // A phone opens on the channel list: nothing is selected yet, and the
   // empty stage behind it has nothing to say.
   if (narrowScreen.matches) openDrawer('channels');
@@ -5460,8 +5463,12 @@ async function openTextChannel(channel) {
   applyStage();
   renderChannels();
 
+  const server = state.server;
   try {
-    const { messages, pinned } = await harmony.api.messages(state.server, channel.id);
+    const { messages, pinned } = await harmony.api.messages(server, channel.id);
+    // Answered after somebody moved on -- to another channel, or signed out
+    // and into another server -- it belongs to nothing on screen any more.
+    if (state.server !== server || state.chat.channelId !== channel.id) return;
     state.chat.messages = messages;
     state.chat.pinned = pinned;
     renderChat({ scrollToBottom: true });
@@ -5471,6 +5478,27 @@ async function openTextChannel(channel) {
   } catch (err) {
     showChannelsError(err.message);
   }
+}
+
+/**
+ * Forget the open text channel entirely: which one, its messages, its pins,
+ * a reply or file waiting to be sent, and the mention counts.
+ *
+ * For a new server session. Channel ids are per server -- "general" is id 1
+ * on most of them -- so an open channel carried across a sign-out matched a
+ * channel on the next server, and that server's lobby opened on the last
+ * one's conversation.
+ */
+function resetChat() {
+  state.chat.channelId = null;
+  state.chat.messages = [];
+  state.chat.pinned = [];
+  state.chat.searching = false;
+  setReply(null);
+  setPendingFile(null);
+  state.mentioned.clear();
+  renderChat();
+  if (el.voiceActive.hidden) el.voiceIdle.hidden = false;
 }
 
 function closeChat() {
