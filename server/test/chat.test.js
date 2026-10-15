@@ -245,14 +245,20 @@ describe('uploads', () => {
     assert.equal(res.body.deduplicated, true);
   });
 
-  it('refuses a type that is not on the allowlist', async () => {
+  it('keeps a type that is not on the list as a plain download', async () => {
     const res = await api('/api/uploads', {
       method: 'POST', raw: Buffer.from('<script>alert(1)</script>'),
       contentType: 'text/html', token: memberToken,
     });
-    assert.equal(res.status, 400);
-    assert.equal(res.body.error, 'empty_file',
-      'express.raw does not even parse a type outside the allowlist');
+    assert.equal(res.status, 201);
+    assert.equal(res.body.contentType, 'application/octet-stream',
+      'an .html must never be served back as a page');
+
+    const back = await fetch(`${BASE}/api/uploads/${res.body.hash}`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    assert.equal(back.headers.get('content-type'), 'application/octet-stream');
+    assert.equal(back.headers.get('x-content-type-options'), 'nosniff');
   });
 
   it('serves the file back with its stored type and nosniff', async () => {
@@ -324,6 +330,136 @@ describe('uploads', () => {
 
   it('has a per-file cap well under the disk quota', () => {
     assert.ok(MAX_UPLOAD_BYTES <= 25 * 1024 * 1024);
+  });
+});
+
+describe('big uploads, in chunks', () => {
+  const open = (size, contentType = 'application/zip', token = memberToken) => api('/api/uploads/sessions', {
+    method: 'POST', body: { size, contentType }, token,
+  });
+  const chunk = (id, offset, bytes, token = memberToken) => api(
+    `/api/uploads/sessions/${id}/chunk?offset=${offset}`,
+    { method: 'POST', raw: bytes, contentType: 'application/octet-stream', token },
+  );
+  const finish = (id, token = memberToken) => api(`/api/uploads/sessions/${id}/finish`, {
+    method: 'POST', token,
+  });
+
+  it('puts a file together from pieces and stores it by its hash', async () => {
+    const file = Buffer.alloc(3 * 1024 * 1024 + 17, 7);
+    file.write('harmony', 0);
+    const opened = await open(file.length);
+    assert.equal(opened.status, 201);
+    const { id, chunkBytes } = opened.body;
+    assert.ok(chunkBytes >= 1024 * 1024);
+
+    // Smaller pieces than the server allows: the client chooses, up to the cap.
+    const piece = 1024 * 1024;
+    for (let offset = 0; offset < file.length; offset += piece) {
+      const res = await chunk(id, offset, file.subarray(offset, offset + piece));
+      assert.equal(res.status, 200);
+      assert.equal(res.body.received, Math.min(offset + piece, file.length));
+    }
+    const done = await finish(id);
+    assert.equal(done.status, 201);
+    assert.equal(done.body.bytes, file.length);
+    assert.equal(done.body.contentType, 'application/octet-stream');
+    const { createHash } = await import('node:crypto');
+    assert.equal(done.body.hash, createHash('sha256').update(file).digest('hex'));
+
+    const back = await fetch(`${BASE}/api/uploads/${done.body.hash}?download=archive.zip`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    assert.equal(back.status, 200);
+    assert.match(back.headers.get('content-disposition') ?? '', /attachment; filename="archive.zip"/);
+    assert.deepEqual(Buffer.from(await back.arrayBuffer()), file);
+
+    // And a message carrying it says how big it is.
+    const posted = await api(`/api/channels/${textChannelId}/messages`, {
+      method: 'POST',
+      body: { body: '', attachmentHash: done.body.hash, attachmentName: 'archive.zip' },
+      token: memberToken,
+    });
+    assert.equal(posted.status, 201);
+    assert.equal(posted.body.message.attachmentBytes, file.length);
+    assert.equal(posted.body.message.mediaType, 'file');
+  });
+
+  it('says where it is when a piece arrives at the wrong place', async () => {
+    const { id } = (await open(10)).body;
+    assert.equal((await chunk(id, 0, Buffer.alloc(4, 1))).status, 200);
+    // A retry of the piece that already arrived.
+    const again = await chunk(id, 0, Buffer.alloc(4, 1));
+    assert.equal(again.status, 409);
+    assert.equal(again.body.received, 4);
+    // Finishing early is refused; finishing properly works.
+    assert.equal((await finish(id)).status, 409);
+    assert.equal((await chunk(id, 4, Buffer.alloc(6, 2))).status, 200);
+    assert.equal((await finish(id)).status, 201);
+  });
+
+  it('refuses a piece that runs past the end of the file', async () => {
+    const { id } = (await open(8)).body;
+    const res = await chunk(id, 0, Buffer.alloc(9, 1));
+    assert.equal(res.status, 413);
+  });
+
+  it("keeps one account out of another account's upload", async () => {
+    const { id } = (await open(4)).body;
+    assert.equal((await chunk(id, 0, Buffer.alloc(4, 1), ownerToken)).status, 404);
+    assert.equal((await finish(id, ownerToken)).status, 404);
+  });
+
+  it("refuses a file over the server's limit before any of it is sent", async () => {
+    const res = await open(30 * 1024 * 1024);
+    assert.equal(res.status, 413, 'the default limit is 25 MB');
+    assert.equal(res.body.error, 'file_too_large');
+  });
+
+  it('lets the owner raise the limit, and only the owner', async () => {
+    const denied = await api('/api/server', {
+      method: 'POST', body: { maxFileBytes: 2 * 1024 ** 3 }, token: memberToken,
+    });
+    assert.equal(denied.status, 403);
+
+    const tooBig = await api('/api/server', {
+      method: 'POST', body: { maxFileBytes: 3 * 1024 ** 3 }, token: ownerToken,
+    });
+    assert.equal(tooBig.status, 400);
+
+    const raised = await api('/api/server', {
+      method: 'POST', body: { maxFileBytes: 100 * 1024 * 1024 }, token: ownerToken,
+    });
+    assert.equal(raised.status, 200);
+    assert.equal(raised.body.server.maxFileBytes, 100 * 1024 * 1024);
+
+    const seen = await api('/api/server', { token: memberToken });
+    assert.equal(seen.body.server.maxFileBytes, 100 * 1024 * 1024);
+    assert.equal(typeof seen.body.server.usedBytes, 'number');
+
+    const opened = await open(30 * 1024 * 1024);
+    assert.equal(opened.status, 201);
+    await api(`/api/uploads/sessions/${opened.body.id}/cancel`, { method: 'POST', token: memberToken });
+
+    // Back to the default.
+    const reset = await api('/api/server', {
+      method: 'POST', body: { maxFileBytes: null }, token: ownerToken,
+    });
+    assert.equal(reset.body.server.maxFileBytes, 25 * 1024 * 1024);
+  });
+
+  it('refuses a file bigger than the storage the owner allows', async () => {
+    await api('/api/server', {
+      method: 'POST',
+      body: { maxFileBytes: 2 * 1024 ** 3, storageBytes: 64 * 1024 * 1024 },
+      token: ownerToken,
+    });
+    const res = await open(100 * 1024 * 1024);
+    assert.equal(res.status, 507);
+    assert.equal(res.body.error, 'server_full');
+    await api('/api/server', {
+      method: 'POST', body: { maxFileBytes: null, storageBytes: null }, token: ownerToken,
+    });
   });
 });
 

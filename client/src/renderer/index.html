@@ -570,6 +570,20 @@
                   >Remove</button>
                 </div>
 
+                <!-- A file on its way up, with how far it has got. See uploadAttachment. -->
+                <div class="composer-upload" id="chat-upload" hidden>
+                  <div class="composer-upload-head">
+                    <span class="composer-upload-name" id="chat-upload-name"></span>
+                    <span class="composer-upload-amount" id="chat-upload-amount"></span>
+                    <button type="button" class="composer-btn" id="chat-upload-cancel"
+                            data-icon="x" title="Cancel the upload">Cancel upload</button>
+                  </div>
+                  <div class="upload-progress" role="progressbar" aria-label="Upload progress"
+                       aria-valuemin="0" aria-valuemax="100" id="chat-upload-bar">
+                    <div class="upload-progress-fill" id="chat-upload-fill"></div>
+                  </div>
+                </div>
+
                 <div class="composer-row">
                   <button
                     type="button"
@@ -933,6 +947,28 @@
             <small>Anybody who can reach this server can use it.</small>
           </span>
         </label>
+        <!-- Files in chat. Hidden for a server too old to say its limits. -->
+        <div id="server-uploads">
+          <label class="field">
+            <span>Largest file</span>
+            <select id="server-max-file">
+              <option value="8388608">8 MB</option>
+              <option value="26214400">25 MB</option>
+              <option value="52428800">50 MB</option>
+              <option value="104857600">100 MB</option>
+              <option value="262144000">250 MB</option>
+              <option value="524288000">500 MB</option>
+              <option value="1073741824">1 GB</option>
+              <option value="2147483648">2 GB</option>
+            </select>
+            <small>The biggest file anybody can send in a chat.</small>
+          </label>
+          <label class="field">
+            <span>Space for files (GB)</span>
+            <input id="server-storage" type="number" min="0.1" step="0.5" />
+            <small id="server-storage-note"></small>
+          </label>
+        </div>
         <p class="error" id="server-error" hidden></p>
         <p class="muted" id="server-note" hidden></p>
         <div class="ask-buttons">

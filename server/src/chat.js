@@ -8,7 +8,9 @@
 // SD card.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync, renameSync, unlinkSync, statSync } from 'node:fs';
+import {
+  mkdirSync, writeFileSync, renameSync, unlinkSync, statSync, statfsSync, rmSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -32,13 +34,47 @@ const ALLOWED_TYPES = new Map([
   ['audio/webm', 'audio'],
   ['application/pdf', 'file'],
   ['text/plain', 'file'],
+  // Anything else at all: stored and served as a download, never as
+  // something a browser would render. See storedType.
+  ['application/octet-stream', 'file'],
 ]);
 
 export const mediaTypeOf = (contentType) => ALLOWED_TYPES.get(String(contentType).toLowerCase()) ?? null;
 export const allowedTypes = () => [...ALLOWED_TYPES.keys()];
 
-/** Hard ceiling per file, regardless of the total quota. */
+/**
+ * The type a file is kept and served as.
+ *
+ * Any file may be uploaded, but only the types above are served as what
+ * they say they are. Everything else becomes application/octet-stream --
+ * served with nosniff and a sandbox, so an .html or an .svg is a file to
+ * download and never a page that runs.
+ */
+export const storedType = (claimed) => {
+  const type = String(claimed ?? '').split(';')[0].trim().toLowerCase();
+  return ALLOWED_TYPES.has(type) ? type : 'application/octet-stream';
+};
+
+/**
+ * The most one request may carry: POST /api/uploads buffers the whole body
+ * in memory, so this stays small whatever the server allows per file.
+ * Anything bigger goes through an upload session (upload-sessions.js), in
+ * chunks, straight to disk.
+ */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+/** The largest file the owner may allow, and what a server allows until they do. */
+export const MAX_FILE_LIMIT = 2 * 1024 * 1024 * 1024;
+export const DEFAULT_FILE_BYTES = MAX_UPLOAD_BYTES;
+
+/**
+ * Free disk space never given to uploads, whatever the quota says.
+ *
+ * The quota is a number the owner typed; this is the floor under it. Once
+ * the filesystem is full every SQLite write throws, so the server has to
+ * stop accepting files while there is still room to run.
+ */
+export const DISK_RESERVE_BYTES = 512 * 1024 * 1024;
 
 /**
  * Per-clip ceiling for the soundpad, far below the generic upload cap.
@@ -86,8 +122,13 @@ const PAGE_SIZE = 50;
  * original simply comes back as nulls.
  */
 const REPLY_COLUMNS = ', r.id AS r_id, r.user_id AS r_user_id, ru.nickname AS r_nickname, '
-  + 'r.body AS r_body, r.media_type AS r_media_type, r.attachment_name AS r_attachment_name';
-const REPLY_JOIN = 'LEFT JOIN messages r ON r.id = m.reply_to LEFT JOIN users ru ON ru.id = r.user_id';
+  + 'r.body AS r_body, r.media_type AS r_media_type, r.attachment_name AS r_attachment_name, '
+  // And the attachment's size, which is how a client decides between showing
+  // a file and offering it: nobody wants a 2 GB video to start downloading
+  // because it scrolled into view.
+  + 'up.bytes AS attachment_bytes';
+const REPLY_JOIN = 'LEFT JOIN messages r ON r.id = m.reply_to LEFT JOIN users ru ON ru.id = r.user_id '
+  + 'LEFT JOIN uploads up ON up.hash = m.attachment_hash';
 /** How much of the original a reply carries: one line's worth. */
 const REPLY_SNIPPET = 200;
 
@@ -156,6 +197,7 @@ export class Chat {
   #db;
   #dir;
   #maxBytes;
+  #maxFileBytes = DEFAULT_FILE_BYTES;
   #q;
 
   constructor(db, { dataDir, maxDiskBytes }) {
@@ -163,6 +205,10 @@ export class Chat {
     this.#dir = join(dataDir, 'uploads');
     this.#maxBytes = maxDiskBytes;
     mkdirSync(this.#dir, { recursive: true });
+    // Half-finished uploads from before a restart: their sessions died with
+    // the process, so nothing will ever finish them.
+    rmSync(this.incomingDir, { recursive: true, force: true });
+    mkdirSync(this.incomingDir, { recursive: true });
 
     this.#q = {
       insertMessage: db.prepare(
@@ -246,6 +292,53 @@ export class Chat {
     return this.#maxBytes;
   }
 
+  /** The owner's choice of total, from server settings. */
+  set quotaBytes(bytes) {
+    this.#maxBytes = Math.max(0, Number(bytes) || 0);
+  }
+
+  /** The largest file one upload may be. */
+  get maxFileBytes() {
+    return this.#maxFileBytes;
+  }
+
+  set maxFileBytes(bytes) {
+    this.#maxFileBytes = Math.min(MAX_FILE_LIMIT, Math.max(1, Number(bytes) || DEFAULT_FILE_BYTES));
+  }
+
+  /** Where upload sessions write until a file is complete. Same filesystem, so the move is a rename. */
+  get incomingDir() {
+    return join(this.#dir, 'incoming');
+  }
+
+  /** Free space on the disk the uploads are on, or null where it cannot be asked. */
+  diskFreeBytes() {
+    try {
+      const { bavail, bsize } = statfsSync(this.#dir);
+      return Number(bavail) * Number(bsize);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Is there room for this many more bytes? Evicts unreferenced files to
+   * make it, oldest first, if the quota is what is short.
+   *
+   * `reserved` is what open upload sessions have already been promised, so
+   * three people starting a big file at once cannot each be told there is
+   * room for theirs alone.
+   */
+  makeRoom(bytes, reserved = 0) {
+    const needed = bytes + reserved;
+    if (this.usedBytes + needed > this.#maxBytes) {
+      this.#evictOrphans(needed);
+      if (this.usedBytes + needed > this.#maxBytes) return false;
+    }
+    const free = this.diskFreeBytes();
+    return free === null || free - needed >= DISK_RESERVE_BYTES;
+  }
+
   /** Sharded, so one directory never holds tens of thousands of entries. */
   pathFor(hash) {
     return join(this.#dir, hash.slice(0, 2), hash.slice(2, 4), hash);
@@ -260,11 +353,12 @@ export class Chat {
    *
    * @returns {{ok: true, upload: object} | {ok: false, error: string}}
    */
-  store(buffer, contentType) {
-    const mediaType = mediaTypeOf(contentType);
-    if (!mediaType) return { ok: false, error: 'type_not_allowed' };
+  store(buffer, claimedType) {
+    const contentType = storedType(claimedType);
     if (!buffer?.length) return { ok: false, error: 'empty_file' };
-    if (buffer.length > MAX_UPLOAD_BYTES) return { ok: false, error: 'file_too_large' };
+    if (buffer.length > Math.min(MAX_UPLOAD_BYTES, this.#maxFileBytes)) {
+      return { ok: false, error: 'file_too_large' };
+    }
 
     const hash = createHash('sha256').update(buffer).digest('hex');
     const existing = this.#q.upload.get(hash);
@@ -273,12 +367,7 @@ export class Chat {
     // Checked BEFORE writing, and it is not only about uploads: once the
     // filesystem is full every SQLite write throws too, so an unbounded
     // uploads directory does not degrade the server, it stops it.
-    if (this.usedBytes + buffer.length > this.#maxBytes) {
-      this.#evictOrphans(buffer.length);
-      if (this.usedBytes + buffer.length > this.#maxBytes) {
-        return { ok: false, error: 'server_full' };
-      }
-    }
+    if (!this.makeRoom(buffer.length)) return { ok: false, error: 'server_full' };
 
     const target = this.pathFor(hash);
     mkdirSync(join(target, '..'), { recursive: true });
@@ -288,7 +377,26 @@ export class Chat {
     writeFileSync(temp, buffer);
     renameSync(temp, target);
 
-    this.#q.insertUpload.run(hash, String(contentType).toLowerCase(), buffer.length, Date.now());
+    this.#q.insertUpload.run(hash, contentType, buffer.length, Date.now());
+    return { ok: true, upload: this.#q.upload.get(hash), deduplicated: false };
+  }
+
+  /**
+   * Take a file an upload session has finished writing (upload-sessions.js).
+   *
+   * The session hashed it as it arrived, so this is a rename into place --
+   * or, when the same file is already here, deleting the copy.
+   */
+  adopt(tempPath, { hash, bytes, claimedType }) {
+    const existing = this.#q.upload.get(hash);
+    if (existing) {
+      try { unlinkSync(tempPath); } catch { /* already gone */ }
+      return { ok: true, upload: existing, deduplicated: true };
+    }
+    const target = this.pathFor(hash);
+    mkdirSync(join(target, '..'), { recursive: true });
+    renameSync(tempPath, target);
+    this.#q.insertUpload.run(hash, storedType(claimedType), bytes, Date.now());
     return { ok: true, upload: this.#q.upload.get(hash), deduplicated: false };
   }
 
@@ -948,6 +1056,7 @@ export const publicMessage = (m, reactions = [], mentions = null) => (m ? {
   body: m.body,
   attachmentHash: m.attachment_hash ?? null,
   attachmentName: m.attachment_name ?? null,
+  attachmentBytes: m.attachment_bytes ?? null,
   mediaType: m.media_type ?? null,
   pinned: Boolean(m.pinned),
   editedAt: m.edited_at ?? null,

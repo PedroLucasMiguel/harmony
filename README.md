@@ -36,6 +36,8 @@ never re-encodes it.
 sudo server/install.sh
 ```
 
+To update it later: `sudo server/install.sh --update`.
+
 or with Docker. See [docker/](docker/).
 
 **Client:** download it from

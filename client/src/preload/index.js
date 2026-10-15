@@ -130,7 +130,20 @@ contextBridge.exposeInMainWorld('harmony', {
     keep: invoke('media:keep'),
     stats: invoke('media:stats'),
     upload: invoke('media:upload'),
+    uploadOpen: invoke('media:upload-open'),
+    uploadChunk: invoke('media:upload-chunk'),
+    uploadFinish: invoke('media:upload-finish'),
+    uploadCancel: invoke('media:upload-cancel'),
     save: invoke('media:save'),
+    /**
+     * How far a save has got: { hash, received, total }.
+     * @returns {() => void} unsubscribe
+     */
+    onProgress(handler) {
+      const listener = (_event, progress) => handler(progress);
+      ipcRenderer.on('media:progress', listener);
+      return () => ipcRenderer.removeListener('media:progress', listener);
+    },
     reveal: invoke('media:reveal'),
   },
 

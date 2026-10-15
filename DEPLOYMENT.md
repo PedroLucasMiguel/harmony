@@ -140,8 +140,24 @@ The installer is safe to re-run. It:
   `./install.sh --help`.
 
 An existing `harmony.env` is only changed by the setup, and only when you run
-it, so upgrading is just `git pull && sudo ./install.sh` -- which restarts the
-services onto the new code and leaves the configuration alone.
+it. To update an installed server:
+
+```bash
+sudo ./install.sh --update
+```
+
+In a git checkout this pulls the latest code first (as the checkout's owner)
+and runs the new installer. It then:
+
+- backs up the database to `/var/lib/harmony-server/backups/`, keeping the
+  last five, because the new version may migrate the schema when it starts;
+- reinstalls the server, skipping MediaMTX if it is already the pinned version;
+- restarts both services and checks the server answers, printing the version
+  it went from and to -- or, if it does not come back, its log and the backup.
+
+It asks nothing, and `harmony.env`, the Caddyfile and the certificates are
+left alone. `--update --no-pull` updates from the files as they are, for a
+copy that is not a git checkout.
 
 ## 2. Configure
 

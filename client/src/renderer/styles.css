@@ -2210,6 +2210,60 @@ button.danger {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.attachment-size {
+  flex: none;
+  opacity: 0.8;
+}
+
+/* A file on its way up: its name, how much has gone, and a bar. */
+.composer-upload {
+  margin: 0.15rem 0.1rem 0.3rem;
+  padding: 0.3rem 0.4rem 0.45rem;
+  border-radius: 8px;
+  background: rgb(var(--tint-rgb) / 0.07);
+  font-size: 0.82rem;
+}
+.composer-upload-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.composer-upload-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-upload-amount {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.composer-upload .composer-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+  align-self: center;
+}
+.composer-upload .composer-btn[data-icon]::before {
+  width: 1rem;
+  height: 1rem;
+}
+.upload-progress {
+  height: 6px;
+  margin-top: 0.3rem;
+  border-radius: 999px;
+  background: rgb(var(--tint-rgb) / 0.12);
+  overflow: hidden;
+}
+.upload-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
 /*
  * Save and replace, floating over the file's top-right corner.
  *

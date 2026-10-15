@@ -128,29 +128,42 @@ function blobToBase64(blob) {
   });
 }
 
-async function saveMedia(hash, suggestedName) {
+/*
+ * Above this, Android hands a file to the system's downloader rather than
+ * reading it into the page: the page would hold all of it, then base64 it
+ * across to Java -- a few times the file's size in memory.
+ */
+const NATIVE_SAVE_LIMIT = 32 * 1024 * 1024;
+
+async function saveMedia(hash, suggestedName, size = 0) {
   if (!mediaBase) throw new Error('not connected to a server');
+  const name = String(suggestedName ?? '').trim().replace(/[\\/]/g, '_')
+    || `${hash.slice(0, 12)}`;
+  const download = `${mediaUrl(hash)}${mediaKey ? '&' : '?'}download=${encodeURIComponent(name)}`;
+
+  if (!NATIVE) {
+    // A browser downloads it itself, straight from the server -- the server
+    // marks it as an attachment -- with its own progress and no copy of it
+    // in this page at all.
+    const a = document.createElement('a');
+    a.href = download;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.append(a);
+    a.click();
+    a.remove();
+    return { saved: true, name };
+  }
+  if (size > NATIVE_SAVE_LIMIT) {
+    await openExternal(download);
+    return { saved: true, name, handedOff: true };
+  }
+
   const res = await fetch(mediaUrl(hash));
   if (!res.ok) throw new Error(`The server returned ${res.status} for that file.`);
   const blob = await res.blob();
-  const name = String(suggestedName ?? '').trim().replace(/[\\/]/g, '_')
-    || `${hash.slice(0, 12)}`;
-
-  if (NATIVE) {
-    const saved = await native.saveFile(name, blob.type || 'application/octet-stream', await blobToBase64(blob));
-    return saved ? { saved: true, name: saved.name } : { saved: false };
-  }
-  // A browser: hand it over as a download, which is the browser's own
-  // "save as". There is no path to show afterwards.
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  return { saved: true, name };
+  const saved = await native.saveFile(name, blob.type || 'application/octet-stream', await blobToBase64(blob));
+  return saved ? { saved: true, name: saved.name } : { saved: false };
 }
 
 // --- server logos ------------------------------------------------------------
@@ -417,7 +430,13 @@ export const harmony = {
     keep: async () => true,
     stats: async () => null,
     upload: (server, bytes, contentType) => api.uploadFile(server, bytes, contentType),
-    save: (hash, suggestedName) => saveMedia(hash, suggestedName),
+    uploadOpen: (server, size, contentType) => api.uploadOpen(server, size, contentType),
+    uploadChunk: (server, id, offset, blob) => api.uploadChunk(server, id, offset, blob),
+    uploadFinish: (server, id) => api.uploadFinish(server, id),
+    uploadCancel: (server, id) => api.uploadCancel(server, id),
+    save: (hash, suggestedName, size) => saveMedia(hash, suggestedName, size),
+    // The browser and Android show their own download progress.
+    onProgress: () => () => {},
     reveal: async () => true,
   },
 

@@ -31,9 +31,11 @@ import { Realtime } from './realtime.js';
 import { mintMediaKey, verifyMediaKey } from './media-keys.js';
 import {
   Chat, Soundpad, Emojis,
-  publicMessage, publicClip, publicEmoji, allowedTypes, mediaTypeOf, mentionsIn,
+  publicMessage, publicClip, publicEmoji, mediaTypeOf, mentionsIn,
   MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_CLIP_BYTES, MAX_EMOJI_BYTES, MAX_EMOJIS,
+  MAX_FILE_LIMIT, DEFAULT_FILE_BYTES,
 } from './chat.js';
+import { UploadSessions } from './upload-sessions.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -60,6 +62,7 @@ const channels = new Channels(db);
 const voice = new VoiceRooms();
 const mediaSecret = channelSecret(metaStore);
 const chat = new Chat(db, { dataDir: config.dataDir, maxDiskBytes: config.maxDiskBytes });
+const uploads = new UploadSessions(chat);
 const soundpad = new Soundpad(db);
 const emojis = new Emojis(db);
 /*
@@ -105,6 +108,8 @@ app.use((req, res, next) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Headers', 'Content-Type, X-Harmony-Password, Authorization');
   res.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  // Read by the web build's download progress.
+  res.set('Access-Control-Expose-Headers', 'Content-Length');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -577,8 +582,22 @@ app.post('/api/accounts/:id/delete', requireRole('owner'), (req, res) => {
 // The server itself
 // ---------------------------------------------------------------------------
 
+/*
+ * What the server says about itself, with the upload limits beside the name:
+ * everybody's client checks a file against maxFileBytes before sending it,
+ * and the owner's settings show the rest.
+ */
+const serverView = () => ({
+  ...serverSettings.publicView(),
+  maxFileBytes: chat.maxFileBytes,
+  storageBytes: chat.quotaBytes,
+  usedBytes: chat.usedBytes,
+  diskFreeBytes: chat.diskFreeBytes(),
+  maxFileLimit: MAX_FILE_LIMIT,
+});
+
 app.get('/api/server', requireLogin, (_req, res) => {
-  res.json({ server: serverSettings.publicView() });
+  res.json({ server: serverView() });
 });
 
 /**
@@ -624,10 +643,120 @@ app.post('/api/server', requireRole('owner'), (req, res) => {
   if (req.body?.name !== undefined) serverSettings.setName(req.body.name);
   if (typeof req.body?.password === 'string') serverSettings.setPassword(req.body.password);
 
-  const view = serverSettings.publicView();
+  /*
+   * The upload limits. null puts one back to its default. The total is not
+   * checked against the disk: the disk changes, and the reserve in
+   * Chat.makeRoom is what actually keeps the server alive when it fills.
+   */
+  if (req.body?.maxFileBytes !== undefined) {
+    const raw = req.body.maxFileBytes;
+    const bytes = raw === null ? null : Math.round(Number(raw));
+    if (bytes !== null && !(bytes >= 1024 * 1024 && bytes <= MAX_FILE_LIMIT)) {
+      return res.status(400).json({
+        error: 'bad_limit',
+        message: `The largest file has to be between 1 MB and ${MAX_FILE_LIMIT / 1024 ** 3} GB.`,
+      });
+    }
+    serverSettings.setMaxFileBytes(bytes);
+  }
+  if (req.body?.storageBytes !== undefined) {
+    const raw = req.body.storageBytes;
+    const bytes = raw === null ? null : Math.round(Number(raw));
+    if (bytes !== null && !(bytes >= 64 * 1024 * 1024 && bytes <= 64 * 1024 ** 4)) {
+      return res.status(400).json({
+        error: 'bad_limit',
+        message: 'Upload storage has to be at least 64 MB.',
+      });
+    }
+    serverSettings.setStorageBytes(bytes);
+  }
+  applyUploadLimits();
+
+  const view = serverView();
   realtime?.broadcast({ type: 'server', server: view });
   return res.json({ server: view });
 });
+
+/** server_meta's limits, or the defaults, into the Chat that enforces them. */
+function applyUploadLimits() {
+  chat.maxFileBytes = serverSettings.maxFileBytes ?? DEFAULT_FILE_BYTES;
+  chat.quotaBytes = serverSettings.storageBytes ?? config.maxDiskBytes;
+}
+applyUploadLimits();
+
+/*
+ * Upload sessions: a big file in chunks, straight to disk. See
+ * upload-sessions.js for why, and POST /api/uploads for small ones.
+ */
+const UPLOAD_ERRORS = {
+  file_too_large: () => [413, `Files on this server are limited to ${formatBytes(chat.maxFileBytes)}.`],
+  server_full: () => [507, 'The server has run out of space for uploads.'],
+  too_many_uploads: () => [429, 'Finish or cancel your other uploads first.'],
+  no_such_upload: () => [404, 'That upload has expired. Start it again.'],
+  bad_offset: () => [409, 'The upload lost its place.'],
+  chunk_too_large: () => [413, 'That piece of the file is too big.'],
+  incomplete: () => [409, 'The file has not all arrived yet.'],
+  empty_file: () => [400, 'That file is empty.'],
+  aborted: () => [400, 'The upload was interrupted.'],
+};
+
+/*
+ * Express 4 does not catch a rejected promise: an async route that threw
+ * would be an unhandled rejection, which ends the process. These are the
+ * routes that touch the disk, so they hand errors to Express instead.
+ */
+const guarded = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+function sendUploadError(res, result) {
+  const [status, message] = (UPLOAD_ERRORS[result.error] ?? (() => [400, 'Upload refused.']))();
+  return res.status(status).json({ error: result.error, message, received: result.received });
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 ** 3) return `${+(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${Math.round(bytes / 1024 ** 2)} MB`;
+}
+
+app.post('/api/uploads/sessions', requireLogin, guarded(async (req, res) => {
+  const result = await uploads.open({
+    userId: req.user.id,
+    size: Number(req.body?.size),
+    contentType: req.body?.contentType,
+  });
+  if (!result.ok) return sendUploadError(res, result);
+  return res.status(201).json({ id: result.id, chunkBytes: result.chunkBytes });
+}));
+
+// The raw body, unparsed: express.json only reads application/json, and a
+// chunk is sent as application/octet-stream.
+app.post('/api/uploads/sessions/:id/chunk', requireLogin, guarded(async (req, res) => {
+  const result = await uploads.append({
+    id: String(req.params.id),
+    userId: req.user.id,
+    offset: Number(req.query.offset),
+    body: req,
+  });
+  if (!result.ok) return sendUploadError(res, result);
+  return res.json({ received: result.received });
+}));
+
+app.post('/api/uploads/sessions/:id/finish', requireLogin, guarded(async (req, res) => {
+  const result = await uploads.finish({ id: String(req.params.id), userId: req.user.id });
+  if (!result.ok) return sendUploadError(res, result);
+  return res.status(201).json({
+    hash: result.upload.hash,
+    contentType: result.upload.content_type,
+    bytes: result.upload.bytes,
+    deduplicated: result.deduplicated,
+    usedBytes: chat.usedBytes,
+    quotaBytes: chat.quotaBytes,
+  });
+}));
+
+app.post('/api/uploads/sessions/:id/cancel', requireLogin, guarded(async (req, res) => {
+  await uploads.cancel({ id: String(req.params.id), userId: req.user.id });
+  return res.json({ ok: true });
+}));
 
 /**
  * The server's logo, as an image.
@@ -1149,20 +1278,23 @@ app.get('/api/channels/:id/search', requireLogin, (req, res) => {
 app.post(
   '/api/uploads',
   requireLogin,
-  express.raw({ type: allowedTypes(), limit: MAX_UPLOAD_BYTES }),
+  // Any type: one that is not on the list is kept as a plain download
+  // (storedType in chat.js). express.raw only reads bodies whose type
+  // matches, so the match has to be everything.
+  express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES }),
   (req, res) => {
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
       return res.status(400).json({
         error: 'empty_file',
-        message: `Send the file as a raw body with one of: ${allowedTypes().join(', ')}`,
+        message: 'Send the file as the raw request body.',
       });
     }
 
-    const result = chat.store(req.body, req.get('content-type')?.split(';')[0]?.trim());
+    const result = chat.store(req.body, req.get('content-type'));
     if (!result.ok) {
       const messages = {
-        type_not_allowed: `Allowed types: ${allowedTypes().join(', ')}`,
-        file_too_large: `Files are limited to ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB.`,
+        file_too_large: `Files are limited to ${formatBytes(Math.min(MAX_UPLOAD_BYTES, chat.maxFileBytes))} `
+          + 'in one request. Newer versions of Harmony send bigger ones in pieces.',
         server_full: 'The server has run out of space for uploads.',
       };
       return res.status(result.error === 'server_full' ? 507 : 400).json({
@@ -1207,6 +1339,12 @@ function sendUpload(req, res) {
   res.set('Content-Type', info.content_type);
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  // ?download=<name>: save it rather than show it. For the browser and
+  // Android builds, which hand a big file to the system's own downloader
+  // instead of holding all of it in a page's memory.
+  if (typeof req.query.download === 'string') {
+    res.attachment(req.query.download.replace(/[\\/\p{Cc}]/gu, '_').slice(0, 200) || hash.slice(0, 12));
+  }
   // Content-addressed, so it can never change: cache it forever.
   res.set('Cache-Control', 'public, max-age=31536000, immutable');
   return res.sendFile(info.path);

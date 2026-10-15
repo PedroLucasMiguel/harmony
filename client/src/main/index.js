@@ -414,7 +414,13 @@ const handle = (channel, fn) => {
     } catch (err) {
       return {
         ok: false,
-        error: { message: err.message, code: err.code ?? 'error', status: err.status ?? 0 },
+        error: {
+          message: err.message,
+          code: err.code ?? 'error',
+          status: err.status ?? 0,
+          // An upload piece that arrived at the wrong place: where the server is.
+          ...(err.received !== undefined ? { received: err.received } : {}),
+        },
       };
     }
   });
@@ -638,15 +644,36 @@ handle('media:save', async (_e, hash, suggestedName) => {
   if (!HASH_RE.test(String(hash ?? ''))) throw new Error('not a content hash');
   if (!mediaCache || !mediaServer) throw new Error('not connected to a server');
 
-  const { path: file, contentType } = await mediaCache.get(
-    hash, (h) => api.fetchUpload(mediaServer, h),
-  );
-
   // path.basename as well as the server's own cleaning, because this is the
   // last point before a path is built and it is the only one that knows
   // which kind of machine it is running on.
-  const fallback = `${hash.slice(0, 12)}.${EXTENSIONS[contentType] ?? 'bin'}`;
-  const name = path.basename(String(suggestedName ?? '').trim()) || fallback;
+  const named = path.basename(String(suggestedName ?? '').trim());
+
+  /*
+   * A file that is not in the cache yet, and has a name to save it under,
+   * goes straight from the server to where it is being saved -- with
+   * progress, since it may be gigabytes. Only an old, nameless attachment
+   * still comes through the cache, which is what knows its type and so
+   * what extension to give it.
+   */
+  if (named && !mediaCache.has(hash)) {
+    const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
+      title: 'Save attachment',
+      defaultPath: path.join(app.getPath('downloads'), named),
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    });
+    if (canceled || !filePath) return { saved: false };
+    const sender = _e.sender;
+    await api.downloadTo(mediaServer, hash, filePath, (received, total) => {
+      if (!sender.isDestroyed()) sender.send('media:progress', { hash, received, total });
+    });
+    return { saved: true, path: filePath, name: path.basename(filePath) };
+  }
+
+  const { path: file, contentType } = await mediaCache.get(
+    hash, (h) => api.fetchUpload(mediaServer, h),
+  );
+  const name = named || `${hash.slice(0, 12)}.${EXTENSIONS[contentType] ?? 'bin'}`;
 
   const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
     title: 'Save attachment',
@@ -666,6 +693,10 @@ handle('media:reveal', (_e, file) => {
 });
 handle('media:upload', (_e, server, bytes, contentType) =>
   api.uploadFile(server, bytes, contentType));
+handle('media:upload-open', (_e, server, size, contentType) => api.uploadOpen(server, size, contentType));
+handle('media:upload-chunk', (_e, server, id, offset, bytes) => api.uploadChunk(server, id, offset, bytes));
+handle('media:upload-finish', (_e, server, id) => api.uploadFinish(server, id));
+handle('media:upload-cancel', (_e, server, id) => api.uploadCancel(server, id));
 
 handle('api:messages', (_e, s, id, before) => api.messages(s, id, before));
 handle('api:post-message', (_e, s, id, body) => api.postMessage(s, id, body));

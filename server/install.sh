@@ -15,6 +15,12 @@
 #   sudo ./install.sh              install, then set up if not configured yet
 #   sudo ./install.sh --setup      install, then (re)run the setup regardless
 #   sudo ./install.sh --no-setup   install only; configure by hand
+#   sudo ./install.sh --update     update an installed server: pull the latest
+#                                  code (in a git checkout), back up the
+#                                  database, reinstall, restart and check it
+#                                  answers. Asks nothing; configuration kept.
+#   sudo ./install.sh --update --no-pull
+#                                  the same, from the files as they are here
 #
 # Unattended: give the answers as environment variables and the setup asks
 # nothing it already knows.
@@ -38,11 +44,15 @@ ENV_FILE="$CONF_DIR/harmony.env"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SETUP=auto
+UPDATE=no
+PULL=yes
 for arg in "$@"; do
   case "$arg" in
     --setup) SETUP=yes ;;
     --no-setup) SETUP=no ;;
-    -h|--help) sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --update) UPDATE=yes ;;
+    --no-pull) PULL=no ;;
+    -h|--help) sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -50,6 +60,36 @@ done
 if [[ $EUID -ne 0 ]]; then
   echo "This script needs root: sudo ./install.sh" >&2
   exit 1
+fi
+
+# --- update: the latest code first --------------------------------------------
+# An update never asks anything: the setup is skipped, and harmony.env, the
+# Caddyfile and the certificates are left exactly as they are.
+if [[ $UPDATE == yes ]]; then
+  if [[ ! -f "$PREFIX/package.json" || ! -f "$ENV_FILE" ]]; then
+    echo "Harmony is not installed on this machine yet. Run sudo ./install.sh first." >&2
+    exit 1
+  fi
+  SETUP=no
+
+  # In a git checkout, fetch the latest -- as whoever owns the checkout, so
+  # root never leaves files in it that its owner cannot change -- and then
+  # run the NEW copy of this script, which may know steps this one does not.
+  REPO_DIR="$(git -C "$SRC_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ $PULL == yes && -n $REPO_DIR ]]; then
+    echo "==> Fetching the latest Harmony into $REPO_DIR"
+    owner="$(stat -c %U "$REPO_DIR")"
+    if [[ $owner == root ]]; then pull=(git -C "$REPO_DIR" pull --ff-only)
+    else pull=(sudo -u "$owner" git -C "$REPO_DIR" pull --ff-only); fi
+    if ! "${pull[@]}"; then
+      echo "Could not bring $REPO_DIR up to date (local changes, or a diverged branch)." >&2
+      echo "Sort that out, or update from the files as they are with: sudo ./install.sh --update --no-pull" >&2
+      exit 1
+    fi
+    exec bash "$SRC_DIR/install.sh" --update --no-pull
+  elif [[ $PULL == yes ]]; then
+    echo "==> Not a git checkout: updating from the files in $SRC_DIR as they are"
+  fi
 fi
 
 # --- architecture -----------------------------------------------------------
@@ -82,23 +122,59 @@ if (( NODE_MAJOR < 22 )) || { (( NODE_MAJOR == 22 )) && (( NODE_MINOR < 13 )); }
 fi
 
 # Fail now rather than at first boot if this build has no SQLite.
-if ! node -e 'import("node:sqlite").then(()=>0,()=>process.exit(1))'; then
+if ! node --no-warnings -e 'import("node:sqlite").then(()=>0,()=>process.exit(1))'; then
   echo "This Node build has no node:sqlite module. Install Node 24 from nodesource." >&2
   exit 1
 fi
 echo "==> Node $(node -v)"
 
 # --- MediaMTX ---------------------------------------------------------------
-echo "==> Installing MediaMTX ${MEDIAMTX_VERSION}"
-TARBALL="mediamtx_v${MEDIAMTX_VERSION}_${MTX_ARCH}.tar.gz"
-URL="https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/${TARBALL}"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+if /usr/local/bin/mediamtx --version 2>&1 | grep -q "v${MEDIAMTX_VERSION}\b"; then
+  echo "==> MediaMTX ${MEDIAMTX_VERSION} already installed"
+else
+  echo "==> Installing MediaMTX ${MEDIAMTX_VERSION}"
+  TARBALL="mediamtx_v${MEDIAMTX_VERSION}_${MTX_ARCH}.tar.gz"
+  URL="https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/${TARBALL}"
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
 
-curl -fsSL "$URL" -o "$TMP/$TARBALL"
-tar -xzf "$TMP/$TARBALL" -C "$TMP"
-install -m 0755 "$TMP/mediamtx" /usr/local/bin/mediamtx
-echo "    $(/usr/local/bin/mediamtx --version 2>&1 | head -n1)"
+  curl -fsSL "$URL" -o "$TMP/$TARBALL"
+  tar -xzf "$TMP/$TARBALL" -C "$TMP"
+  install -m 0755 "$TMP/mediamtx" /usr/local/bin/mediamtx
+  echo "    $(/usr/local/bin/mediamtx --version 2>&1 | head -n1)"
+fi
+
+# --- update: a copy of the database --------------------------------------------
+# The new code may migrate the schema the moment it starts, and there is no
+# migrating back. VACUUM INTO takes a consistent copy of a live database, so
+# the server keeps running until the restart at the end. The last five are
+# kept; uploads are not copied (they are content-addressed and never change).
+BACKUP=''
+if [[ $UPDATE == yes ]]; then
+  OLD_VERSION="$(node -p "require('$PREFIX/package.json').version" 2>/dev/null || echo unknown)"
+  DATA_DIR="$(sed -n 's/^HARMONY_DATA_DIR=//p' "$ENV_FILE" | tail -n1)"
+  DATA_DIR="${DATA_DIR:-/var/lib/harmony-server}"
+  if [[ -f "$DATA_DIR/harmony.db" ]]; then
+    BACKUP_DIR="$DATA_DIR/backups"
+    BACKUP="$BACKUP_DIR/harmony-${OLD_VERSION}-$(date +%Y%m%d-%H%M%S).db"
+    mkdir -p "$BACKUP_DIR"
+    chown harmony:harmony "$BACKUP_DIR"
+    chmod 0750 "$BACKUP_DIR"
+    echo "==> Backing up the database to $BACKUP"
+    # As the service's own user, so nothing beside the database (its -wal and
+    # -shm files) can end up owned by root and unwritable by the server.
+    runuser -u harmony -- node --no-warnings -e '
+      const { DatabaseSync } = require("node:sqlite");
+      const [from, to] = process.argv.slice(1);
+      const q = String.fromCharCode(39);
+      new DatabaseSync(from).exec("VACUUM INTO " + q + to.replaceAll(q, q + q) + q);
+    ' "$DATA_DIR/harmony.db" "$BACKUP"
+    chmod 0640 "$BACKUP"
+    ls -1t "$BACKUP_DIR"/harmony-*.db 2>/dev/null | tail -n +6 | xargs -r rm -f
+  else
+    echo "==> No database at $DATA_DIR yet; nothing to back up"
+  fi
+fi
 
 # --- Harmony control server -------------------------------------------------
 echo "==> Installing Harmony control server to ${PREFIX}"
@@ -536,6 +612,33 @@ Next steps:
 
 EOF
 }
+
+# --- update: restart onto the new code and check it answers --------------------
+if [[ $UPDATE == yes ]]; then
+  NEW_VERSION="$(node -p "require('$PREFIX/package.json').version" 2>/dev/null || echo unknown)"
+  systemctl restart harmony-server mediamtx
+  PORT="$(sed -n 's/^HARMONY_PORT=//p' "$ENV_FILE" | tail -n1)"
+  # Any HTTP answer will do -- a door password makes it a 401 -- as long as
+  # something is listening and the service has not fallen over.
+  if wait_for 40 curl -sS -o /dev/null "http://127.0.0.1:${PORT:-8080}/api/health" \
+    && systemctl is-active --quiet harmony-server; then
+    echo
+    if [[ $OLD_VERSION == "$NEW_VERSION" ]]; then
+      echo "==> Harmony $NEW_VERSION reinstalled and restarted. Configuration left as it was."
+    else
+      echo "==> Harmony updated from $OLD_VERSION to $NEW_VERSION. Configuration left as it was."
+    fi
+    exit 0
+  fi
+  echo >&2
+  echo "Harmony did not come back after the update. What it said:" >&2
+  journalctl -u harmony-server -n 30 --no-pager >&2 || true
+  if [[ -n $BACKUP ]]; then
+    echo >&2
+    echo "The database from before the update is $BACKUP" >&2
+  fi
+  exit 1
+fi
 
 # --- run setup, or say what is left ---------------------------------------------
 run_setup=no

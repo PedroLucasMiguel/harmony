@@ -179,6 +179,10 @@ const el = {
   serverNameInput: $('server-name-input'),
   serverPasswordInput: $('server-password-input'),
   serverPasswordOff: $('server-password-off'),
+  serverUploads: $('server-uploads'),
+  serverMaxFile: $('server-max-file'),
+  serverStorage: $('server-storage'),
+  serverStorageNote: $('server-storage-note'),
   serverPasswordNote: $('server-password-note'),
   serverErrorLine: $('server-error'),
   serverNote: $('server-note'),
@@ -239,6 +243,12 @@ const el = {
   chatReplyClear: $('chat-reply-clear'),
   chatPendingThumb: $('chat-pending-thumb'),
   chatPendingName: $('chat-pending-name'),
+  chatUpload: $('chat-upload'),
+  chatUploadName: $('chat-upload-name'),
+  chatUploadAmount: $('chat-upload-amount'),
+  chatUploadBar: $('chat-upload-bar'),
+  chatUploadFill: $('chat-upload-fill'),
+  chatUploadCancel: $('chat-upload-cancel'),
   chatPendingClear: $('chat-pending-clear'),
   soundpad: $('soundpad'),
   chatEmoji: $('chat-emoji'),
@@ -3032,7 +3042,12 @@ function paintServerIcon() {
 async function loadServerInfo() {
   try {
     const { server } = await harmony.api.serverInfo(state.server);
-    applyServerInfo(server);
+    // The upload limits are cleared first: a server too old to report them
+    // must not inherit the last server's.
+    applyServerInfo({
+      maxFileBytes: undefined, storageBytes: undefined, usedBytes: undefined, diskFreeBytes: undefined,
+      ...server,
+    });
   } catch {
     // Not fatal: the brand falls back to what the markup says.
   }
@@ -3103,6 +3118,21 @@ function openServerDialog() {
   el.serverPasswordNote.textContent = serverInfo.passwordRequired
     ? 'This server has a password. Leave this blank to keep the one it has.'
     : 'This server has no password. Type one here to start asking for it.';
+  // Files: shown only by a server that says its limits.
+  el.serverUploads.hidden = !serverInfo.maxFileBytes;
+  if (serverInfo.maxFileBytes) {
+    const current = String(serverInfo.maxFileBytes);
+    if (![...el.serverMaxFile.options].some((o) => o.value === current)) {
+      el.serverMaxFile.append(new Option(formatBytes(serverInfo.maxFileBytes), current));
+    }
+    el.serverMaxFile.value = current;
+    el.serverStorage.value = String(+(serverInfo.storageBytes / 1024 ** 3).toFixed(2));
+    el.serverStorageNote.textContent = `${formatBytes(serverInfo.usedBytes ?? 0)} used`
+      + (serverInfo.diskFreeBytes != null
+        ? ` \u00B7 ${formatBytes(serverInfo.diskFreeBytes)} free on the server's disk`
+        : '')
+      + '. Old files nobody uses any more are cleared to make room.';
+  }
   el.serverErrorLine.hidden = true;
   el.serverNote.hidden = true;
   el.serverDialog.showModal();
@@ -3121,6 +3151,16 @@ async function saveServerSettings() {
   // not be sent at all, or saving a rename would take the door off.
   if (off) body.password = '';
   else if (typed) body.password = typed;
+
+  // Only what changed: sending the default back would pin it, and a later
+  // change to the server's defaults would then pass this server by.
+  if (serverInfo.maxFileBytes) {
+    const maxFile = Number(el.serverMaxFile.value);
+    if (maxFile !== serverInfo.maxFileBytes) body.maxFileBytes = maxFile;
+    const storage = Math.round(Number(el.serverStorage.value) * 1024 ** 3);
+    if (Number.isFinite(storage) && storage > 0
+      && Math.abs(storage - serverInfo.storageBytes) > 1024 ** 2) body.storageBytes = storage;
+  }
 
   try {
     const { server } = await harmony.api.updateServer(state.server, body);
@@ -6081,6 +6121,167 @@ function renderBody(target, body) {
     && (replaced > 0 || PICTOGRAPHIC.test(text));
 }
 
+// --- big files -----------------------------------------------------------------
+
+/** 1.4 GB, 320 MB, 12 KB: one decimal where it matters, none where it does not. */
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 ** 3) return `${+(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${+(n / 1024 ** 2).toFixed(n >= 100 * 1024 ** 2 ? 0 : 1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} bytes`;
+}
+
+/*
+ * Pictures, videos and sounds bigger than this are offered as a file to
+ * download rather than drawn in the chat. Drawing one means downloading
+ * all of it, which nobody asked for by scrolling past it.
+ */
+const INLINE_MEDIA_LIMIT = 64 * 1024 * 1024;
+
+/** Tries per piece of an upload before giving up: a dropped connection mid-file is not the end of it. */
+const UPLOAD_RETRIES = 4;
+
+/** Refuse a file the server would refuse, before any of it is sent. */
+function fitsUploadLimit(file) {
+  const limit = serverInfo.maxFileBytes;
+  if (!limit || file.size <= limit) return true;
+  showChannelsError(
+    `${file.name} is ${formatBytes(file.size)}. Files on this server are limited to ${formatBytes(limit)}.`,
+  );
+  return false;
+}
+
+/** The upload in progress, if there is one: { cancelled, id }. One at a time. */
+let activeUpload = null;
+
+function showUploadProgress(sent, total) {
+  const fraction = total ? Math.min(1, sent / total) : 1;
+  el.chatUploadFill.style.width = `${(fraction * 100).toFixed(1)}%`;
+  el.chatUploadBar.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
+  el.chatUploadAmount.textContent = `${Math.floor(fraction * 100)}% \u00B7 `
+    + `${formatBytes(sent)} of ${formatBytes(total)}`;
+}
+
+/**
+ * Send a file to the server, with a progress bar in the composer.
+ *
+ * In pieces (server/src/upload-sessions.js): each is read from disk only
+ * when it is sent, so a 2 GB file never sits in memory, and a piece that
+ * fails is sent again from where the server says it is. A server from
+ * before upload sessions takes the file in one request, as it always did.
+ *
+ * @returns {Promise<{hash: string, contentType: string, bytes: number}>}
+ */
+async function uploadAttachment(file) {
+  if (activeUpload) throw new Error('Wait for the file already uploading to finish.');
+  const upload = { cancelled: false, id: null };
+  activeUpload = upload;
+  const type = file.type || 'application/octet-stream';
+  const cancelled = () => Object.assign(new Error('Upload cancelled.'), { code: 'cancelled' });
+
+  el.chatUploadName.textContent = file.name;
+  showUploadProgress(0, file.size);
+  el.chatUpload.hidden = false;
+  try {
+    let session;
+    try {
+      session = await harmony.media.uploadOpen(state.server, file.size, type);
+    } catch (err) {
+      if (err.status !== 404) throw err;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const result = await harmony.media.upload(state.server, bytes, type);
+      showUploadProgress(file.size, file.size);
+      return result;
+    }
+    upload.id = session.id;
+
+    let offset = 0;
+    let failures = 0;
+    while (offset < file.size) {
+      if (upload.cancelled) throw cancelled();
+      const piece = file.slice(offset, Math.min(file.size, offset + session.chunkBytes));
+      try {
+        ({ received: offset } = await harmony.media.uploadChunk(state.server, session.id, offset, piece));
+        failures = 0;
+      } catch (err) {
+        if (upload.cancelled) throw cancelled();
+        // The piece did arrive, or arrived twice: carry on from where the
+        // server actually is.
+        if (err.code === 'bad_offset' && Number.isFinite(err.received)) {
+          offset = err.received;
+        } else if (['unreachable', 'aborted'].includes(err.code) && failures < UPLOAD_RETRIES) {
+          failures += 1;
+          await new Promise((resolve) => setTimeout(resolve, 1000 * failures));
+        } else {
+          throw err;
+        }
+      }
+      showUploadProgress(offset, file.size);
+    }
+    if (upload.cancelled) throw cancelled();
+    const result = await harmony.media.uploadFinish(state.server, session.id);
+    upload.id = null;
+    return result;
+  } catch (err) {
+    if (upload.id) harmony.media.uploadCancel(state.server, upload.id).catch(() => {});
+    throw err;
+  } finally {
+    activeUpload = null;
+    el.chatUpload.hidden = true;
+  }
+}
+
+el.chatUploadCancel.addEventListener('click', () => {
+  if (activeUpload) activeUpload.cancelled = true;
+  el.chatUploadAmount.textContent = 'Cancelling\u2026';
+});
+
+/**
+ * Download an attachment to wherever its owner chooses.
+ *
+ * On the desktop a big one streams straight to disk, and how far it has got
+ * shows in the note under the box. The browser and Android hand it to their
+ * own downloads, which show their own progress.
+ */
+async function saveAttachment(message, button = null) {
+  if (button) button.disabled = true;
+  const name = message.attachmentName ?? 'attachment';
+  const stop = harmony.media.onProgress(({ hash, received, total }) => {
+    if (hash !== message.attachmentHash) return;
+    el.chatNote.textContent = total
+      ? `Downloading ${name}\u2026 ${Math.floor((received / total) * 100)}% `
+        + `(${formatBytes(received)} of ${formatBytes(total)})`
+      : `Downloading ${name}\u2026 ${formatBytes(received)}`;
+  });
+  try {
+    const result = await harmony.media.save(
+      message.attachmentHash, message.attachmentName ?? '', message.attachmentBytes ?? 0,
+    );
+    // Cancelling a save dialog is an answer, not a failure.
+    if (!result.saved) return;
+    el.chatNote.textContent = result.handedOff
+      ? `Downloading ${result.name} in the background.`
+      : `Saved ${result.name}.`;
+    // Only where there is a folder to show it in: the browser and Android
+    // hand the file to their own downloads instead.
+    if (!result.path || !harmony.capabilities.reveal) return;
+    // The one useful thing to do next, offered where the answer is.
+    const show = document.createElement('button');
+    show.type = 'button';
+    show.className = 'ghost tiny';
+    show.textContent = 'Show';
+    show.addEventListener('click', () => harmony.media.reveal(result.path));
+    el.chatNote.append(' ', show);
+  } catch (err) {
+    el.chatNote.textContent = '';
+    showChannelsError(err.message);
+  } finally {
+    stop();
+    if (button) button.disabled = false;
+  }
+}
+
 /**
  * What goes with the next message, and the chip that says so.
  *
@@ -6120,7 +6321,7 @@ function setPendingFile(file) {
     return;
   }
 
-  el.chatPendingName.textContent = file.name;
+  el.chatPendingName.textContent = `${file.name} \u00B7 ${formatBytes(file.size)}`;
   el.chatPendingName.title = file.name;
   if (file.type.startsWith('image/')) {
     pendingPreview = URL.createObjectURL(file);
@@ -6713,9 +6914,13 @@ function attachmentNode(message) {
   const url = harmony.mediaUrl(message.attachmentHash);
   const wrap = document.createElement('span');
   wrap.className = 'attachment';
-  const previewable = ['image', 'video', 'audio'].includes(message.mediaType);
+  // Too big to draw without downloading the lot: offered as a file instead.
+  const big = Number(message.attachmentBytes) > INLINE_MEDIA_LIMIT;
+  const previewable = !big && ['image', 'video', 'audio'].includes(message.mediaType);
 
-  if (message.mediaType === 'image') {
+  if (!previewable) {
+    // Nothing drawn: the name line below is the whole attachment.
+  } else if (message.mediaType === 'image') {
     const img = document.createElement('img');
     img.src = url;
     img.alt = message.attachmentName ?? 'attachment';
@@ -6749,6 +6954,12 @@ function attachmentNode(message) {
   name.textContent = message.attachmentName ?? 'attachment';
   name.title = name.textContent;
   bar.append(name);
+  if (message.attachmentBytes) {
+    const size = document.createElement('span');
+    size.className = 'attachment-size';
+    size.textContent = formatBytes(message.attachmentBytes);
+    bar.append(size);
+  }
   wrap.append(bar);
 
   /*
@@ -6766,39 +6977,24 @@ function attachmentNode(message) {
   // over but the one thing the row says.
   tools.className = previewable ? 'attachment-tools' : 'attachment-tools inline';
 
-  const save = document.createElement('button');
-  save.type = 'button';
-  save.className = 'msg-tool';
-  save.dataset.icon = 'download-simple';
-  save.textContent = 'Save';
-  save.title = 'Save a copy';
-  save.addEventListener('click', async (event) => {
-    event.stopPropagation();
-    save.disabled = true;
-    try {
-      const result = await harmony.media.save(
-        message.attachmentHash, message.attachmentName ?? '',
-      );
-      // Cancelling a save dialog is an answer, not a failure.
-      if (!result.saved) return;
-      el.chatNote.textContent = `Saved ${result.name}.`;
-      // Only where there is a folder to show it in: the browser and Android
-      // hand the file to their own downloads instead.
-      if (!result.path || !harmony.capabilities.reveal) return;
-      // The one useful thing to do next, offered where the answer is.
-      const show = document.createElement('button');
-      show.type = 'button';
-      show.className = 'ghost tiny';
-      show.textContent = 'Show';
-      show.addEventListener('click', () => harmony.media.reveal(result.path));
-      el.chatNote.append(' ', show);
-    } catch (err) {
-      showChannelsError(err.message);
-    } finally {
-      save.disabled = false;
-    }
-  });
-  tools.append(save);
+  /*
+   * Download is in the message's own tools now, beside reply and pin. A
+   * file with nothing to look at keeps one on its name line as well: there
+   * it is the one thing the row is for.
+   */
+  if (!previewable) {
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'msg-tool';
+    save.dataset.icon = 'download-simple';
+    save.textContent = 'Download';
+    save.title = 'Download';
+    save.addEventListener('click', (event) => {
+      event.stopPropagation();
+      saveAttachment(message, save);
+    });
+    tools.append(save);
+  }
 
   // Your own only, the same rule the server enforces for editing the
   // words: swapping somebody's picture under their name puts something in
@@ -6817,6 +7013,7 @@ function attachmentNode(message) {
     tools.append(swap);
   }
 
+  if (!tools.childElementCount) return wrap;
   if (previewable) wrap.append(tools);
   else bar.append(tools);
   return wrap;
@@ -6839,20 +7036,16 @@ function replaceAttachment(message) {
   picker.addEventListener('change', async () => {
     const file = picker.files?.[0] ?? null;
     picker.remove();
-    if (!file) return;
+    if (!file || !fitsUploadLimit(file)) return;
     try {
       showChannelsError('');
-      el.chatNote.textContent = `Uploading ${file.name}\u2026`;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const upload = await harmony.media.upload(state.server, bytes, file.type);
+      const upload = await uploadAttachment(file);
       await harmony.api.setAttachment(state.server, message.id, {
         hash: upload.hash, name: file.name,
       });
-      el.chatNote.textContent = '';
       // The server pushes message:updated to everyone, us included.
     } catch (err) {
-      el.chatNote.textContent = '';
-      showChannelsError(err.message);
+      if (err.code !== 'cancelled') showChannelsError(err.message);
     }
   }, { once: true });
 
@@ -7068,6 +7261,17 @@ function messageRow(message, previous) {
   });
 
   tools.append(reply, react, pin);
+  if (message.attachmentHash) {
+    const download = document.createElement('button');
+    download.className = 'msg-tool';
+    download.dataset.icon = 'download-simple';
+    download.textContent = 'Download';
+    download.title = message.attachmentBytes
+      ? `Download (${formatBytes(message.attachmentBytes)})`
+      : 'Download';
+    download.addEventListener('click', () => saveAttachment(message, download));
+    tools.append(download);
+  }
 
   /*
    * The left column, and what fills it.
@@ -7276,6 +7480,10 @@ async function sendMessage() {
   const body = el.chatInput.value.trim();
   const file = state.chat.pendingFile;
   if (!body && !file) return;
+  if (file && activeUpload) {
+    el.chatNote.textContent = 'Wait for the file already uploading to finish.';
+    return;
+  }
   const replying = state.chat.replyTo;
   setReply(null);
 
@@ -7294,12 +7502,9 @@ async function sendMessage() {
     let attachmentHash = null;
     let attachmentName = null;
     if (file) {
-      el.chatNote.textContent = `Uploading ${file.name}\u2026`;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const upload = await harmony.media.upload(state.server, bytes, file.type);
+      const upload = await uploadAttachment(file);
       attachmentHash = upload.hash;
       attachmentName = file.name;
-      el.chatNote.textContent = '';
     }
     await harmony.api.postMessage(state.server, state.chat.channelId, {
       body, attachmentHash, attachmentName,
@@ -7308,6 +7513,9 @@ async function sendMessage() {
     // The server echoes it back over the socket, so nothing is appended here.
   } catch (err) {
     el.chatNote.textContent = err.message;
+    // A failed file comes back too, ready to send again; a cancelled one
+    // was meant to go.
+    if (file && err.code !== 'cancelled' && !state.chat.pendingFile) setPendingFile(file);
     el.chatInput.value = body; // give them their text back
     setReply(replying); // and what it was answering
     applyComposer();
@@ -10890,7 +11098,7 @@ el.chatFile.addEventListener('change', () => {
   const file = el.chatFile.files?.[0] ?? null;
   // No note: the chip inside the box says what is attached, and it says it
   // where the thing will actually be sent from.
-  if (file) setPendingFile(file);
+  if (file && fitsUploadLimit(file)) setPendingFile(file);
   // Reset, so picking the same file twice in a row still fires 'change'.
   el.chatFile.value = '';
 });
@@ -10904,14 +11112,7 @@ el.lightboxSave.addEventListener('click', async (event) => {
   event.stopPropagation();
   const message = lightboxOf;
   if (!message) return;
-  try {
-    const result = await harmony.media.save(
-      message.attachmentHash, message.attachmentName ?? '',
-    );
-    if (result.saved) el.chatNote.textContent = `Saved ${result.name}.`;
-  } catch (err) {
-    showChannelsError(err.message);
-  }
+  await saveAttachment(message);
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !el.lightbox.hidden) closeLightbox();
@@ -10942,6 +11143,7 @@ el.chatInput.addEventListener('paste', (event) => {
   if (!file) return;
 
   event.preventDefault();
+  if (!fitsUploadLimit(file)) return;
   const extension = file.type.split('/')[1]?.split('+')[0] ?? 'png';
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
   setPendingFile(new File([file], `pasted-${stamp}.${extension}`, { type: file.type }));

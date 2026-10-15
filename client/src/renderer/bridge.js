@@ -21,6 +21,7 @@ function unwrap(result) {
   const error = new Error(result.error.message);
   error.code = result.error.code;
   error.status = result.error.status;
+  if (result.error.received !== undefined) error.received = result.error.received;
   throw error;
 }
 
@@ -177,7 +178,15 @@ const desktop = () => ({
     keep: lift(raw.media.keep),
     stats: lift(raw.media.stats),
     upload: lift(raw.media.upload),
+    uploadOpen: lift(raw.media.uploadOpen),
+    // A Blob from the page; the bytes cross to main one piece at a time.
+    uploadChunk: async (server, id, offset, blob) => unwrap(await raw.media.uploadChunk(
+      server, id, offset, new Uint8Array(await blob.arrayBuffer()),
+    )),
+    uploadFinish: lift(raw.media.uploadFinish),
+    uploadCancel: lift(raw.media.uploadCancel),
     save: lift(raw.media.save),
+    onProgress: (handler) => raw.media.onProgress(handler),
     reveal: lift(raw.media.reveal),
   },
 

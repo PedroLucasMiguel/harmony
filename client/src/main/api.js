@@ -6,6 +6,10 @@
 // talking to a plain-HTTP server on a LAN -- no CORS preflights, no
 // mixed-content blocking, and MediaMTX's allow-origin settings stop mattering.
 
+const fs = require('node:fs');
+const { once } = require('node:events');
+const { Readable } = require('node:stream');
+
 const REQUEST_TIMEOUT_MS = 10_000;
 /**
  * How long to wait for a server to say whether it is there. Shorter than an
@@ -250,6 +254,116 @@ async function uploadFile(serverUrl, bytes, contentType) {
   return payload;
 }
 
+/*
+ * Big uploads, in pieces (server/src/upload-sessions.js). The renderer reads
+ * the file a piece at a time and hands each one over, so neither process
+ * ever holds more of a 2 GB file than one piece.
+ */
+const CHUNK_TIMEOUT_MS = 5 * 60_000;
+
+async function uploadRequest(serverUrl, pathname, { body, json, timeoutMs = REQUEST_TIMEOUT_MS }) {
+  const url = `${normalizeBase(serverUrl)}${pathname}`;
+  const headers = {};
+  if (password) headers['X-Harmony-Password'] = password;
+  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  if (json) headers['Content-Type'] = 'application/json';
+  else if (body) headers['Content-Type'] = 'application/octet-stream';
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: json ? JSON.stringify(json) : body,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw new ApiError(`Upload failed: ${err.message}`, { code: 'unreachable' });
+  }
+  const text = await res.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+  if (!res.ok) {
+    const error = new ApiError(payload?.message ?? `Upload refused (${res.status}).`, {
+      status: res.status,
+      code: payload?.error ?? 'upload_failed',
+    });
+    // Where the server really is, when a piece arrived at the wrong place.
+    error.received = payload?.received;
+    throw error;
+  }
+  return payload;
+}
+
+const uploadOpen = (serverUrl, size, contentType) => uploadRequest(serverUrl, '/api/uploads/sessions', {
+  json: { size, contentType },
+});
+const uploadChunk = (serverUrl, id, offset, bytes) => uploadRequest(
+  serverUrl,
+  `/api/uploads/sessions/${encodeURIComponent(id)}/chunk?offset=${Number(offset)}`,
+  { body: Buffer.from(bytes), timeoutMs: CHUNK_TIMEOUT_MS },
+);
+const uploadFinish = (serverUrl, id) => uploadRequest(
+  serverUrl, `/api/uploads/sessions/${encodeURIComponent(id)}/finish`, { json: {}, timeoutMs: 60_000 },
+);
+const uploadCancel = (serverUrl, id) => uploadRequest(
+  serverUrl, `/api/uploads/sessions/${encodeURIComponent(id)}/cancel`, { json: {} },
+).catch(() => null);
+
+/**
+ * Download a stored file straight to a path, reporting progress.
+ *
+ * Not through the media cache: a file someone is saving is not one they
+ * are looking at, and a 2 GB one would push everything else out of a cache
+ * with a 512 MB budget. Written beside the target first and renamed, so a
+ * broken download never leaves half a file under the name asked for.
+ */
+async function downloadTo(serverUrl, hash, filePath, onProgress) {
+  const url = `${normalizeBase(serverUrl)}/api/uploads/${hash}`;
+  const headers = {};
+  if (password) headers['X-Harmony-Password'] = password;
+  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+
+  let res;
+  try {
+    res = await fetch(url, { headers });
+  } catch (err) {
+    throw new ApiError(`Could not download that file: ${err.message}`, { code: 'unreachable' });
+  }
+  if (!res.ok || !res.body) {
+    throw new ApiError(`The server returned ${res.status} for that file.`, {
+      status: res.status, code: 'media_error',
+    });
+  }
+
+  const total = Number(res.headers.get('content-length')) || 0;
+  const temp = `${filePath}.part`;
+  const out = fs.createWriteStream(temp);
+  let received = 0;
+  let reported = 0;
+  try {
+    for await (const chunk of Readable.fromWeb(res.body)) {
+      received += chunk.length;
+      if (!out.write(chunk)) await once(out, 'drain');
+      // A few times a second at most, not once per network packet.
+      const now = Date.now();
+      if (now - reported > 150) {
+        reported = now;
+        onProgress?.(received, total);
+      }
+    }
+    out.end();
+    await once(out, 'finish');
+    await fs.promises.rename(temp, filePath);
+  } catch (err) {
+    out.destroy();
+    await fs.promises.unlink(temp).catch(() => {});
+    throw new ApiError(`The download broke off: ${err.message}`, { code: 'unreachable' });
+  }
+  onProgress?.(received, total || received);
+  return received;
+}
+
 async function deleteResource(resourceUrl) {
   if (!resourceUrl) return;
   try {
@@ -344,6 +458,11 @@ module.exports = {
   fetchUpload,
   fetchServerLogo,
   uploadFile,
+  uploadOpen,
+  uploadChunk,
+  uploadFinish,
+  uploadCancel,
+  downloadTo,
 
   // Messages
   messages: (s, id, before) =>

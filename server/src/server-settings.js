@@ -13,6 +13,8 @@ import { secretsMatch } from './auth.js';
 const NAME_KEY = 'server_name';
 const DOOR_KEY = 'door_password';
 const LOGO_KEY = 'server_logo';
+const MAX_FILE_KEY = 'max_file_bytes';
+const STORAGE_KEY = 'storage_bytes';
 
 /** What a server with no name of its own is called. */
 export const DEFAULT_NAME = 'Harmony';
@@ -92,6 +94,31 @@ export class ServerSettings {
     if (hash) this.#meta.set(LOGO_KEY, hash);
     else this.#meta.delete(LOGO_KEY);
     return previous;
+  }
+
+  /*
+   * Uploads: the largest one file may be, and how much they may take in all.
+   * null means nobody has said -- the defaults, which the caller knows (the
+   * per-file one from chat.js, the total from the environment).
+   */
+  get maxFileBytes() {
+    const value = Number(this.#meta.get(MAX_FILE_KEY));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  setMaxFileBytes(bytes) {
+    if (bytes === null) this.#meta.delete(MAX_FILE_KEY);
+    else this.#meta.set(MAX_FILE_KEY, String(Math.round(bytes)));
+  }
+
+  get storageBytes() {
+    const value = Number(this.#meta.get(STORAGE_KEY));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  setStorageBytes(bytes) {
+    if (bytes === null) this.#meta.delete(STORAGE_KEY);
+    else this.#meta.set(STORAGE_KEY, String(Math.round(bytes)));
   }
 
   /** The override, or null when the environment is still in charge. */

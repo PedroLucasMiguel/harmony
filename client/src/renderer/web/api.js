@@ -180,6 +180,51 @@ async function uploadFile(serverUrl, bytes, contentType) {
   return payload;
 }
 
+/* Big uploads, in pieces -- the same protocol as the desktop's main/api.js. */
+async function uploadRequest(serverUrl, pathname, { body, json, timeoutMs = REQUEST_TIMEOUT_MS }) {
+  const url = `${normalizeBase(serverUrl)}${pathname}`;
+  const headers = authHeaders();
+  if (json) headers['Content-Type'] = 'application/json';
+  else if (body) headers['Content-Type'] = 'application/octet-stream';
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: json ? JSON.stringify(json) : body,
+      signal: timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw new ApiError(`Upload failed: ${err.message}`, { code: 'unreachable' });
+  }
+  const text = await res.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+  if (!res.ok) {
+    const error = new ApiError(payload?.message ?? `Upload refused (${res.status}).`, {
+      status: res.status, code: payload?.error ?? 'upload_failed',
+    });
+    error.received = payload?.received;
+    throw error;
+  }
+  return payload;
+}
+
+const uploadSession = {
+  open: (s, size, contentType) => uploadRequest(s, '/api/uploads/sessions', { json: { size, contentType } }),
+  // A Blob slice: the browser reads it from disk as it sends.
+  chunk: (s, id, offset, blob) => uploadRequest(
+    s, `/api/uploads/sessions/${encodeURIComponent(id)}/chunk?offset=${Number(offset)}`,
+    { body: blob, timeoutMs: 5 * 60_000 },
+  ),
+  finish: (s, id) => uploadRequest(
+    s, `/api/uploads/sessions/${encodeURIComponent(id)}/finish`, { json: {}, timeoutMs: 60_000 },
+  ),
+  cancel: (s, id) => uploadRequest(
+    s, `/api/uploads/sessions/${encodeURIComponent(id)}/cancel`, { json: {} },
+  ).catch(() => null),
+};
+
 export const api = {
   setPassword: (value) => {
     password = String(value ?? '');
@@ -262,4 +307,8 @@ export const api = {
   // Not on the desktop's list: these are what the main process does for it.
   mediaKey: (s) => requestJson(s, '/api/media-key'),
   uploadFile,
+  uploadOpen: uploadSession.open,
+  uploadChunk: uploadSession.chunk,
+  uploadFinish: uploadSession.finish,
+  uploadCancel: uploadSession.cancel,
 };
