@@ -1,6 +1,6 @@
 {
   "name": "harmony",
-  "version": "3.5.2",
+  "version": "3.5.3",
   "private": true,
   "description": "Low-latency screen sharing: a relay-only WebRTC server for Raspberry Pi and an Electron client",
   "scripts": {
