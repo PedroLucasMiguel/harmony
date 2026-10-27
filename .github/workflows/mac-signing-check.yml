@@ -1,0 +1,33 @@
+# Checks the macOS signing secrets without building a release: imports the
+# certificate, signs a probe with it, and says whether the pair is usable.
+# Run it by hand (Actions > Check macOS signing > Run workflow) after setting or
+# changing MAC_SIGNING_P12_BASE64 / MAC_SIGNING_P12_PASSWORD.
+
+name: Check macOS signing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import the certificate and sign a probe
+        env:
+          MAC_SIGNING_P12_BASE64: ${{ secrets.MAC_SIGNING_P12_BASE64 }}
+          MAC_SIGNING_P12_PASSWORD: ${{ secrets.MAC_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$MAC_SIGNING_P12_BASE64" ]; then
+            echo "::error::MAC_SIGNING_P12_BASE64 is not set."
+            exit 1
+          fi
+          echo "$MAC_SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/harmony-mac-signing.p12"
+          bash client/scripts/mac-signing-keychain.sh "$RUNNER_TEMP/harmony-mac-signing.p12" "$MAC_SIGNING_P12_PASSWORD" > "$RUNNER_TEMP/signing.env"
+          rm -f "$RUNNER_TEMP/harmony-mac-signing.p12"
+          cat "$RUNNER_TEMP/signing.env"
+          echo "The certificate imports and signs."

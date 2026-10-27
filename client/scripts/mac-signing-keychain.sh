@@ -31,5 +31,41 @@ security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$keychain
 hash="$(security find-identity -p codesigning "$keychain" | awk '/^ +1\)/ {print $2}')"
 [ -n "$hash" ] || { echo "No signing identity in $p12" >&2; exit 1; }
 
+# Prove the identity signs now, not twenty minutes into a build. A self-signed
+# certificate is untrusted, and whether codesign will use an untrusted identity
+# depends on the machine: a developer's Mac does, a CI runner may not
+# ("no identity found"). On CI -- a machine thrown away after the job -- the
+# remedies are free: put the keychain in the search list and trust the
+# certificate for code signing. Anywhere else, the user's own trust settings are
+# not touched and the failure is reported.
+probe="$dir/harmony-sign-probe"
+try_sign() {
+  cp /usr/bin/true "$probe"
+  codesign --force --sign "$hash" --keychain "$keychain" "$probe" 2>"$dir/harmony-sign-probe.log"
+}
+if ! try_sign; then
+  if [ -n "${CI:-}${GITHUB_ACTIONS:-}" ]; then
+    echo "codesign cannot use the identity as it is; trusting it for code signing (CI only)" >&2
+    # shellcheck disable=SC2046
+    security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+    security find-certificate -a -p "$keychain" > "$dir/harmony-signing-cert.pem"
+    sudo -n security add-trusted-cert -d -r trustRoot -p codeSign \
+        -k /Library/Keychains/System.keychain "$dir/harmony-signing-cert.pem" >&2 \
+      || security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$dir/harmony-signing-cert.pem" >&2 \
+      || true
+  fi
+  if ! try_sign; then
+    {
+      echo "codesign cannot sign with the identity $hash:"
+      cat "$dir/harmony-sign-probe.log"
+      echo "--- identities"; security find-identity -p codesigning "$keychain" || true
+      echo "--- keychains";  security list-keychains -d user || true
+      echo "--- macOS";      sw_vers || true
+    } >&2
+    exit 1
+  fi
+fi
+rm -f "$probe" "$dir/harmony-sign-probe.log"
+
 echo "HARMONY_MAC_SIGN_HASH=$hash"
 echo "HARMONY_MAC_KEYCHAIN=$keychain"
