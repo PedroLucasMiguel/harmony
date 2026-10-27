@@ -4142,6 +4142,143 @@ input.switch:focus-visible {
   margin: 0.6rem 0 0;
 }
 
+/* ---------- the camera background ---------- */
+
+.bg-modes {
+  margin-top: 0.5rem;
+}
+.bg-modes > button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.45rem 0.25rem;
+  font-size: 0.82rem;
+}
+.bg-panel {
+  margin-top: 0.9rem;
+}
+.bg-panel[hidden] {
+  display: none;
+}
+.bg-colors,
+.bg-gradient-row,
+.bg-image {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 0.8rem;
+}
+.bg-gradient-row {
+  margin: 0.8rem 0 0.5rem;
+}
+.bg-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+/* A colour or a gradient to choose, drawn in its own colours: set from script,
+   because the page's policy refuses a style attribute in markup. */
+.bg-swatch,
+.bg-preset {
+  flex: none;
+  padding: 0;
+  border: 2px solid var(--border);
+  background-clip: padding-box;
+  cursor: pointer;
+}
+.bg-swatch {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+}
+.bg-preset {
+  width: 4.4rem;
+  height: 2.4rem;
+  border-radius: 8px;
+}
+.bg-swatch:hover,
+.bg-preset:hover {
+  border-color: var(--border-strong);
+}
+.bg-swatch[aria-pressed='true'],
+.bg-preset[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.bg-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem 0.3rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.bg-picker:hover {
+  border-color: var(--border-strong);
+}
+.bg-picker input[type='color'] {
+  flex: none;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.bg-picker input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.bg-picker input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+.bg-thumb {
+  flex: none;
+  width: 7.2rem;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.bg-image-text {
+  flex: 1 1 11rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.bg-image-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
+.bg-image-text small {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.bg-preview {
+  margin-top: 1rem;
+}
+.bg-preview canvas {
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.bg-note {
+  margin: 0.7rem 0 0;
+}
+.bg-note:empty {
+  display: none;
+}
+
 /* ---------- hear your own share ---------- */
 
 /*

@@ -19,6 +19,16 @@
 *.pfx
 cloudflare.ini
 
+# macOS code signing: what client/scripts/make-mac-signing-cert.sh writes (the
+# .p12 is the release identity itself, and the .base64 is the same thing as a
+# line of text), and the throwaway keychain mac-signing-keychain.sh builds.
+harmony-mac-signing/
+*.p12.base64
+*.keychain
+*.keychain-db
+*.cer
+*.mobileprovision
+
 # Notes about one specific installation -- hostnames, LAN addresses, which
 # ports are open. DEPLOYMENT.md is the generic guide and IS committed.
 *.local.md

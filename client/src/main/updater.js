@@ -13,16 +13,33 @@
 //                             per-user and never elevates, so this needs no
 //                             admin prompt, same as the first install did.
 //
-//   macOS                     notify only. Squirrel.Mac refuses to apply an
-//                             update that is not signed with an Apple
-//                             Developer ID, and these builds are not -- so
-//                             the "update" is opening the release page.
+//   macOS                     the same, through Squirrel.Mac, which swaps the
+//                             app in place -- when the app is signed with the
+//                             project's release certificate. Squirrel only
+//                             accepts an update that satisfies the running
+//                             app's code requirement, and an ad-hoc signature's
+//                             requirement is the hash of that one build: nothing
+//                             else ever satisfies it. A certificate's is "signed
+//                             by this certificate", which every release does.
+//                             It also keeps Screen Recording, Camera and
+//                             Microphone granted across updates, for the same
+//                             reason (see scripts/after-sign.js).
+//
+//                             A Mac build without the certificate (a fork, a
+//                             local build) or running from somewhere it cannot
+//                             replace itself (a mounted disk image, a
+//                             read-only folder) is notify-only: "updating" is
+//                             opening the release page.
 //
 // Builds that cannot update themselves at all -- `npm start`, or a Linux
 // build run from anywhere but its AppImage -- report 'unsupported' and never
 // touch the network.
 
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { app, net, powerMonitor, shell } = require('electron');
+const voiceTray = require('./voice-tray');
 
 const OWNER = 'PedroLucasMiguel';
 const REPO = 'harmony';
@@ -51,7 +68,7 @@ const CHECK_STALE_MS = 60 * 1000;
  * What the renderer is told, whole, every time anything changes.
  *
  * state: idle | checking | available | downloading | ready | latest | error | unsupported
- * manual: true when "updating" means downloading by hand (macOS)
+ * manual: true when "updating" means downloading by hand (an unsigned Mac build)
  */
 let status = { state: 'idle', current: app.getVersion() };
 let notify = () => {};
@@ -78,6 +95,39 @@ function unsupportedReason() {
   }
   return null;
 }
+
+/** The .app bundle this process runs from. */
+const macBundle = () => path.resolve(process.execPath, '..', '..', '..');
+
+let macSelfUpdateCache;
+/**
+ * Can this Mac build replace itself? Squirrel.Mac needs the app to carry a real
+ * code identity -- an ad-hoc one's requirement is its own build hash -- and to
+ * sit somewhere its folder can be written to and that is not a mounted image
+ * or Gatekeeper's randomized translocation path, where the swap would land
+ * on a copy that vanishes.
+ */
+function macCanSelfUpdate() {
+  if (macSelfUpdateCache !== undefined) return macSelfUpdateCache;
+  macSelfUpdateCache = false;
+  try {
+    const bundle = macBundle();
+    const requirement = spawnSync('codesign', ['-d', '-r-', bundle], { encoding: 'utf8', timeout: 10_000 });
+    const text = `${requirement.stdout}${requirement.stderr}`;
+    const signedByCertificate = requirement.status === 0 && /designated =>/.test(text) && !/cdhash/.test(text);
+    const movable = !bundle.startsWith('/Volumes/') && !bundle.includes('/AppTranslocation/');
+    if (signedByCertificate && movable) {
+      fs.accessSync(path.dirname(bundle), fs.constants.W_OK);
+      macSelfUpdateCache = true;
+    }
+  } catch {
+    // Not writable, or codesign would not run: notify only.
+  }
+  return macSelfUpdateCache;
+}
+
+/** True when "updating" is a trip to the release page rather than a download. */
+const manualOnly = () => process.platform === 'darwin' && !macCanSelfUpdate();
 
 /** Major.minor.patch, numerically. A pre-release suffix is ignored. */
 function newer(candidate, current) {
@@ -116,6 +166,9 @@ function loadUpdater() {
     set({ state: 'ready', version: info.version, url: releasePage(info.version) });
   });
   updater.on('error', (err) => {
+    // An install that failed leaves the app running: its window goes back to
+    // hiding in the tray when closed.
+    voiceTray.setQuitting(false);
     // A failed download goes back to "available", so it can be retried.
     set({
       state: 'error',
@@ -127,7 +180,7 @@ function loadUpdater() {
   return updater;
 }
 
-/** macOS: ask the GitHub API what the latest release is. */
+/** A Mac build that cannot replace itself: ask the GitHub API what is latest. */
 async function checkManually() {
   const response = await net.fetch(
     `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`,
@@ -160,7 +213,7 @@ async function check() {
   const found = status.state === 'available' ? status : null;
   if (!found) set({ state: 'checking' });
   try {
-    if (process.platform === 'darwin') {
+    if (manualOnly()) {
       await checkManually();
     } else {
       // The events above set the outcome; this only has to not throw.
@@ -173,7 +226,7 @@ async function check() {
 }
 
 async function download() {
-  if (status.manual || process.platform === 'darwin') return open();
+  if (status.manual || manualOnly()) return open();
   if (!['available', 'error'].includes(status.state) || !status.version) return status;
   set({ state: 'downloading', version: status.version, url: status.url, percent: 0 });
   try {
@@ -187,12 +240,15 @@ async function download() {
 /** Restart into the downloaded version: a silent install, then relaunch. */
 function install() {
   if (status.state !== 'ready' || !updater) return false;
+  // Squirrel.Mac closes the windows before it quits, which the tray would
+  // answer by hiding them (see setQuitting).
+  voiceTray.setQuitting(true);
   // On the next tick, so the IPC reply gets back before the app goes.
   setImmediate(() => updater.quitAndInstall(true, true));
   return true;
 }
 
-/** The release page: the whole of an update on macOS, release notes elsewhere. */
+/** The release page: the whole of an update on a Mac that cannot replace itself, release notes elsewhere. */
 async function open() {
   await shell.openExternal(status.url || releasePage(status.version));
   return status;

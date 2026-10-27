@@ -43,7 +43,9 @@ const WEB_CSP = [
   "img-src 'self' http: https: data: blob:",
   "media-src 'self' http: https: blob: mediastream: data:",
   "style-src 'self'",
-  "script-src 'self'",
+  // WebAssembly, for the camera background's segmentation runtime. Not eval
+  // of strings: 'wasm-unsafe-eval' permits compiling .wasm and nothing else.
+  "script-src 'self' 'wasm-unsafe-eval'",
 ].join('; ');
 
 function build() {
@@ -53,6 +55,16 @@ function build() {
   // The package's exports map hides package.json, so it is found by path.
   const muxer = path.join(ROOT, 'node_modules', 'mp4-muxer', 'build');
   fs.cpSync(muxer, path.join(OUT, 'vendor', 'mp4-muxer', 'build'), { recursive: true });
+
+  // The camera background's segmentation runtime. Only the SIMD build: every
+  // Chromium this app runs on has it, and the others are 25 MB nobody loads.
+  const vision = path.join(ROOT, 'node_modules', '@mediapipe', 'tasks-vision');
+  const visionOut = path.join(OUT, 'vendor', '@mediapipe', 'tasks-vision');
+  fs.mkdirSync(path.join(visionOut, 'wasm'), { recursive: true });
+  fs.copyFileSync(path.join(vision, 'vision_bundle.mjs'), path.join(visionOut, 'vision_bundle.mjs'));
+  for (const file of ['vision_wasm_internal.js', 'vision_wasm_internal.wasm']) {
+    fs.copyFileSync(path.join(vision, 'wasm', file), path.join(visionOut, 'wasm', file));
+  }
 
   const { version } = require(path.join(ROOT, 'package.json'));
   fs.writeFileSync(

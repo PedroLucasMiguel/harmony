@@ -180,6 +180,21 @@ const DEFAULTS = {
   // (the dedicated one); 'integrated' keeps Harmony off the GPU a game is
   // using. See gpu.js for the measurement behind this.
   gpuPreference: 'auto',
+  /*
+   * What is behind you on the camera. Done on this machine, before a frame is
+   * sent; see renderer/background.js. The picture, when there is one, is not
+   * here -- a GIF can be megabytes -- but in the renderer's own storage, and
+   * only its name is kept in this file.
+   *
+   *   mode: 'off' | 'blur' | 'color' | 'gradient' | 'image'
+   */
+  cameraBackground: {
+    mode: 'off',
+    blur: 60,
+    color: '#1f6feb',
+    gradient: { from: '#5b8cff', to: '#9a7bff', angle: 135 },
+    imageName: '',
+  },
   // What to do when a window is shared but per-application audio is not
   // available (non-Windows, or the native module is missing).
   //   'silent' -- send no audio, never leak other apps' sound

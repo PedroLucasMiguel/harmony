@@ -294,6 +294,25 @@ const el = {
   voiceSounds: $('voice-sounds'),
   soundVolume: $('sound-volume'),
   soundVolumeLabel: $('sound-volume-label'),
+  bgGroup: $('bg-group'),
+  bgMode: $('bg-mode'),
+  bgBlur: $('bg-blur'),
+  bgBlurLabel: $('bg-blur-label'),
+  bgColor: $('bg-color'),
+  bgSwatches: $('bg-swatches'),
+  bgPresets: $('bg-presets'),
+  bgFrom: $('bg-from'),
+  bgTo: $('bg-to'),
+  bgAngle: $('bg-angle'),
+  bgAngleLabel: $('bg-angle-label'),
+  bgThumb: $('bg-thumb'),
+  bgImageName: $('bg-image-name'),
+  bgChoose: $('bg-choose'),
+  bgRemove: $('bg-remove'),
+  bgFile: $('bg-file'),
+  bgPreviewWrap: $('bg-preview-wrap'),
+  bgPreview: $('bg-preview'),
+  bgNote: $('bg-note'),
   hotkeyList: $('hotkey-list'),
   updateVersion: $('update-version'),
   updateStatus: $('update-status'),
@@ -559,7 +578,7 @@ const state = {
    * other useful names. several: whether there is a second camera at all,
    * which is when the switch button appears.
    */
-  camera: { stream: null, publication: null, session: null, facing: 'user', several: false },
+  camera: { stream: null, publication: null, session: null, facing: 'user', several: false, effect: null },
   voice: new VoiceSession(),
   audioAvailable: false,
   audioUnavailableReason: null,
@@ -5061,7 +5080,8 @@ async function applyVoiceCamera(deviceId) {
   if (state.voice.camDeviceId === deviceId) return;
   if (!deviceId && !state.settings.voiceCameraId) return;
 
-  const stream = await openCamera(deviceId).catch(() => null);
+  const raw = await openCamera(deviceId).catch(() => null);
+  const stream = raw && await withBackground(raw);
   if (!stream) {
     deviceNote('That camera could not be opened. Still using the previous one.');
     return;
@@ -8064,6 +8084,309 @@ async function countCameras() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The camera background
+//
+// Blur, a colour, a gradient or a picture behind the person, done in this
+// window before a frame is sent. The work is in background.js; this is the
+// part that puts it between the camera and the call, and the settings page
+// that drives it.
+// ---------------------------------------------------------------------------
+
+/*
+ * Loaded when first needed, not at startup: the segmentation runtime is a
+ * large module, most people never turn this on, and a file that failed to load
+ * should cost them this feature and not the whole app.
+ */
+let backgroundModule = null;
+const backgroundLib = () => {
+  backgroundModule ??= import('./background.js').catch((err) => {
+    backgroundModule = null;
+    throw err;
+  });
+  return backgroundModule;
+};
+
+const BACKGROUND_COLOURS = [
+  '#1f6feb', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#16a34a', '#0f766e', '#e5e7eb', '#111827',
+];
+const BACKGROUND_GRADIENTS = [
+  { name: 'Aurora', from: '#5b8cff', to: '#9a7bff', angle: 135 },
+  { name: 'Sunset', from: '#ff7a59', to: '#7b2ff7', angle: 135 },
+  { name: 'Ocean', from: '#0ea5e9', to: '#1e3a8a', angle: 160 },
+  { name: 'Forest', from: '#34d399', to: '#064e3b', angle: 150 },
+  { name: 'Candy', from: '#f472b6', to: '#60a5fa', angle: 120 },
+  { name: 'Slate', from: '#4b5563', to: '#111827', angle: 180 },
+];
+
+/*
+ * What is chosen. Kept here once read, not looked up in state.settings each
+ * time: that object is replaced wholesale by every handler that re-reads the
+ * settings file, and one that started before a change and finished after it
+ * puts the old value back. A choice that can be undone by an unrelated save
+ * is worse than none.
+ */
+let backgroundChoice = null;
+
+/** What is chosen, whole: a settings file from before this existed has none of it. */
+function backgroundOptions() {
+  if (!backgroundChoice) {
+    const saved = state.settings?.cameraBackground ?? {};
+    backgroundChoice = {
+      mode: 'off',
+      blur: 60,
+      color: '#1f6feb',
+      imageName: '',
+      edge: [0.4, 0.78],
+      ...saved,
+      gradient: { from: '#5b8cff', to: '#9a7bff', angle: 135, ...saved.gradient },
+    };
+  }
+  return backgroundChoice;
+}
+
+/**
+ * Put the chosen background behind the person in a camera stream.
+ *
+ * Never loses the camera: whatever goes wrong -- the runtime will not load,
+ * WebGL is missing, the picture was deleted -- the plain camera comes back and
+ * the person is told, so a call is never worse off for having this switched on.
+ * With the effect off it returns the stream it was given, untouched.
+ */
+async function withBackground(raw) {
+  const options = backgroundOptions();
+  if (options.mode === 'off') return raw;
+  try {
+    const lib = await backgroundLib();
+    if (!lib.backgroundSupported()) return raw;
+    const stored = options.mode === 'image' ? await lib.loadBackgroundImage() : null;
+    if (options.mode === 'image' && !stored) return raw;
+    const effect = await lib.BackgroundEffect.create(raw, options, stored?.blob ?? null);
+    state.camera.effect = effect;
+    effect.onStop = () => {
+      if (state.camera.effect === effect) state.camera.effect = null;
+    };
+    return effect.stream;
+  } catch (err) {
+    console.warn('[background] could not start:', err);
+    deviceNote(`Could not apply the camera background (${err.message}). Using the plain camera.`);
+    return raw;
+  }
+}
+
+// One change at a time: reopening the camera twice at once leaves one open.
+let backgroundWork = Promise.resolve();
+
+/** Make a running camera match the setting, without a gap in the video. */
+function applyBackgroundLive() {
+  backgroundWork = backgroundWork.then(async () => {
+    if (!state.voice.camLive) return;
+    const options = backgroundOptions();
+    const effect = state.camera.effect;
+
+    // Already processed and staying processed: only what is behind changes.
+    if (effect && options.mode !== 'off') {
+      const lib = await backgroundLib();
+      const stored = options.mode === 'image' ? await lib.loadBackgroundImage() : null;
+      await effect.update(options, stored?.blob ?? null);
+      return;
+    }
+
+    // Off to on, or on to off: the camera goes through a different path, so it
+    // is opened again and swapped in on the live sender (replaceTrack), the way
+    // changing webcam is -- nobody watching has to resubscribe.
+    const raw = await openCamera(state.voice.camDeviceId || '').catch(() => null);
+    if (!raw) {
+      deviceNote('The camera could not be opened again to change the background.');
+      return;
+    }
+    const stream = await withBackground(raw);
+    if (!await state.voice.switchCam(stream)) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    renderChannelVideo();
+  }).catch((err) => console.warn('[background] could not apply:', err));
+  return backgroundWork;
+}
+
+/** Change the setting: draw it, keep it, and apply it to a camera that is running. */
+async function setBackground(patch, { save = true } = {}) {
+  backgroundChoice = { ...backgroundOptions(), ...patch };
+  state.settings.cameraBackground = backgroundChoice;
+  renderBackgroundSettings();
+  if (save) await saveBackgroundChoice();
+  return applyBackgroundLive();
+}
+
+const saveBackgroundChoice = () => harmony.settings.set({ cameraBackground: backgroundOptions() });
+
+/** Draw the settings page's controls from what is chosen. */
+async function renderBackgroundSettings() {
+  const options = backgroundOptions();
+  pickSegmented(el.bgMode, options.mode);
+  for (const panel of el.bgGroup.querySelectorAll('.bg-panel')) {
+    panel.hidden = panel.dataset.panel !== options.mode;
+  }
+
+  el.bgBlur.value = String(options.blur);
+  paintRange(el.bgBlur);
+  el.bgBlurLabel.textContent = `${options.blur}%`;
+
+  el.bgColor.value = options.color;
+  for (const swatch of el.bgSwatches.children) {
+    swatch.setAttribute('aria-pressed', String(swatch.dataset.color === options.color.toLowerCase()));
+  }
+
+  const { from, to, angle } = options.gradient;
+  el.bgFrom.value = from;
+  el.bgTo.value = to;
+  el.bgAngle.value = String(angle);
+  paintRange(el.bgAngle);
+  el.bgAngleLabel.textContent = `${angle}°`;
+  for (const preset of el.bgPresets.children) {
+    preset.setAttribute('aria-pressed',
+      String(preset.dataset.from === from.toLowerCase() && preset.dataset.to === to.toLowerCase()
+        && Number(preset.dataset.angle) === Number(angle)));
+  }
+
+  const has = Boolean(options.imageName);
+  el.bgImageName.textContent = has ? options.imageName : 'No picture chosen';
+  el.bgRemove.hidden = !has;
+  el.bgChoose.textContent = has ? 'Change…' : 'Choose…';
+  if (!has) el.bgThumb.hidden = true;
+
+  const live = Boolean(state.camera.effect);
+  el.bgPreviewWrap.hidden = !live;
+  el.bgNote.textContent = options.mode !== 'off' && !state.voice.camLive
+    ? 'Turn your camera on in a voice channel to see it here.'
+    : '';
+}
+
+/** Build the colour and gradient choices once; they never change. */
+function buildBackgroundChoices() {
+  for (const colour of BACKGROUND_COLOURS) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'bg-swatch';
+    button.title = colour;
+    button.setAttribute('aria-label', `Colour ${colour}`);
+    button.dataset.color = colour;
+    button.style.background = colour;
+    button.addEventListener('click', () => setBackground({ color: colour }));
+    el.bgSwatches.append(button);
+  }
+  for (const preset of BACKGROUND_GRADIENTS) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'bg-preset';
+    button.title = preset.name;
+    button.setAttribute('aria-label', `${preset.name} gradient`);
+    button.dataset.from = preset.from;
+    button.dataset.to = preset.to;
+    button.dataset.angle = String(preset.angle);
+    button.style.background = `linear-gradient(${preset.angle}deg, ${preset.from}, ${preset.to})`;
+    button.addEventListener('click', () => setBackground({
+      gradient: { from: preset.from, to: preset.to, angle: preset.angle },
+    }));
+    el.bgPresets.append(button);
+  }
+}
+
+/** The picture's thumbnail, once, from storage. */
+async function showBackgroundThumbnail() {
+  if (!backgroundOptions().imageName) return;
+  try {
+    const lib = await backgroundLib();
+    const stored = await lib.loadBackgroundImage();
+    if (!stored) return;
+    el.bgThumb.src = await lib.backgroundThumbnail(stored.blob);
+    el.bgThumb.hidden = false;
+  } catch {
+    el.bgThumb.hidden = true;
+  }
+}
+
+/** Everything to do when Settings opens on the camera background. */
+async function openBackgroundSettings() {
+  try {
+    const lib = await backgroundLib();
+    el.bgGroup.hidden = !lib.backgroundSupported();
+  } catch {
+    // The runtime is missing from this build: the feature is simply not offered.
+    el.bgGroup.hidden = true;
+    return;
+  }
+  renderBackgroundSettings();
+  showBackgroundThumbnail();
+  startBackgroundPreview();
+}
+
+// The preview is the live result, copied a few times a second while Settings is open.
+let backgroundPreviewTimer = null;
+
+function startBackgroundPreview() {
+  stopBackgroundPreview();
+  const ctx = el.bgPreview.getContext('2d');
+  backgroundPreviewTimer = setInterval(() => {
+    const canvas = state.camera.effect?.canvas;
+    const live = Boolean(canvas && canvas.width);
+    if (el.bgPreviewWrap.hidden === live) el.bgPreviewWrap.hidden = !live;
+    if (!live) return;
+    ctx.drawImage(canvas, 0, 0, el.bgPreview.width, el.bgPreview.height);
+  }, 70);
+}
+
+function stopBackgroundPreview() {
+  clearInterval(backgroundPreviewTimer);
+  backgroundPreviewTimer = null;
+}
+
+el.bgMode.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-value]');
+  if (button) setBackground({ mode: button.dataset.value });
+});
+
+// Sliders and pickers: drawn and applied as they move, written to the settings
+// file once they are let go -- one drag is one write.
+el.bgBlur.addEventListener('input', () => setBackground({ blur: Number(el.bgBlur.value) }, { save: false }));
+el.bgBlur.addEventListener('change', saveBackgroundChoice);
+el.bgColor.addEventListener('input', () => setBackground({ color: el.bgColor.value }, { save: false }));
+el.bgColor.addEventListener('change', saveBackgroundChoice);
+const gradientFromControls = () => ({
+  from: el.bgFrom.value, to: el.bgTo.value, angle: Number(el.bgAngle.value),
+});
+for (const control of [el.bgFrom, el.bgTo, el.bgAngle]) {
+  control.addEventListener('input', () => setBackground({ gradient: gradientFromControls() }, { save: false }));
+  control.addEventListener('change', saveBackgroundChoice);
+}
+
+el.bgChoose.addEventListener('click', () => el.bgFile.click());
+el.bgFile.addEventListener('change', async () => {
+  const file = el.bgFile.files?.[0];
+  el.bgFile.value = '';
+  if (!file) return;
+  el.bgNote.textContent = '';
+  try {
+    const lib = await backgroundLib();
+    const name = await lib.saveBackgroundImage(file);
+    await setBackground({ mode: 'image', imageName: name });
+    showBackgroundThumbnail();
+  } catch (err) {
+    el.bgNote.textContent = err?.name === 'EncodingError' || err?.name === 'InvalidStateError'
+      ? 'That file could not be read as a picture.'
+      : err.message;
+  }
+});
+el.bgRemove.addEventListener('click', async () => {
+  const lib = await backgroundLib().catch(() => null);
+  await lib?.clearBackgroundImage();
+  el.bgThumb.hidden = true;
+  await setBackground({ imageName: '', mode: backgroundOptions().mode === 'image' ? 'off' : backgroundOptions().mode });
+});
+
+buildBackgroundChoices();
+
 /**
  * Switch to the other camera, keeping the call's camera stream up.
  *
@@ -8105,6 +8428,7 @@ async function flipCamera() {
       stream = await openCamera(settings.deviceId ?? '').catch(() => null);
       facing = state.camera.facing;
     }
+    if (stream) stream = await withBackground(stream);
     if (!stream || !await state.voice.switchCam(stream)) {
       stream?.getTracks().forEach((t) => t.stop());
       showChannelsError('The camera stopped. Turn it off and on again.');
@@ -8133,6 +8457,9 @@ async function startCamera() {
     }
     // Labels and the full device list exist only once a camera is open.
     await countCameras();
+    // Behind the person, if that is what was chosen: from here on this is the
+    // camera as far as the call is concerned.
+    stream = await withBackground(stream);
 
     /*
      * Inside a voice channel the camera goes to the CHANNEL path.
@@ -10985,12 +11312,16 @@ el.voiceConfig.addEventListener('click', () => {
   applyScale(state.settings?.uiScale ?? SCALE_DEFAULT, { save: false });
   applyMicTuning();
   startMicMeter();
+  openBackgroundSettings();
   showSettingsTab(
     el.devicesDialog.querySelector('.settings-tab[aria-selected="true"]')?.dataset.tab ?? 'appearance',
   );
   refreshVoiceDevices().catch((err) => deviceNote(err.message));
 });
-el.devicesDialog.addEventListener('close', stopMicMeter);
+el.devicesDialog.addEventListener('close', () => {
+  stopMicMeter();
+  stopBackgroundPreview();
+});
 
 /*
  * The menu down the left of Settings.
@@ -11963,8 +12294,9 @@ window.addEventListener('resize', () => {
 //
 // Main checks GitHub Releases and pushes its whole status here (updater.js).
 // This side only draws it and passes on the person's answer: nothing is
-// downloaded until somebody presses Download. On macOS "Download" opens the
-// release page, because an unsigned Mac app cannot install its own update.
+// downloaded until somebody presses Download. On a Mac build that cannot
+// replace itself (no release certificate, see updater.js) "Download" opens the
+// release page instead.
 
 let updateStatus = { state: 'idle' };
 /** "state:version" the banner was waved away for, this session. */

@@ -39,6 +39,10 @@ electronLanguages:
 # Deletes runtime pieces Harmony does not use; see the file for what and why.
 afterPack: scripts/after-pack.js
 
+# macOS only: signs with the release certificate when the build machine has it
+# (see the `mac` block).
+afterSign: scripts/after-sign.js
+
 files:
   - src/**/*
   - package.json
@@ -47,6 +51,12 @@ files:
   - '!**/{test,tests,__tests__,example,examples,docs,doc}/**'
   - '!**/*.{md,markdown,ts,flow,patch,log}'
   - '!**/{.editorconfig,.nycrc,.prettierrc,.eslintrc,tsconfig.json,CMakeLists.txt}'
+  # The camera background's runtime ships in three WebAssembly builds of about
+  # 13 MB each. Chromium has SIMD, so the plain one is the only one ever loaded
+  # (the module build is for workers, which this does not use).
+  - '!node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.*'
+  - '!node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_module_internal.*'
+  - '!node_modules/@mediapipe/tasks-vision/vision_bundle.{cjs,js}'
 
 # `loopback-capture` resolves its .node binary from the filesystem via the
 # `bindings` package, which cannot see inside an asar archive. Unpacking it is
@@ -116,18 +126,33 @@ linux:
 mac:
   # 1024 px PNG; electron-builder makes the .icns from it.
   icon: build/icon.png
+  # The .dmg is the first install. The .zip is what updates come from:
+  # electron-updater on macOS downloads it and hands it to Squirrel.Mac, and
+  # will not read a .dmg.
   target:
     - dmg
-  # One per architecture; CI builds both (--x64 --arm64).
-  artifactName: Harmony-${version}-${arch}.dmg
-  # Ad-hoc signed: no Apple Developer ID. An Apple Silicon Mac will not run
-  # an arm64 app with no signature at all (packaging changes the bundle, so
-  # Electron's own signature no longer holds), and "-" is the free signature
-  # that satisfies that. Hardened runtime only matters for notarization, and
-  # with an ad-hoc signature it would refuse Electron's frameworks, so off.
-  # Not signed by a known developer means Gatekeeper still asks on first
-  # open (right-click, Open) -- and that updates cannot install themselves on
-  # macOS; the app offers the download page instead (src/main/updater.js).
+    - zip
+  # One of each per architecture; CI builds both (--x64 --arm64).
+  artifactName: Harmony-${version}-${arch}.${ext}
+  # Signed ad-hoc ("-") here, and again by scripts/after-sign.js with the
+  # project's own self-signed certificate wherever HARMONY_MAC_SIGN_HASH points
+  # at one (the release workflow does; see scripts/make-mac-signing-cert.sh).
+  #
+  # Why not leave it ad-hoc: that signature has no identity, so its designated
+  # requirement is the hash of that one build. To macOS every release is then a
+  # new app -- Screen Recording, Camera and Microphone are granted all over
+  # again -- and Squirrel.Mac, which only swaps an app for one that satisfies
+  # the old one's requirement, refuses the update outright. A certificate makes
+  # the requirement "signed by this certificate", the same on every release.
+  #
+  # Why ad-hoc here at all: an Apple Silicon Mac will not run an arm64 app with
+  # no signature, and a build made without the certificate (a fork, a local
+  # build) still has to run. Hardened runtime only matters for notarization,
+  # and would refuse Electron's frameworks under either, so off.
+  #
+  # Self-signed is not Developer ID: Gatekeeper still asks on the first open
+  # (right-click, Open). Updates the app fetches itself carry no quarantine
+  # flag, so they are not asked about.
   identity: '-'
   hardenedRuntime: false
   category: public.app-category.social-networking

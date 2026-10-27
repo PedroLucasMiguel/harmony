@@ -22,6 +22,9 @@ never re-encodes it.
   every OS a screen share can leave one app (Harmony, by default) out of its sound.
 - **Voice channels** with cameras and screen shares, per-person volume up to
   350%, mute, deafen and an admin soundpad.
+- **Camera backgrounds**: blur, a colour, a gradient, or a picture or GIF
+  behind you. Done on your own computer, on the GPU, before a frame is sent;
+  the server never sees what was behind you.
 - **Text channels** with Markdown, attachments, reactions, custom emoji,
   mentions, pins and search.
 - **Accounts and roles**: owner, admins and members, with optional
@@ -46,12 +49,18 @@ or with Docker. See [docker/](docker/).
 Windows (`-setup.exe`), Linux (`.AppImage`), macOS (`.dmg`) and Android
 (`.apk`: voice, streams, camera and chat, everything but sharing the phone's
 screen; see [client/android](client/android/README.md)). The app
-offers new versions itself: it installs them itself on Windows and Linux,
-and on macOS it opens the download page.
+offers new versions itself and installs them on every desktop OS, asking
+first. (On macOS that needs the app to sit in Applications or any folder you
+can write to, not run from the disk image.)
 
 The builds are unsigned:
 - **Windows:** SmartScreen may ask on the first install. Choose *More info → Run anyway*.
-- **macOS:** right-click the app → *Open* the first time.
+- **macOS:** right-click the app → *Open* the first time. The app is signed with
+  the project's own certificate, the same on every release, so the permissions
+  you grant (screen recording, camera, microphone) are kept across updates.
+  A build signed without it (a fork, a local build) loses them on each update
+  and opens the download page instead of installing; see
+  `client/scripts/make-mac-signing-cert.sh`.
 
 To build it yourself:
 
@@ -73,7 +82,8 @@ TLS, dynamic IPs, ports and troubleshooting are covered in
 [MediaMTX](https://github.com/bluenviron/mediamtx) ·
 [Electron](https://www.electronjs.org/) ·
 [loopback-capture](https://www.npmjs.com/package/loopback-capture) ·
-[mp4-muxer](https://github.com/Vanilagy/mp4-muxer)
+[mp4-muxer](https://github.com/Vanilagy/mp4-muxer) ·
+[MediaPipe](https://ai.google.dev/edge/mediapipe) (camera background segmentation, Apache-2.0)
 
 ## License
 

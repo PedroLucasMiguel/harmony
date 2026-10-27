@@ -37,7 +37,7 @@ jobs:
             targets: --linux AppImage
           - name: macos
             os: macos-latest
-            targets: --mac dmg --x64 --arm64
+            targets: --mac dmg zip --x64 --arm64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -62,6 +62,26 @@ jobs:
 
       - run: npm ci
 
+      # The macOS build is signed with the project's own certificate, so that
+      # every release has the same code identity: permissions survive an
+      # update and the installed app can replace itself (client/scripts/
+      # make-mac-signing-cert.sh makes it, once). Without the secrets the
+      # build is still made, ad-hoc signed, and those apps update by sending
+      # people to the download page.
+      - name: macOS signing certificate
+        if: matrix.name == 'macos'
+        env:
+          MAC_SIGNING_P12_BASE64: ${{ secrets.MAC_SIGNING_P12_BASE64 }}
+          MAC_SIGNING_P12_PASSWORD: ${{ secrets.MAC_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$MAC_SIGNING_P12_BASE64" ]; then
+            echo "::warning::MAC_SIGNING_P12_BASE64 is not set: this macOS build is ad-hoc signed, so it cannot update itself and loses its permissions on every update."
+            exit 0
+          fi
+          echo "$MAC_SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/harmony-mac-signing.p12"
+          scripts/mac-signing-keychain.sh "$RUNNER_TEMP/harmony-mac-signing.p12" "$MAC_SIGNING_P12_PASSWORD" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/harmony-mac-signing.p12"
+
       # --publish never: this job only builds. The publish config in
       # electron-builder.yml still makes it write latest*.yml into dist/.
       - name: Build
@@ -75,6 +95,7 @@ jobs:
             client/dist/*.exe
             client/dist/*.AppImage
             client/dist/*.dmg
+            client/dist/*.zip
             client/dist/latest*.yml
 
   # The Android app, signed with the project's key so each release installs

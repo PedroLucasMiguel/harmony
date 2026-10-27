@@ -74,6 +74,18 @@ function quit() {
   app.quit();
 }
 
+/**
+ * Closing the window quits instead of hiding it, from now on -- or hides it
+ * again, if the quit that was expected is not coming.
+ *
+ * `before-quit` is too late to say so for Squirrel.Mac: its quitAndInstall
+ * closes every window first and only then quits, so a window that answers the
+ * close by hiding leaves the app running and the update waiting for it.
+ */
+function setQuitting(value) {
+  quitting = Boolean(value);
+}
+
 function trayImage() {
   if (!voice.inVoice || !pictures) return appIcon();
   if (voice.deafened) return pictures.tray.deafened;
@@ -261,4 +273,4 @@ function setState(next) {
   return true;
 }
 
-module.exports = { start, attach, setPictures, setState, showWindow, quit };
+module.exports = { start, attach, setPictures, setState, showWindow, quit, setQuitting };

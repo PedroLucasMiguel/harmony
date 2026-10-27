@@ -36,7 +36,7 @@ jobs:
             targets: --linux AppImage
           - name: macos
             os: macos-latest
-            targets: --mac dmg --x64 --arm64
+            targets: --mac dmg zip --x64 --arm64
     runs-on: ${{ matrix.os }}
     defaults:
       run:

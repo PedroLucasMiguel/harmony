@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self'; script-src 'self'"
+      content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
     />
     <title>Harmony</title>
     <link rel="stylesheet" href="styles.css" />
@@ -1243,6 +1243,86 @@
                   Speak normally. Put the marker just above where the bar sits
                   when you are quiet, and below where it sits when you talk.
                 </p>
+              </div>
+                          <!--
+                What is behind you on the camera.
+
+                Done in this window, before a frame is sent: the segmentation
+                model and its runtime are part of the app, nothing is uploaded,
+                and the server and the media relay only ever see the finished
+                picture. See renderer/background.js.
+              -->
+              <div class="setting-group" id="bg-group" hidden>
+                <div class="setting-head">
+                  <span class="setting-title">Camera background</span>
+                </div>
+                <p class="setting-note">
+                  Done on your computer before anything is sent. Nobody, the
+                  server included, ever sees what is behind you.
+                </p>
+
+                <div class="segmented bg-modes" id="bg-mode" role="radiogroup" aria-label="Camera background">
+                  <button type="button" role="radio" data-value="off">None</button>
+                  <button type="button" role="radio" data-value="blur">Blur</button>
+                  <button type="button" role="radio" data-value="color">Colour</button>
+                  <button type="button" role="radio" data-value="gradient">Gradient</button>
+                  <button type="button" role="radio" data-value="image">Image</button>
+                </div>
+
+                <div class="bg-panel" data-panel="blur" hidden>
+                  <div class="setting-head">
+                    <label class="setting-title" for="bg-blur">Blur</label>
+                    <output class="value-pill" id="bg-blur-label" for="bg-blur">60%</output>
+                  </div>
+                  <input id="bg-blur" type="range" min="0" max="100" step="5" value="60" />
+                </div>
+
+                <div class="bg-panel" data-panel="color" hidden>
+                  <div class="bg-colors">
+                    <div class="bg-swatches" id="bg-swatches" role="group" aria-label="Colours"></div>
+                    <label class="bg-picker" title="Pick any colour">
+                      <input id="bg-color" type="color" value="#1f6feb" aria-label="Background colour" />
+                      <span>Custom</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="bg-panel" data-panel="gradient" hidden>
+                  <div class="bg-swatches" id="bg-presets" role="group" aria-label="Gradients"></div>
+                  <div class="bg-gradient-row">
+                    <label class="bg-picker" title="First colour">
+                      <input id="bg-from" type="color" value="#5b8cff" aria-label="Gradient from" />
+                      <span>From</span>
+                    </label>
+                    <label class="bg-picker" title="Second colour">
+                      <input id="bg-to" type="color" value="#9a7bff" aria-label="Gradient to" />
+                      <span>To</span>
+                    </label>
+                  </div>
+                  <div class="setting-head">
+                    <label class="setting-title" for="bg-angle">Direction</label>
+                    <output class="value-pill" id="bg-angle-label" for="bg-angle">135&deg;</output>
+                  </div>
+                  <input id="bg-angle" type="range" min="0" max="360" step="5" value="135" />
+                </div>
+
+                <div class="bg-panel" data-panel="image" hidden>
+                  <div class="bg-image">
+                    <img class="bg-thumb" id="bg-thumb" alt="" hidden />
+                    <div class="bg-image-text">
+                      <strong id="bg-image-name">No picture chosen</strong>
+                      <small>A picture or a GIF, up to 25 MB. It stays on this computer.</small>
+                    </div>
+                    <button type="button" class="ghost small" id="bg-choose">Choose&hellip;</button>
+                    <button type="button" class="ghost small" id="bg-remove" hidden>Remove</button>
+                    <input type="file" id="bg-file" accept="image/*" hidden />
+                  </div>
+                </div>
+
+                <div class="bg-preview" id="bg-preview-wrap" hidden>
+                  <canvas id="bg-preview" width="320" height="180"></canvas>
+                </div>
+                <p class="setting-note bg-note" id="bg-note"></p>
               </div>
             </section>
 
