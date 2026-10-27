@@ -531,6 +531,21 @@ matters for packaging: it resolves its `.node` file from the filesystem via the
 [client/electron-builder.yml](client/electron-builder.yml) is what makes it work
 in a packaged build — if you change that file, keep the entry.
 
+Leaving one application out of a whole-screen share's audio (Harmony itself, by
+default, so the channel does not hear its own voices back) works on every OS, by
+different means:
+
+| OS      | How                                                                          | Needs |
+|---------|------------------------------------------------------------------------------|-------|
+| Windows | `loopback-capture`, above                                                    | nothing extra |
+| macOS   | a Swift helper using ScreenCaptureKit, [client/native/mac](client/native/mac) | macOS 13+; Xcode to build |
+| Linux   | a virtual PipeWire sink linked to every stream but the excluded ones         | PipeWire with `pw-dump`, `pw-link`, `pw-cli`, `pw-record` |
+
+The macOS helper is compiled by `node client/scripts/build-native.js`, which
+`npm start` and `npm run build` run for you on a Mac, and packaged through
+`extraResources` in `electron-builder.yml`. Capturing a single *window's* audio
+is still Windows-only.
+
 ### Hardware encoding
 
 Nothing to configure. On Windows, Chromium routes WebRTC's H.264 encoding

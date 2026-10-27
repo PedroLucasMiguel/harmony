@@ -11,6 +11,12 @@
 // between silence and system audio, rather than quietly leaking every other
 // app's sound into the stream.
 //
+// Keeping one application OUT of a whole-screen share -- the default being
+// Harmony itself, so the channel does not hear its own voices back -- is a
+// separate question from capturing a single window, and it is the half that has
+// a counterpart elsewhere: audio-mac.js (ScreenCaptureKit) and audio-linux.js
+// (PipeWire). Capturing only one window's audio is still Windows-only.
+//
 // Chunks are interleaved signed 16-bit little-endian PCM, stereo, 48 kHz.
 
 const { resolveWindowPid } = require('./sources');
@@ -43,7 +49,15 @@ function loadAddon() {
 
 let capture = null;
 
-function availability() {
+/** The platform's way of excluding an app from system audio, where the addon is not it. */
+function excluder() {
+  if (process.platform === 'darwin') return require('./audio-mac');
+  if (process.platform === 'linux') return require('./audio-linux');
+  return null;
+}
+
+/** The Windows addon: capturing ONE application's audio, and excluding one. */
+function addonAvailability() {
   if (loadAddon()) return { available: true, reason: null };
   if (process.platform !== 'win32') {
     return { available: false, reason: `Per-application audio is Windows-only (this is ${process.platform}).` };
@@ -54,7 +68,24 @@ function availability() {
   };
 }
 
+/**
+ * What this machine can do about audio.
+ *
+ *   available  capture a single window's audio (the Windows addon)
+ *   exclusion  leave one application out of a whole-screen share's audio --
+ *              the addon on Windows, a platform backend on macOS and Linux
+ */
+async function availability() {
+  const native = addonAvailability();
+  if (native.available) return { ...native, exclusion: true, exclusionReason: null };
+
+  const backend = excluder();
+  const found = backend ? await backend.availability() : { available: false, reason: null };
+  return { ...native, exclusion: found.available, exclusionReason: found.reason };
+}
+
 function stop() {
+  excluder()?.stop();
   if (!capture) return;
   try {
     capture.stop();
@@ -84,7 +115,15 @@ async function start({ kind, sourceId, sourceName, fallback = 'silent', excludeP
     return { mode: 'device', format: FORMAT, note: null };
   }
 
-  const { available, reason } = availability();
+  const { available, reason } = addonAvailability();
+
+  // No addon, but the platform has its own way of leaving an app out of the
+  // mix. Only for a screen: a single window's audio is not something either
+  // of them can isolate, so that case carries on to the fallback below.
+  const backend = excluder();
+  if (!available && kind === 'screen' && backend && (await backend.availability()).available) {
+    return backend.start({ excludePid }, onChunk);
+  }
 
   if (!available) {
     // No native capture at all. A screen share can still fall back to

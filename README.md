@@ -18,7 +18,8 @@ never re-encodes it.
 ## Features
 
 - **Screen, window or capture-card sharing** at up to native resolution and
-  120 fps, H.264 encoded on your GPU. Per-app audio on Windows.
+  120 fps, H.264 encoded on your GPU. Per-app audio on Windows, and on
+  every OS a screen share can leave one app (Harmony, by default) out of its sound.
 - **Voice channels** with cameras and screen shares, per-person volume up to
   350%, mute, deafen and an admin soundpad.
 - **Text channels** with Markdown, attachments, reactions, custom emoji,

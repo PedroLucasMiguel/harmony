@@ -557,6 +557,9 @@ const state = {
   voice: new VoiceSession(),
   audioAvailable: false,
   audioUnavailableReason: null,
+  /** Can one application be kept out of a screen share's audio? Not the same
+   *  as audioAvailable, which is about capturing a single window's. */
+  audioExclusion: false,
 
   sources: [],
   cameras: [],
@@ -884,6 +887,7 @@ async function boot() {
   const availability = await harmony.audio.availability();
   state.audioAvailable = availability.available;
   state.audioUnavailableReason = availability.reason;
+  state.audioExclusion = Boolean(availability.exclusion);
 
   await refreshGpuStatus();
 
@@ -3508,7 +3512,15 @@ async function joinVoice(channel, password) {
       // the path is readable.
       if (state.voice.hasMissingVideo) {
         state.voice.syncVideo()
-          .then((r) => { if (r.changed) renderChannelVideo(); })
+          .then((r) => {
+            if (r.changed) renderChannelVideo();
+            // As for audio above: a refused subscription needs a new token.
+            const refused = r.missed?.some(
+              (m) => m.reason === 'unauthorized' || m.reason === 'media_error',
+            );
+            if (refused) return refreshVoiceTokens();
+            return undefined;
+          })
           .catch(() => { /* retried on the next tick */ });
       }
     }, VOICE_RECONCILE_MS), 'voice');
@@ -3895,6 +3907,21 @@ function voiceRow(member) {
  * reaches the native one. The fill and the tick are painted from two custom
  * properties set here, because a range input has no CSS-visible value.
  */
+/**
+ * Colour a slider's track up to its thumb.
+ *
+ * The track is one background with a hard stop at --fill, so a slider that
+ * never sets it shows no fill at all -- which is what the size and
+ * sensitivity sliders looked like next to the volume ones. For a slider
+ * that is not a volume; showVolume does this and the 100% tick as well.
+ */
+function paintRange(slider) {
+  const min = Number(slider.min) || 0;
+  const span = (Number(slider.max) || 100) - min;
+  const fraction = span > 0 ? (Number(slider.value) - min) / span : 0;
+  slider.style.setProperty('--fill', `${Math.min(1, Math.max(0, fraction)) * 100}%`);
+}
+
 function showVolume(slider, label, percent, muted = false) {
   slider.value = String(percent);
   const max = Number(slider.max) || 100;
@@ -4962,11 +4989,10 @@ function applyMicTuning() {
   const gain = Number(state.settings.micGain ?? 100);
   const sensitivity = Number(state.settings.micSensitivity ?? 0);
 
-  el.micGain.value = String(gain);
-  el.micGainLabel.textContent = `${gain}%`;
-  el.micGainLabel.toggleAttribute('data-boosted', gain > 100);
+  showVolume(el.micGain, el.micGainLabel, gain);
 
   el.micGate.value = String(sensitivity);
+  paintRange(el.micGate);
   el.micGateLabel.textContent = sensitivity === 0 ? 'Off' : String(sensitivity);
 
   const threshold = gateThreshold(sensitivity);
@@ -7618,6 +7644,7 @@ const SCALE_DEFAULT = harmony.scaleDefault ?? 115;
 async function applyScale(percent, { save = true } = {}) {
   const used = await harmony.setScale(percent);
   el.uiScale.value = String(used);
+  paintRange(el.uiScale);
   el.scaleValue.textContent = `${used}%`;
   if (save) {
     await harmony.settings.set({ uiScale: used });
@@ -8608,7 +8635,7 @@ async function loadProcesses() {
   for (const proc of others) {
     const option = document.createElement('option');
     option.value = String(proc.pid);
-    option.textContent = `${proc.name} — ${proc.title.slice(0, 40)}`;
+    option.textContent = proc.title ? `${proc.name} — ${proc.title.slice(0, 40)}` : proc.name;
     el.excludeApp.append(option);
   }
 
@@ -8771,7 +8798,7 @@ function audioPlan(forSource) {
   // Chromium's loopback needs a getDisplayMedia call a composition never
   // makes.
   if (kind === 'composite') {
-    if (!state.audioAvailable) {
+    if (!state.audioExclusion) {
       return { via: 'none', note: 'A composition is shared without sound on this machine.', warn: true };
     }
     const excluded = state.processes.find((p) => String(p.pid) === el.excludeApp.value);
@@ -8794,21 +8821,24 @@ function audioPlan(forSource) {
     return { via: 'device', note: `Viewers will hear ${label}.`, warn: false };
   }
 
-  if (state.audioAvailable) {
-    if (kind === 'window') {
-      return { via: 'native', note: 'Viewers will hear only this application.', warn: false };
-    }
-    const excluded = state.processes.find((p) => String(p.pid) === el.excludeApp.value);
-    return {
-      via: 'native',
-      note: excluded
-        ? `Viewers will hear system audio, except ${excluded.name}.`
-        : 'Viewers will hear all system audio.',
-      warn: false,
-    };
+  if (state.audioAvailable && kind === 'window') {
+    return { via: 'native', note: 'Viewers will hear only this application.', warn: false };
   }
 
   if (kind === 'screen') {
+    const excluded = state.processes.find((p) => String(p.pid) === el.excludeApp.value);
+    // Windows has the addon for everything. Elsewhere the native capture is a
+    // helper process, so it is only started when there is something to leave
+    // out; sharing it all is exactly what Chromium's own loopback does.
+    if (state.audioExclusion && (state.audioAvailable || excluded)) {
+      return {
+        via: 'native',
+        note: excluded
+          ? `Viewers will hear system audio, except ${excluded.name}.`
+          : 'Viewers will hear all system audio.',
+        warn: false,
+      };
+    }
     return { via: 'chromium', note: 'Viewers will hear all system audio.', warn: false };
   }
 
@@ -8831,8 +8861,8 @@ function updateAudioNote() {
   const kind = state.selectedSource?.kind ?? state.activeKind;
 
   el.fallbackField.hidden = state.audioAvailable || kind !== 'window';
-  // Excluding an app needs the native per-process capture.
-  el.excludeField.hidden = !['screen', 'composite'].includes(kind) || !state.audioAvailable;
+  // Excluding an app needs a native capture: the addon, or the platform's own.
+  el.excludeField.hidden = !['screen', 'composite'].includes(kind) || !state.audioExclusion;
   el.audioInputField.hidden = kind !== 'camera';
 
   const plan = audioPlan();
@@ -10299,7 +10329,19 @@ function closeAddStream() {
 // ---------------------------------------------------------------------------
 
 async function teardown() {
-  clearTimers();
+  /*
+   * Every group EXCEPT 'voice'.
+   *
+   * Stopping a share, or leaving a flat stream, does not leave the voice
+   * channel -- but a bare clearTimers() took the channel's timers with it:
+   * the token renewal and the reconcile tick. The call carried on looking
+   * healthy, the channel token expired ten minutes later, and from then on
+   * nobody's new screen share could be subscribed to (401, swallowed) until
+   * a reconnect rebuilt the timers.
+   */
+  for (const group of Object.keys(state.timers)) {
+    if (group !== 'voice') clearTimers(group);
+  }
 
   /*
    * A channel share is torn down differently from a flat one, in two ways
@@ -10441,8 +10483,13 @@ for (const handle of document.querySelectorAll('.col-resizer')) {
   const key = handle.dataset.resize;
   const column = handle.parentElement;
   handle.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
+    // Ctrl-click is a right click on macOS: it opens the context menu, which
+    // swallows the mouse-up, and the drag below would never be told to stop.
+    if (event.button !== 0 || event.ctrlKey) return;
     event.preventDefault();
+    // A selection already in progress under the pointer would turn this into
+    // a text drag, which is an OS-level drag that also eats the mouse-up.
+    window.getSelection()?.removeAllRanges();
     handle.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const startWidth = column.getBoundingClientRect().width;
@@ -10452,22 +10499,42 @@ for (const handle of document.querySelectorAll('.col-resizer')) {
     handle.toggleAttribute('data-dragging', true);
     document.documentElement.toggleAttribute('data-resizing', true);
 
-    const move = (e) => {
-      // getBoundingClientRect and clientX are both in the zoomed page's own
-      // pixels, so the UI size setting needs no correction here.
-      width = applyColumnWidth(key, startWidth + sign * (e.clientX - startX));
-    };
+    /*
+     * Everything that can end the drag, not only the pointerup.
+     *
+     * A drag that waits for exactly one event is a drag that stays stuck
+     * when that event never comes -- and on macOS there are several ways it
+     * does not: a context menu, a native drag starting, the window losing
+     * focus mid-drag. So any of those finishes it, and so does a move
+     * report that says no button is down any more.
+     */
+    const stop = new AbortController();
     const done = () => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', done);
-      handle.removeEventListener('pointercancel', done);
+      if (stop.signal.aborted) return;
+      stop.abort();
+      try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
       handle.removeAttribute('data-dragging');
       document.documentElement.removeAttribute('data-resizing');
       saveColumnWidth(key, width);
     };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', done);
-    handle.addEventListener('pointercancel', done);
+    const on = { signal: stop.signal };
+
+    handle.addEventListener('pointermove', (e) => {
+      if (e.buttons === 0) return done();
+      // getBoundingClientRect and clientX are both in the zoomed page's own
+      // pixels, so the UI size setting needs no correction here.
+      width = applyColumnWidth(key, startWidth + sign * (e.clientX - startX));
+      return undefined;
+    }, on);
+    handle.addEventListener('pointerup', done, on);
+    handle.addEventListener('pointercancel', done, on);
+    handle.addEventListener('lostpointercapture', done, on);
+    window.addEventListener('pointerup', done, on);
+    window.addEventListener('blur', done, on);
+    document.addEventListener('contextmenu', done, on);
+    document.addEventListener('dragend', done, on);
+    // No native drag may start while this one is running.
+    document.addEventListener('dragstart', (e) => e.preventDefault(), on);
   });
   // Back to the full width.
   handle.addEventListener('dblclick', () => saveColumnWidth(key, applyColumnWidth(key, null)));
@@ -10814,9 +10881,51 @@ el.voiceConfig.addEventListener('click', () => {
   applyScale(state.settings?.uiScale ?? SCALE_DEFAULT, { save: false });
   applyMicTuning();
   startMicMeter();
+  showSettingsTab(
+    el.devicesDialog.querySelector('.settings-tab[aria-selected="true"]')?.dataset.tab ?? 'appearance',
+  );
   refreshVoiceDevices().catch((err) => deviceNote(err.message));
 });
 el.devicesDialog.addEventListener('close', stopMicMeter);
+
+/*
+ * The menu down the left of Settings.
+ *
+ * Only a choice of which page is on screen: every control keeps living in
+ * the one dialog and applies as it changes, so switching pages loses
+ * nothing. Entries a build does not have (data-cap) are hidden by CSS, so
+ * the arrow keys step over them rather than landing on nothing.
+ */
+const settingsTabs = () => [...el.devicesDialog.querySelectorAll('.settings-tab')]
+  .filter((tab) => tab.offsetParent !== null);
+
+function showSettingsTab(name) {
+  for (const tab of el.devicesDialog.querySelectorAll('.settings-tab')) {
+    const on = tab.dataset.tab === name;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+  }
+  for (const page of el.devicesDialog.querySelectorAll('.settings-page')) {
+    page.hidden = page.dataset.page !== name;
+  }
+  el.devicesDialog.querySelector('.settings-pages').scrollTop = 0;
+}
+
+el.devicesDialog.querySelector('.settings-nav').addEventListener('click', (event) => {
+  const tab = event.target.closest('.settings-tab');
+  if (tab) showSettingsTab(tab.dataset.tab);
+});
+el.devicesDialog.querySelector('.settings-nav').addEventListener('keydown', (event) => {
+  const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
+  if (!step) return;
+  const tabs = settingsTabs();
+  const at = tabs.findIndex((tab) => tab.getAttribute('aria-selected') === 'true');
+  const next = tabs[(at + step + tabs.length) % tabs.length];
+  if (!next) return;
+  event.preventDefault();
+  showSettingsTab(next.dataset.tab);
+  next.focus();
+});
 
 /*
  * Input volume and sensitivity.
@@ -10991,7 +11100,10 @@ el.chatInput.addEventListener('keydown', (event) => {
  * commit on release and getting it wrong when the pointer leaves the
  * window mid-drag.
  */
-el.uiScale.addEventListener('input', () => applyScale(Number(el.uiScale.value)));
+el.uiScale.addEventListener('input', () => {
+  paintRange(el.uiScale);
+  applyScale(Number(el.uiScale.value));
+});
 
 const nudgeScale = (delta) => applyScale(Number(el.uiScale.value) + delta);
 el.scaleDown.addEventListener('click', () => nudgeScale(-5));

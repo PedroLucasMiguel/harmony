@@ -26,7 +26,7 @@
 // `node scripts/build.js release --win zip` works. An explicit
 // ELECTRON_BUILDER_COMPRESSION_LEVEL in the environment still wins.
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const LEVELS = { fast: '3', release: '9' };
@@ -39,6 +39,12 @@ env.ELECTRON_BUILDER_COMPRESSION_LEVEL ??= LEVELS[mode];
 // Same reason as scripts/start.js: inherited from some tools' terminals, and
 // it turns every Electron binary electron-builder runs into plain Node.
 delete env.ELECTRON_RUN_AS_NODE;
+
+// The macOS audio helper has to exist before the app is packaged: a mac build
+// that quietly lacked it would ship an "exclude this app" picker that cannot
+// do anything. (A no-op everywhere but macOS.)
+const native = spawnSync(process.execPath, [path.join(__dirname, 'build-native.js')], { stdio: 'inherit' });
+if (native.status !== 0) process.exit(native.status ?? 1);
 
 const cli = require.resolve('electron-builder/cli.js');
 const targets = args.length ? args : ['--win', 'nsis'];

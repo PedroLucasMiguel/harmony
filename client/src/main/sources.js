@@ -110,6 +110,10 @@ $out | ConvertTo-Json -Compress
  * browsers and games all qualify, while service noise does not.
  */
 function listProcesses() {
+  // macOS and Linux have no window-owner shortcut, so each backend lists what
+  // it can actually exclude; see audio-mac.js and audio-linux.js.
+  if (process.platform === 'darwin') return require('./audio-mac').listProcesses();
+  if (process.platform === 'linux') return require('./audio-linux').listProcesses();
   if (process.platform !== 'win32') return Promise.resolve([]);
 
   const script = `

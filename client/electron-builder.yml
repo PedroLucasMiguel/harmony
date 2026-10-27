@@ -131,6 +131,12 @@ mac:
   identity: '-'
   hardenedRuntime: false
   category: public.app-category.social-networking
+  # The ScreenCaptureKit helper that keeps one app out of a screen share's
+  # audio, built by scripts/build-native.js. In Resources/ rather than inside
+  # the asar, because it is run as a program.
+  extraResources:
+    - from: build/native/harmony-audio-capture
+      to: harmony-audio-capture
   # Screen and audio capture need these on macOS 10.15+.
   extendInfo:
     NSCameraUsageDescription: Harmony can share a webcam or capture card as your video source.

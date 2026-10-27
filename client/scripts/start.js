@@ -19,8 +19,12 @@
 // plain Node, so `require('electron')` returns the path to the binary
 // rather than the module.
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
+
+// macOS: the audio helper, when it is missing or older than its source. Never
+// fatal here -- without it the app still runs, and says why on the picker.
+spawnSync(process.execPath, [path.join(__dirname, 'build-native.js'), '--if-stale'], { stdio: 'inherit' });
 
 const electron = require('electron');
 

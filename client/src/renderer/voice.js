@@ -945,6 +945,7 @@ export class VoiceSession {
     }
 
     let changed = false;
+    const missed = [];
     for (const [key, { mid, kind }] of wanted) {
       if (this.#closedVideo.has(key)) continue;
       if (this.#video.has(key) || this.#openingVideo.has(key)) continue;
@@ -970,14 +971,17 @@ export class VoiceSession {
         sink.set(this.#tileGains.get(key) ?? 1);
         this.#video.set(key, { pc, stream, sink, mid, kind });
         changed = true;
-      } catch {
-        // 404 while the path warms up. The caller's timer comes back.
+      } catch (err) {
+        // 404 while the path warms up. The caller's timer comes back. Anything
+        // else is reported, so a refused token can be renewed rather than
+        // retried unchanged for ever -- see syncPeers.
+        missed.push({ key, reason: err?.code ?? err?.message ?? 'failed' });
       } finally {
         this.#openingVideo.delete(key);
       }
       await new Promise((r) => setTimeout(r, SUBSCRIBE_STAGGER_MS));
     }
-    return { tiles: this.#video.size, changed };
+    return { tiles: this.#video.size, changed, missed };
   }
 
   /** True while somebody is publishing video we have not managed to open. */

@@ -399,6 +399,7 @@ export const harmony = {
   audio: {
     availability: async () => ({
       available: false,
+      exclusion: false,
       reason: 'Sharing an application\'s sound needs the desktop app.',
     }),
     start: async () => { throw unsupported('Application audio'); },
