@@ -79,7 +79,7 @@ jobs:
             exit 0
           fi
           echo "$MAC_SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/harmony-mac-signing.p12"
-          scripts/mac-signing-keychain.sh "$RUNNER_TEMP/harmony-mac-signing.p12" "$MAC_SIGNING_P12_PASSWORD" >> "$GITHUB_ENV"
+          bash scripts/mac-signing-keychain.sh "$RUNNER_TEMP/harmony-mac-signing.p12" "$MAC_SIGNING_P12_PASSWORD" >> "$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/harmony-mac-signing.p12"
 
       # --publish never: this job only builds. The publish config in
