@@ -246,10 +246,21 @@ function createWindow() {
    * outlives the setting that asked for it. Setting it from settings.json
    * at every load makes the file the only thing that decides.
    *
-   * did-finish-load, not ready-to-show: a zoom factor set before the
-   * document exists is discarded by the load that follows it.
+   * Not ready-to-show, and not only did-finish-load: a zoom factor set
+   * before the document exists is discarded by the load that follows it, but
+   * did-finish-load waits for every subresource -- and the window is already
+   * showing by then. Chromium has put the zoom it REMEMBERS on the page at
+   * commit, so when that differs from the file (a size that was changed in an
+   * earlier version, or a fresh profile still at 100%) the login screen was
+   * painted at one size and snapped to another a moment later, which looked
+   * like the interface recalculating itself.
+   *
+   * So it is set at commit and again when the DOM is ready, both before
+   * anything has been painted, and once more on load as the backstop.
    */
-  win.webContents.on('did-finish-load', () => applyScale());
+  for (const event of ['did-navigate', 'dom-ready', 'did-finish-load']) {
+    win.webContents.on(event, () => applyScale());
+  }
 
   /*
    * The window is shown the moment it exists, not on ready-to-show.

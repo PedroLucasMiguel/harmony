@@ -520,7 +520,13 @@ const state = {
   share: { target: null },
   /** Android's screen share, published natively: { channelId } while on. */
   nativeShare: null,
-  chat: { channelId: null, messages: [], pinned: [], searching: false, pendingFile: null, replyTo: null },
+  chat: {
+    channelId: null, messages: [], pinned: [], searching: false, pendingFile: null, replyTo: null,
+    /** Where each channel was scrolled to when it was left, for this session. See rememberChatScroll. */
+    scrolls: new Map(),
+    /** Whether the log is showing a channel's history, which is the only thing worth remembering a position in. */
+    showsHistory: false,
+  },
   soundpad: { clips: [] },
   /**
    * The server's own emoji.
@@ -5514,6 +5520,10 @@ function renderChannelVideo() {
 // ---------------------------------------------------------------------------
 
 async function openTextChannel(channel) {
+  // Before channelId changes and before anything is redrawn: the log still
+  // shows the channel being left, and this is the only moment it can be read.
+  rememberChatScroll();
+  state.chat.showsHistory = false;
   state.chat.channelId = channel.id;
   setReply(null);
   // Whatever was waiting to be sent was waiting to be sent HERE. Carrying
@@ -5537,15 +5547,90 @@ async function openTextChannel(channel) {
     // Answered after somebody moved on -- to another channel, or signed out
     // and into another server -- it belongs to nothing on screen any more.
     if (state.server !== server || state.chat.channelId !== channel.id) return;
-    state.chat.messages = messages;
+    // The first time this session, the bottom: that is where the newest
+    // messages are. After that, where it was left -- somebody who scrolled
+    // up to read something and went to look at another channel did not ask
+    // to be thrown back down to the end.
+    const saved = state.chat.scrolls.get(chatScrollKey(channel.id));
+    const wantsPlace = saved && !saved.atBottom;
+    const history = wantsPlace
+      ? await pageBackTo(server, channel.id, messages, saved.anchorId)
+      : messages;
+    if (state.server !== server || state.chat.channelId !== channel.id) return;
+    state.chat.messages = history;
     state.chat.pinned = pinned;
-    renderChat({ scrollToBottom: true });
+    state.chat.showsHistory = true;
+    renderChat({ scrollToBottom: true, restore: wantsPlace ? saved : null });
     // Pinned attachments are part of the keep-set: they are the things
     // somebody decided were worth coming back to, so they survive eviction.
     await refreshKeepSet();
   } catch (err) {
     showChannelsError(err.message);
   }
+}
+
+const CHAT_BOTTOM_PX = 40;
+
+const chatScrollKey = (channelId) => `${state.server}#${channelId}`;
+
+/**
+ * Remember where the open channel is scrolled to, for when it comes back.
+ *
+ * Not a pixel offset: the history is fetched again on every open and a
+ * message may have arrived, been deleted or been edited since, so a number of
+ * pixels from the top would land somewhere else. What is kept is the first
+ * message in view and how far down the view it sits -- the same thing a
+ * reader would say ("I was at that one") -- or just "at the end", which means
+ * the next visit shows the newest messages rather than the ones that were
+ * newest then.
+ *
+ * Skipped when there is nothing true to record: a log showing search
+ * results is not the channel, and one that is not on screen reports a height
+ * of zero and would be remembered as "at the bottom".
+ */
+function rememberChatScroll() {
+  const id = state.chat.channelId;
+  const log = el.chatLog;
+  if (id == null || !state.chat.showsHistory || !log.clientHeight) return;
+
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < CHAT_BOTTOM_PX;
+  let place = { atBottom: true };
+  if (!atBottom) {
+    const top = log.getBoundingClientRect().top;
+    for (const row of log.children) {
+      const box = row.getBoundingClientRect();
+      if (row.dataset.id && box.bottom > top + 1) {
+        place = { atBottom: false, anchorId: Number(row.dataset.id), offset: box.top - top };
+        break;
+      }
+    }
+  }
+  state.chat.scrolls.set(chatScrollKey(id), place);
+}
+
+/**
+ * Load older pages until the message the reader was at is among them.
+ *
+ * The server sends the newest page, and where somebody left off may be
+ * above it (they had jumped to a pin, say). Stops once it has gone past the
+ * anchor -- ids only grow, so a message that was deleted meanwhile does not
+ * send this to the start of the channel -- or after the same bounded number
+ * of pages jumpToMessage allows.
+ */
+async function pageBackTo(server, channelId, messages, anchorId) {
+  let list = messages;
+  for (let page = 0; page < JUMP_MAX_PAGES && list.length && list[0].id > anchorId; page += 1) {
+    let older;
+    try {
+      ({ messages: older } = await harmony.api.messages(server, channelId, list[0].id));
+    } catch {
+      break;
+    }
+    if (!older?.length) break;
+    list = [...older, ...list];
+    if (state.server !== server || state.chat.channelId !== channelId) break;
+  }
+  return list;
 }
 
 /**
@@ -5558,6 +5643,8 @@ async function openTextChannel(channel) {
  * one's conversation.
  */
 function resetChat() {
+  state.chat.scrolls.clear();
+  state.chat.showsHistory = false;
   state.chat.channelId = null;
   state.chat.messages = [];
   state.chat.pinned = [];
@@ -5570,6 +5657,8 @@ function resetChat() {
 }
 
 function closeChat() {
+  rememberChatScroll();
+  state.chat.showsHistory = false;
   state.chat.channelId = null;
   if (el.voiceActive.hidden) el.voiceIdle.hidden = false;
   applyStage();
@@ -7413,7 +7502,7 @@ function messageRow(message, previous) {
  * reading back through history gets yanked to the end by every new message
  * that arrives.
  */
-function renderChat({ scrollToBottom = false } = {}) {
+function renderChat({ scrollToBottom = false, restore = null } = {}) {
   const log = el.chatLog;
   const wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 
@@ -7445,6 +7534,17 @@ function renderChat({ scrollToBottom = false } = {}) {
     );
   } else {
     el.chatPinned.hidden = true;
+  }
+
+  // Back where it was left: the first message at or after the one that was at
+  // the top of the view (the same one, unless it has been deleted), put the
+  // same distance from the top. Falls through to the bottom if it is gone.
+  if (restore && !restore.atBottom) {
+    const target = [...log.children].find((row) => Number(row.dataset.id) >= restore.anchorId);
+    if (target) {
+      log.scrollTop += target.getBoundingClientRect().top - log.getBoundingClientRect().top - restore.offset;
+      return;
+    }
   }
 
   if (scrollToBottom || wasAtBottom) log.scrollTop = log.scrollHeight;
@@ -7560,6 +7660,10 @@ async function runSearch() {
 
   try {
     const { mode, results } = await harmony.api.search(state.server, state.chat.channelId, query);
+    // The history is about to be replaced by results: keep the place in it,
+    // so clearing the search comes back to where the search was started from.
+    rememberChatScroll();
+    state.chat.showsHistory = false;
     state.chat.searching = true;
     state.chat.messages = results.slice().reverse();
     el.chatSearchClear.hidden = false;
@@ -12105,6 +12209,18 @@ function swipeIgnored(target) {
   if (target.closest?.('input, textarea, select, dialog, .emoji-pop, .soundpad, .lightbox, .row-menu, .peer-menu')) {
     return true;
   }
+  /*
+   * Nothing inside a drawer scrolls sideways on purpose, so a drag that
+   * starts on a channel or a person is always the drawer's to take.
+   *
+   * The check below cannot tell on purpose from by accident: a list with
+   * overflow-y: auto is overflow-x: auto as well, and one long name that is
+   * a few pixels wider than the drawer makes the whole list "a strip that
+   * scrolls sideways". From then on every swipe that began on a row was
+   * refused -- which is why closing a drawer worked from some places and
+   * not others, depending on who was in the list.
+   */
+  if (target.closest?.('.channel-list, .member-list')) return false;
   // A strip that scrolls sideways itself: a code block, a wide table.
   for (let node = target; node && node !== document.body; node = node.parentElement) {
     if (node.scrollWidth > node.clientWidth + 1) {

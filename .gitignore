@@ -53,3 +53,5 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+media/harmony-demo.mp4

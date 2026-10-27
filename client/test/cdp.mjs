@@ -3,17 +3,18 @@
 
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const appDir = resolve(here, '..');
-export const electronBin = resolve(
-  appDir,
-  'node_modules',
-  'electron',
-  'dist',
-  process.platform === 'win32' ? 'electron.exe' : 'electron',
-);
+// Where Electron keeps its binary depends on the OS: a .exe on Windows, and
+// inside the .app bundle on macOS.
+const ELECTRON_BINARY = {
+  win32: 'electron.exe',
+  darwin: join('Electron.app', 'Contents', 'MacOS', 'Electron'),
+}[process.platform] ?? 'electron';
+
+export const electronBin = resolve(appDir, 'node_modules', 'electron', 'dist', ELECTRON_BINARY);
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -75,8 +76,15 @@ export async function attach(page) {
   const pending = new Map();
   let nextId = 1;
 
+  // Events the page pushes (screencast frames, console output...), by method.
+  const listeners = new Map();
+
   ws.addEventListener('message', (event) => {
     const msg = JSON.parse(event.data);
+    if (msg.id === undefined && msg.method) {
+      for (const fn of listeners.get(msg.method) ?? []) fn(msg.params);
+      return;
+    }
     const slot = pending.get(msg.id);
     if (!slot) return;
     pending.delete(msg.id);
@@ -118,6 +126,11 @@ export async function attach(page) {
     },
     /** Raw CDP, for the things Runtime.evaluate cannot reach. */
     send,
+    /** Listen for a CDP event, e.g. 'Page.screencastFrame'. */
+    on(method, fn) {
+      if (!listeners.has(method)) listeners.set(method, new Set());
+      listeners.get(method).add(fn);
+    },
 
     /**
      * Resize the viewport as a user dragging the window would, so CSS media

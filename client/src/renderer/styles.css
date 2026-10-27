@@ -1345,6 +1345,11 @@ select:focus {
   width: 100%;
   max-width: none;
 }
+/* The narrow-window rule that drops inline field labels is for toolbars whose
+   controls say what they are. Here three selects all read "System default". */
+#devices .voice-devices .field.inline > span {
+  display: block;
+}
 #voice-device-note {
   /* Its own line under the three, rather than squeezing in as a fourth. */
   flex: 1 0 100%;
@@ -3888,20 +3893,39 @@ input.switch:focus-visible {
   outline-offset: 2px;
 }
 
+/*
+ * A phone: the dialog IS the screen, the menu becomes a tab bar along the top,
+ * and everything is sized for a thumb.
+ *
+ * Full-bleed rather than a card with a margin, because a 390 px screen has no
+ * room to spare for a frame -- and the status bar and the gesture bar are
+ * drawn over the page (viewport-fit=cover), so the insets are added by hand:
+ * a dialog is in the top layer and does not inherit the body's padding.
+ */
 @media (max-width: 640px) {
   #devices {
-    height: 92vh;
+    width: 100vw;
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: none;
+    border-radius: 0;
   }
   .settings-shell {
     flex-direction: column;
   }
-  /* The menu becomes a row of tabs along the top. */
   .settings-nav {
     flex: none;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.2rem;
-    padding: 0.6rem;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(4.6rem, 1fr);
+    gap: 0.25rem;
+    padding: calc(0.5rem + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)))
+      calc(0.5rem + var(--safe-area-inset-right, env(safe-area-inset-right, 0px)))
+      0.5rem
+      calc(0.5rem + var(--safe-area-inset-left, env(safe-area-inset-left, 0px)));
     border-right: none;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
@@ -3910,9 +3934,88 @@ input.switch:focus-visible {
   .settings-nav h2 {
     display: none;
   }
+  /* Icon over label, so a tab does not need a word's width of room beside it. */
   .settings-tab {
-    width: auto;
-    white-space: nowrap;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.2rem;
+    min-height: 3.4rem;
+    padding: 0.4rem 0.25rem;
+    font-size: 0.72rem;
+    line-height: 1.15;
+    text-align: center;
+    white-space: normal;
+  }
+  .settings-tab-icon::before {
+    width: 1.5em;
+    height: 1.5em;
+  }
+  .settings-pages {
+    padding: 0.9rem calc(0.9rem + var(--safe-area-inset-right, env(safe-area-inset-right, 0px)))
+      0.4rem calc(0.9rem + var(--safe-area-inset-left, env(safe-area-inset-left, 0px)));
+    overscroll-behavior: contain;
+  }
+  .settings-page-title {
+    font-size: 1.05rem;
+    margin-bottom: 0.7rem;
+  }
+  .setting-group {
+    padding: 0.8rem 0.85rem;
+  }
+  /* One device per row: three selects side by side are three slivers. */
+  .voice-devices .field.inline {
+    flex-basis: 100%;
+  }
+  .settings-footer {
+    padding: 0.7rem calc(0.9rem + var(--safe-area-inset-right, env(safe-area-inset-right, 0px)))
+      calc(0.7rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))
+      calc(0.9rem + var(--safe-area-inset-left, env(safe-area-inset-left, 0px)));
+  }
+  .settings-footer .primary {
+    width: 100%;
+    padding: 0.8rem 1rem;
+  }
+}
+
+/* A finger, wherever the screen is: bigger things to hit. */
+@media (pointer: coarse) {
+  #devices select {
+    min-height: 2.8rem;
+    font-size: 1rem;
+  }
+  #devices input[type='range'] {
+    height: 8px;
+    margin: 12px 0;
+  }
+  #devices input[type='range']::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+  }
+  .setting-toggle {
+    min-height: 3.4rem;
+  }
+  input.switch {
+    width: 3rem;
+    height: 1.7rem;
+  }
+  input.switch::before {
+    top: 0.2rem;
+    left: 0.2rem;
+    width: 1.3rem;
+    height: 1.3rem;
+  }
+  input.switch:checked::before {
+    transform: translateX(1.3rem);
+  }
+  .step-btn {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+  .theme-swatch {
+    padding: 0.4rem;
+  }
+  .settings-nav .settings-tab {
+    min-height: 2.75rem;
   }
 }
 
@@ -4094,10 +4197,26 @@ button.tiny:disabled {
 
 /* ---------- connect view ---------- */
 
+/*
+ * Anchored to the top, and the view itself is what scrolls.
+ *
+ * This was centred vertically with the card capped to the window and
+ * scrolling on its own. Centring means the block's position depends on its
+ * height, so every change to the height moved it: opening Options, a field
+ * appearing, a longer list of who is live. Worst was opening Options on a
+ * window it did not quite fit -- the block jumped up and left, grew a
+ * scrollbar of its own and the second column stretched to match, all at once,
+ * which reads as the whole screen shrinking and re-laying itself out.
+ *
+ * With the top fixed, what opens simply extends downward. The scrollbar's
+ * space is reserved (on both sides, so it stays centred) for the same reason:
+ * it appearing must not push the form sideways.
+ */
 #view-connect {
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
 }
 
 /*
@@ -4123,13 +4242,21 @@ button.tiny:disabled {
  */
 .connect-layout {
   display: flex;
-  align-items: safe center;
-  justify-content: safe center;
+  align-items: flex-start;
+  justify-content: center;
   gap: 36px;
+  /* A definite width, not shrink-to-fit: the card is min(480px, 100%) of this,
+     and a percentage of a width that depends on the card's own content is
+     whatever the content happens to be -- so opening Options, whose longest
+     line is wider than the form's, made the card jump from 444 px to 480. */
+  width: 100%;
   max-width: 100%;
-  max-height: 100%;
+  flex: none;
+  /* A fixed gap above rather than centring: see #view-connect. Proportional
+     to the window up to a point, so a tall one is not left with a form
+     stuck to the top edge. */
+  margin-top: clamp(0px, 8vh, 72px);
   padding: 24px;
-  min-height: 0;
 }
 
 /*
@@ -4140,13 +4267,6 @@ button.tiny:disabled {
 .connect-card {
   width: min(480px, 100%);
   max-width: 100%;
-  /* Never taller than the window; with every optional field showing (password,
-     GPU choice, the hybrid-GPU hint) it can be, and then it scrolls itself. */
-  max-height: 100%;
-  overflow-y: auto;
-  /* Reserve the scrollbar's width whether or not it is there, so the form does
-     not shift sideways the moment an optional field appears. */
-  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   /* 12, not 16: seven gaps down the card, so four pixels each is 28 of
@@ -4209,13 +4329,16 @@ button.tiny:disabled {
 .live-list {
   width: 300px;
   flex: none;
+  /* As tall as the form beside it, for the divider's sake... */
   align-self: stretch;
-  max-height: 100%;
   border-left: 1px solid var(--border);
   padding-left: 32px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* ...but its content from the top. Centred, it slid down the page by half
+     of whatever the form grew by. */
+  justify-content: flex-start;
+  padding-top: 0.5rem;
   min-height: 0;
 }
 .live-list h2 {
@@ -4237,6 +4360,8 @@ button.tiny:disabled {
      shrink below its content and pushes the page instead. */
   overflow-y: auto;
   min-height: 0;
+  /* Capped by the window, since nothing above bounds it any more. */
+  max-height: calc(100vh - 9rem);
   /* Room for the scrollbar so it never sits on top of the viewer counts. */
   padding-right: 2px;
 }
@@ -5085,7 +5210,6 @@ input[type='range'][data-boosted] {
     flex-direction: column;
     align-items: center;
     gap: 0;
-    overflow-y: auto;
     padding: 16px;
   }
   .connect-card {
@@ -5278,6 +5402,34 @@ input[type='range'][data-boosted] {
   .member-list {
     right: 0;
     transform: translateX(105%);
+  }
+  /*
+   * Sideways belongs to the swipe that closes a drawer (see "Swiping the
+   * drawers" in app.js), not to the browser.
+   *
+   * Set on everything inside rather than on the drawer: touch-action is only
+   * combined up to the nearest scrolling ancestor, and the list that scrolls
+   * is a child of the drawer, so a value on the drawer never reached a finger
+   * resting on a row. pan-y keeps the list scrolling up and down, and stops
+   * the list itself being dragged sideways -- which it can be, by a few pixels,
+   * when one name is wider than the drawer. Images are not for dragging out of
+   * the list either: an avatar is the likeliest thing to be under a thumb.
+   */
+  .channel-list,
+  .member-list,
+  .channel-list *,
+  .member-list * {
+    touch-action: pan-y;
+  }
+  /* clip, not hidden: hidden would make the drawer a scroll container too. */
+  .channel-list,
+  .member-list {
+    overflow-x: clip;
+  }
+  .channel-list img,
+  .member-list img {
+    -webkit-user-drag: none;
+    -webkit-touch-callout: none;
   }
   .channels-layout[data-drawer='channels'] .channel-list,
   .channels-layout[data-drawer='members'] .member-list {
