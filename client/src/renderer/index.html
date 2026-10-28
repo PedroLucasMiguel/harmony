@@ -11,6 +11,7 @@
     <title>Harmony</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="icons.css" />
+    <link rel="stylesheet" href="fonts.css" />
   </head>
   <body>
     <!-- ================= Connect ================= -->
@@ -23,14 +24,22 @@
                  would vanish on Daylight, so it is filled with the palette's
                  accent instead -- see .brand-logo. -->
             <span class="brand-logo" aria-hidden="true"></span>
-            <h1>Harmony</h1>
+            <h1 data-i18n="view.connect.harmony">Harmony</h1>
             <!-- Masks the address, the server names and the username, like
                  the password, for a screen being shared. See applyPrivacy. -->
-            <button type="button" class="ghost small icon-only privacy-toggle" id="privacy-toggle"
-                    data-icon="eye" title="Hide your details" aria-label="Hide your details"
-                    aria-pressed="false"></button>
+            <span class="brand-tools">
+              <!-- The language, here as well as in Settings: somebody who cannot
+                   read the screen cannot get as far as Settings to change it. -->
+              <label class="language-pick" data-i18n-title="settings.language.title" title="Language">
+                <span class="language-pick-icon" data-icon="globe" aria-hidden="true"></span>
+                <select id="login-language" data-i18n-aria-label="settings.language.title" aria-label="Language"></select>
+              </label>
+              <button type="button" class="ghost small icon-only privacy-toggle" id="privacy-toggle"
+                      data-icon="eye" title="Hide your details" aria-label="Hide your details"
+                      aria-pressed="false"></button>
+            </span>
           </div>
-          <p>Self-hosted voice, video and chat for your own community</p>
+          <p data-i18n="view.connect.self_hosted_voice_video">Self-hosted voice, video and chat for your own community</p>
         </header>
 
         <!--
@@ -44,36 +53,36 @@
         -->
         <div class="connect-step" id="step-server">
           <label class="field">
-            <span>Server address</span>
+            <span data-i18n="step_server.server_address">Server address</span>
             <input
               id="server-url"
               type="text"
               spellcheck="false"
               autocomplete="off"
-              placeholder="https://harmony.example.com or 192.168.1.50:8080"
+              placeholder="https://harmony.example.com or 192.168.1.50:8080" data-i18n-placeholder="step_server.https_harmony_example_com"
             />
           </label>
 
           <!-- Only once the server has said it wants one. -->
           <label class="field" id="password-field" hidden>
-            <span>Server password</span>
+            <span data-i18n="password_field.server_password">Server password</span>
             <input
               id="server-password"
               type="password"
               autocomplete="off"
-              placeholder="This server asks for one"
+              placeholder="This server asks for one" data-i18n-placeholder="password_field.this_server_asks_for"
             />
           </label>
 
-          <small class="connect-hint" id="server-hint"
+          <small class="connect-hint" id="server-hint" data-i18n="app.the_address_you_were_given"
             >The address you were given for your Harmony server.</small
           >
 
-          <button class="primary" id="server-continue">Continue</button>
+          <button class="primary" id="server-continue" data-i18n="app.continue">Continue</button>
           <!-- Only when step one was opened from "Add a server": a way back
                to the server you were already on, untouched. -->
           <p class="switch-auth" id="server-back-row" hidden>
-            <button type="button" class="linklike" id="server-back">Back to my servers</button>
+            <button type="button" class="linklike" id="server-back" data-i18n="server_back.back_to_my_servers">Back to my servers</button>
           </p>
         </div>
 
@@ -88,7 +97,7 @@
             it never scrolls away.
           -->
           <div class="field server-picker">
-            <span>Server</span>
+            <span data-i18n="step_account.server">Server</span>
             <button
               type="button"
               class="server-chip"
@@ -107,14 +116,14 @@
 
           <div id="account-fields">
             <label class="field">
-              <span>Username</span>
+              <span data-i18n="account_fields.username">Username</span>
               <input
                 id="username"
                 type="text"
                 spellcheck="false"
                 autocomplete="off"
                 maxlength="24"
-                placeholder="your-name"
+                placeholder="your-name" data-i18n-placeholder="account_fields.your_name"
               />
             </label>
 
@@ -129,24 +138,24 @@
             </label>
 
             <label class="field" id="account-confirm-field" hidden>
-              <span>Confirm password</span>
+              <span data-i18n="account_confirm_field.confirm_password">Confirm password</span>
               <input id="account-confirm" type="password" autocomplete="off" />
             </label>
 
             <label class="field" id="owner-key-field" hidden>
-              <span>Owner key</span>
+              <span data-i18n="owner_key_field.owner_key">Owner key</span>
               <input
                 id="owner-key"
                 type="text"
                 spellcheck="false"
                 autocomplete="off"
-                placeholder="Printed in the server log on first start"
+                placeholder="Printed in the server log on first start" data-i18n-placeholder="owner_key_field.printed_in_the_server"
               />
             </label>
 
             <label class="check">
               <input type="checkbox" id="remember-account" checked />
-              <span>Remember me</span>
+              <span data-i18n="account_fields.remember_me">Remember me</span>
             </label>
           </div>
 
@@ -172,11 +181,11 @@
             class="search-field"
             placeholder="Search servers"
             spellcheck="false"
-            autocomplete="off"
+            autocomplete="off" data-i18n-placeholder="server_menu.search_servers"
           />
           <ul class="server-options" id="server-options" role="listbox"></ul>
-          <p class="server-options-empty" id="server-options-empty" hidden>No servers match.</p>
-          <button type="button" class="server-add" id="server-add">+ Add a server</button>
+          <p class="server-options-empty" id="server-options-empty" hidden data-i18n="server_options_empty.no_servers_match">No servers match.</p>
+          <button type="button" class="server-add" id="server-add" data-i18n="server_add.add_a_server">+ Add a server</button>
         </div>
 
         <!-- Shown outside the collapsed section on purpose: nobody opens a
@@ -192,15 +201,15 @@
              taller than the window, which pushed the thing you came to click
              below the fold. -->
         <details class="options">
-          <summary>Options</summary>
+          <summary data-i18n="view.connect.options">Options</summary>
           <div class="options-body">
-            <button class="ghost small" id="test-connection">Test my connection</button>
+            <button class="ghost small" id="test-connection" data-i18n="test_connection.test_my_connection">Test my connection</button>
 
             <label class="check" data-cap="clips">
               <input type="checkbox" id="clips-enabled" />
               <span>
-                Keep the last 30 seconds for clipping
-                <small
+                <span data-i18n="view.connect.keep_the_last_30">Keep the last 30 seconds for clipping</span>
+                <small data-i18n="view.connect.buffers_already_compressed_video"
                   >Buffers already-compressed video in memory, so it costs little CPU. Roughly 30 MB
                   per stream at 1080p.</small
                 >
@@ -210,7 +219,7 @@
             <label class="check" data-cap="gpu">
               <input type="checkbox" id="hw-encoding" checked />
               <span>
-                Encode on the GPU
+                <span data-i18n="view.connect.encode_on_the_gpu">Encode on the GPU</span>
                 <small id="hw-encoding-note"
                   >Uses NVENC, AMF or Quick Sync when your graphics driver offers one. Turn it off
                   only if your stream looks corrupt to viewers.</small
@@ -219,11 +228,11 @@
             </label>
 
             <label class="field" id="gpu-preference-field" data-cap="gpu" hidden>
-              <span>Run Harmony on</span>
+              <span data-i18n="gpu_preference_field.run_harmony_on">Run Harmony on</span>
               <select id="gpu-preference">
-                <option value="auto">Whichever GPU Windows picks</option>
-                <option value="dedicated">The dedicated GPU — normally the right one</option>
-                <option value="integrated">The integrated GPU</option>
+                <option value="auto" data-i18n="gpu_preference.whichever_gpu_windows_picks">Whichever GPU Windows picks</option>
+                <option value="dedicated" data-i18n="gpu_preference.the_dedicated_gpu_normally">The dedicated GPU — normally the right one</option>
+                <option value="integrated" data-i18n="gpu_preference.the_integrated_gpu">The integrated GPU</option>
               </select>
               <small></small>
             </label>
@@ -236,8 +245,8 @@
            would sit off the bottom of the screen. -->
       <aside class="live-list" id="live-list" hidden>
         <div class="live-head-row">
-          <h2>Live now</h2>
-          <button class="ghost small" id="watch-all">Watch all</button>
+          <h2 data-i18n="live_list.live_now">Live now</h2>
+          <button class="ghost small" id="watch-all" data-i18n="watch_all.watch_all">Watch all</button>
         </div>
         <ul id="live-items"></ul>
       </aside>
@@ -263,7 +272,7 @@
         <div id="ask-fields"></div>
         <p class="error" id="ask-error" hidden></p>
         <div class="ask-buttons">
-          <button type="button" class="ghost" id="ask-cancel">Cancel</button>
+          <button type="button" class="ghost" id="ask-cancel" data-i18n="ask_cancel.cancel">Cancel</button>
           <button type="submit" class="primary" id="ask-ok">OK</button>
         </div>
       </form>
@@ -277,12 +286,12 @@
     -->
     <dialog id="hotkey-recorder" class="ask">
       <h2 id="hotkey-recorder-title">Set a hotkey</h2>
-      <p class="muted">Press the combination you want. Esc cancels.</p>
+      <p class="muted" data-i18n="hotkey_recorder.press_the_combination_you">Press the combination you want. Esc cancels.</p>
       <div class="hotkey-capture" id="hotkey-capture">Waiting for keys&hellip;</div>
       <p class="error" id="hotkey-recorder-error" hidden></p>
       <div class="ask-buttons">
-        <button type="button" class="ghost" id="hotkey-recorder-clear">Remove hotkey</button>
-        <button type="button" class="ghost" id="hotkey-recorder-cancel">Cancel</button>
+        <button type="button" class="ghost" id="hotkey-recorder-clear" data-i18n="hotkey_recorder_clear.remove_hotkey">Remove hotkey</button>
+        <button type="button" class="ghost" id="hotkey-recorder-cancel" data-i18n="hotkey_recorder_cancel.cancel">Cancel</button>
       </div>
     </dialog>
 
@@ -296,7 +305,7 @@
           <!-- A phone only: the channel list is a drawer there, and this opens
                it. See the narrow-screen rules at the end of styles.css. -->
           <button class="ghost small narrow-only" id="channels-menu"
-                  title="Channels" aria-label="Channels" data-icon="list"></button>
+                  title="Channels" aria-label="Channels" data-icon="list" data-i18n-title="view.channels.channels" data-i18n-aria-label="view.channels.channels"></button>
           <span class="server-badge" id="server-icon" aria-hidden="true"></span>
           <strong class="brand-small" id="server-name">Harmony</strong>
           <span class="muted" id="channels-role"></span>
@@ -322,12 +331,12 @@
             data-icon="gear-six"
             title="Server settings"
             aria-label="Server settings"
-            hidden
+            hidden data-i18n-title="view.channels.server_settings" data-i18n-aria-label="view.channels.server_settings"
           ></button>
           <button class="ghost small icon-only" id="channels-members" data-icon="users"
-                  title="Show or hide the member list" aria-label="Members"></button>
+                  title="Show or hide the member list" aria-label="Members" data-i18n-title="view.channels.show_or_hide_the" data-i18n-aria-label="view.channels.members"></button>
           <button class="ghost small icon-only" id="channels-signout" data-icon="sign-out"
-                  title="Sign out" aria-label="Sign out"></button>
+                  title="Sign out" aria-label="Sign out" data-i18n-title="view.channels.sign_out" data-i18n-aria-label="view.channels.sign_out"></button>
         </div>
       </header>
 
@@ -335,11 +344,11 @@
         <aside class="channel-list">
           <!-- Drag to narrow the column; double-click for full width. -->
           <div class="col-resizer" data-resize="side" role="separator"
-               aria-orientation="vertical" aria-label="Resize the channel list"></div>
+               aria-orientation="vertical" aria-label="Resize the channel list" data-i18n-aria-label="view.channels.resize_the_channel_list"></div>
           <div class="channel-list-head">
-            <h2>Channels</h2>
+            <h2 data-i18n="view.channels.channels">Channels</h2>
             <button class="ghost small icon-only" id="channel-add" data-icon="plus"
-                    title="Create a channel" aria-label="Create a channel" hidden></button>
+                    title="Create a channel" aria-label="Create a channel" hidden data-i18n-title="view.channels.create_a_channel" data-i18n-aria-label="view.channels.create_a_channel"></button>
           </div>
           <ul id="channel-items"></ul>
           <p class="error" id="channels-error" hidden></p>
@@ -397,7 +406,7 @@
                 class="icon-btn hangup"
                 id="voice-leave"
                 data-icon="phone-disconnect"
-                title="Disconnect"
+                title="Disconnect" data-i18n-title="voice_panel.disconnect" data-i18n="voice_leave.disconnect"
               >
                 Disconnect
               </button>
@@ -419,7 +428,7 @@
                 id="voice-flip"
                 data-icon="camera-rotate"
                 title="Switch camera"
-                hidden
+                hidden data-i18n-title="voice_panel.switch_camera" data-i18n="voice_flip.switch_camera"
               >
                 Switch camera
               </button>
@@ -436,7 +445,7 @@
                 class="voice-action"
                 id="voice-soundboard"
                 data-icon="music-notes"
-                title="Soundboard"
+                title="Soundboard" data-i18n-title="voice_panel.soundboard" data-i18n="voice_soundboard.soundboard"
               >
                 Soundboard
               </button>
@@ -463,10 +472,10 @@
                  your face to change your face, your name to change your
                  name. One button doing both needs a menu to disambiguate,
                  which is a click more than either deserves. -->
-            <button class="self-avatar" id="avatar-button" title="Change your picture">
+            <button class="self-avatar" id="avatar-button" title="Change your picture" data-i18n-title="channel_dock.change_your_picture">
               <span class="avatar" id="channels-avatar"></span>
             </button>
-            <button class="self-identity" id="self-name" title="Change your display name">
+            <button class="self-identity" id="self-name" title="Change your display name" data-i18n-title="channel_dock.change_your_display_name">
               <span class="self-text">
                 <strong id="channels-who">Signed in</strong>
                 <span class="self-status" id="self-status">Online</span>
@@ -479,7 +488,7 @@
               <button class="icon-btn" id="voice-deafen" data-icon="headphones"
                       title="Deafen">Deafen</button>
               <button class="icon-btn" id="voice-config" data-icon="gear-six"
-                      title="Devices and appearance">Devices</button>
+                      title="Devices and appearance" data-i18n-title="channel_dock.devices_and_appearance" data-i18n="voice_config.devices">Devices</button>
             </div>
           </div>
           </div>
@@ -487,7 +496,7 @@
 
         <section class="channel-main">
           <div id="voice-idle" class="empty-pane">
-            <p>Pick a voice channel to join it.</p>
+            <p data-i18n="voice_idle.pick_a_voice_channel">Pick a voice channel to join it.</p>
           </div>
 
 
@@ -527,7 +536,7 @@
               <div class="chat-drop-box">
                 <span class="chat-drop-icon" data-icon="plus-circle"></span>
                 <strong id="chat-drop-title"></strong>
-                <small>One file per message. It is attached, ready to send.</small>
+                <small data-i18n="chat_drop.one_file_per_message">One file per message. It is attached, ready to send.</small>
               </div>
             </div>
             <header class="voice-head">
@@ -537,9 +546,9 @@
                 class="search-field"
                 type="search"
                 placeholder="Search messages, people or media"
-                autocomplete="off"
+                autocomplete="off" data-i18n-placeholder="chat_active.search_messages_people_or"
               />
-              <button class="ghost small" id="chat-search-clear" hidden>Clear</button>
+              <button class="ghost small" id="chat-search-clear" hidden data-i18n="chat_search_clear.clear">Clear</button>
             </header>
 
             <div id="chat-pinned" class="pinned-strip" hidden></div>
@@ -561,9 +570,9 @@
               <div class="composer">
                 <!-- The message this one will answer, if any. See setReply. -->
                 <div class="composer-reply" id="chat-reply" hidden>
-                  <span class="composer-reply-text">Replying to <strong id="chat-reply-name"></strong></span>
+                  <span class="composer-reply-text"><span data-i18n="chat_reply.replying_to">Replying to</span> <strong id="chat-reply-name"></strong></span>
                   <button type="button" class="composer-btn" id="chat-reply-clear"
-                          data-icon="x" title="Cancel the reply">Cancel reply</button>
+                          data-icon="x" title="Cancel the reply" data-i18n-title="chat_reply.cancel_the_reply" data-i18n="chat_reply_clear.cancel_reply">Cancel reply</button>
                 </div>
                 <!-- What is about to be sent with the message, if anything. -->
                 <div class="composer-file" id="chat-pending" hidden>
@@ -574,7 +583,7 @@
                     class="composer-btn"
                     id="chat-pending-clear"
                     data-icon="x"
-                    title="Don't send this"
+                    title="Don't send this" data-i18n-title="chat_pending.don_t_send_this" data-i18n="chat_pending_clear.remove"
                   >Remove</button>
                 </div>
 
@@ -584,10 +593,10 @@
                     <span class="composer-upload-name" id="chat-upload-name"></span>
                     <span class="composer-upload-amount" id="chat-upload-amount"></span>
                     <button type="button" class="composer-btn" id="chat-upload-cancel"
-                            data-icon="x" title="Cancel the upload">Cancel upload</button>
+                            data-icon="x" title="Cancel the upload" data-i18n-title="chat_upload.cancel_the_upload" data-i18n="chat_upload_cancel.cancel_upload">Cancel upload</button>
                   </div>
                   <div class="upload-progress" role="progressbar" aria-label="Upload progress"
-                       aria-valuemin="0" aria-valuemax="100" id="chat-upload-bar">
+                       aria-valuemin="0" aria-valuemax="100" id="chat-upload-bar" data-i18n-aria-label="chat_upload.upload_progress">
                     <div class="upload-progress-fill" id="chat-upload-fill"></div>
                   </div>
                 </div>
@@ -598,7 +607,7 @@
                     class="composer-btn composer-plus"
                     id="chat-attach"
                     data-icon="plus-circle"
-                    title="Attach a file"
+                    title="Attach a file" data-i18n-title="chat_form.attach_a_file" data-i18n="chat_attach.attach"
                   >Attach</button>
 
                   <!--
@@ -612,7 +621,7 @@
                     placeholder="Message"
                     autocomplete="off"
                     maxlength="4000"
-                    rows="1"
+                    rows="1" data-i18n-placeholder="chat_form.message"
                   ></textarea>
 
                   <button
@@ -620,14 +629,14 @@
                     class="composer-btn"
                     id="chat-emoji"
                     data-icon="smiley"
-                    title="Emoji"
+                    title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji"
                   >Emoji</button>
                   <button
                     type="submit"
                     class="composer-btn composer-send"
                     id="chat-send"
                     data-icon="paper-plane-right"
-                    title="Send"
+                    title="Send" data-i18n-title="chat_form.send" data-i18n="chat_send.send"
                   >Send</button>
                 </div>
               </div>
@@ -648,9 +657,9 @@
         -->
         <aside class="member-list" id="member-list" hidden>
           <div class="col-resizer" data-resize="members" role="separator"
-               aria-orientation="vertical" aria-label="Resize the member list"></div>
+               aria-orientation="vertical" aria-label="Resize the member list" data-i18n-aria-label="member_list.resize_the_member_list"></div>
           <div class="member-list-head">
-            <h2>Members</h2>
+            <h2 data-i18n="member_list.members">Members</h2>
             <span class="muted" id="member-count"></span>
           </div>
           <ul id="member-items"></ul>
@@ -679,56 +688,56 @@
     -->
     <dialog id="picker" class="picker">
       <header class="picker-head">
-        <h2>Choose what to share</h2>
-        <p class="muted">Streaming as <strong id="picker-username"></strong></p>
+        <h2 data-i18n="picker.choose_what_to_share">Choose what to share</h2>
+        <p class="muted"><span data-i18n="picker.streaming_as">Streaming as</span> <strong id="picker-username"></strong></p>
       </header>
 
       <div class="picker-row">
-        <span class="picker-label">Source type</span>
+        <span class="picker-label" data-i18n="picker.source_type">Source type</span>
         <div class="picker-type">
           <div class="segmented" role="tablist">
-            <button type="button" class="tab" data-kind="screen" data-active>Screens</button>
-            <button type="button" class="tab" data-kind="window">Windows</button>
-            <button type="button" class="tab" data-kind="camera">Cameras &amp; capture cards</button>
+            <button type="button" class="tab" data-kind="screen" data-active data-i18n="picker.screens">Screens</button>
+            <button type="button" class="tab" data-kind="window" data-i18n="picker.windows">Windows</button>
+            <button type="button" class="tab" data-kind="camera" data-i18n="picker.cameras_capture_cards">Cameras &amp; capture cards</button>
             <!-- Several of the above, arranged into one stream. See compositor.js. -->
-            <button type="button" class="tab" data-kind="composite">Composite</button>
+            <button type="button" class="tab" data-kind="composite" data-i18n="picker.composite">Composite</button>
           </div>
-          <button type="button" class="ghost small" id="picker-refresh" title="Look for sources again">
+          <button type="button" class="ghost small" id="picker-refresh" title="Look for sources again" data-i18n-title="picker.look_for_sources_again" data-i18n="picker_refresh.refresh">
             Refresh
           </button>
         </div>
       </div>
 
       <div class="picker-row">
-        <span class="picker-label">Sources</span>
+        <span class="picker-label" data-i18n="picker.sources">Sources</span>
         <div class="source-grid" id="source-grid"></div>
       </div>
 
       <label class="picker-row" id="exclude-field" hidden>
-        <span class="picker-label">Exclude audio</span>
+        <span class="picker-label" data-i18n="exclude_field.exclude_audio">Exclude audio</span>
         <select id="exclude-app"></select>
       </label>
       <label class="picker-row" id="fallback-field" hidden>
-        <span class="picker-label">If per-app audio is unavailable</span>
+        <span class="picker-label" data-i18n="fallback_field.if_per_app_audio">If per-app audio is unavailable</span>
         <select id="window-audio-fallback">
-          <option value="silent">Share silently</option>
-          <option value="system">Use system audio</option>
+          <option value="silent" data-i18n="window_audio_fallback.share_silently">Share silently</option>
+          <option value="system" data-i18n="window_audio_fallback.use_system_audio">Use system audio</option>
         </select>
       </label>
       <label class="picker-row" id="audio-input-field" hidden>
-        <span class="picker-label">Audio input</span>
+        <span class="picker-label" data-i18n="audio_input_field.audio_input">Audio input</span>
         <select id="audio-input"></select>
       </label>
 
       <!-- Filled from RESOLUTIONS and FRAMERATES in app.js, so the choices
            and what they mean to the encoder are written down once. -->
       <div class="picker-row">
-        <span class="picker-label">Resolution</span>
-        <div class="segmented" id="resolution" role="radiogroup" aria-label="Resolution"></div>
+        <span class="picker-label" data-i18n="picker.resolution">Resolution</span>
+        <div class="segmented" id="resolution" role="radiogroup" aria-label="Resolution" data-i18n-aria-label="picker.resolution"></div>
       </div>
       <div class="picker-row">
-        <span class="picker-label">Framerate</span>
-        <div class="segmented" id="framerate" role="radiogroup" aria-label="Framerate"></div>
+        <span class="picker-label" data-i18n="picker.framerate">Framerate</span>
+        <div class="segmented" id="framerate" role="radiogroup" aria-label="Framerate" data-i18n-aria-label="picker.framerate"></div>
       </div>
 
       <footer class="picker-foot">
@@ -750,26 +759,26 @@
         </div>
         <div class="controls">
           <label class="field inline">
-            <span>Resolution</span>
+            <span data-i18n="view.broadcast.resolution">Resolution</span>
             <select id="live-resolution"></select>
           </label>
           <label class="field inline">
-            <span>Framerate</span>
+            <span data-i18n="view.broadcast.framerate">Framerate</span>
             <select id="live-framerate"></select>
           </label>
           <label class="field inline">
-            <span>Priority</span>
+            <span data-i18n="view.broadcast.priority">Priority</span>
             <select id="live-priority"></select>
           </label>
-          <button class="ghost" id="change-source">Change source</button>
-          <button class="ghost" id="edit-composition" hidden>Edit layout</button>
-          <button class="ghost" id="toggle-preview" title="Stop drawing the preview — the stream keeps running">
+          <button class="ghost" id="change-source" data-i18n="change_source.change_source">Change source</button>
+          <button class="ghost" id="edit-composition" hidden data-i18n="edit_composition.edit_layout">Edit layout</button>
+          <button class="ghost" id="toggle-preview" title="Stop drawing the preview — the stream keeps running" data-i18n-title="view.broadcast.stop_drawing_the_preview">
             Hide preview
           </button>
-          <button class="ghost" id="broadcast-watch">Watch others</button>
+          <button class="ghost" id="broadcast-watch" data-i18n="broadcast_watch.watch_others">Watch others</button>
           <button class="ghost icon" id="monitor-toggle" title="Hear my own audio" aria-label="Hear my own audio" data-icon="headphones"></button>
-          <button class="ghost" id="broadcast-clip" data-cap="clips" hidden>&#9986; Clip</button>
-          <button class="danger" id="stop-stream">Stop streaming</button>
+          <button class="ghost" id="broadcast-clip" data-cap="clips" hidden data-i18n="broadcast_clip.clip">&#9986; Clip</button>
+          <button class="danger" id="stop-stream" data-i18n="stop_stream.stop_streaming">Stop streaming</button>
         </div>
       </header>
 
@@ -801,8 +810,8 @@
           <h2 id="watch-title">Watching</h2>
         </div>
         <div class="controls">
-          <button class="ghost" id="watch-add">+ Add stream</button>
-          <button class="ghost" id="leave-stream">Leave</button>
+          <button class="ghost" id="watch-add" data-i18n="watch_add.add_stream">+ Add stream</button>
+          <button class="ghost" id="leave-stream" data-i18n="leave_stream.leave">Leave</button>
         </div>
       </header>
 
@@ -821,7 +830,7 @@
           <input id="volume" type="range" min="0" max="350" value="100" />
           <span class="volume-value" id="volume-label">100%</span>
           <button class="ghost icon" id="watch-fullscreen" title="Fullscreen" aria-label="Fullscreen" data-icon="corners-out"></button>
-          <button class="ghost" id="watch-clip" data-cap="clips" hidden>&#9986; Clip</button>
+          <button class="ghost" id="watch-clip" data-cap="clips" hidden data-i18n="watch_clip.clip">&#9986; Clip</button>
         </div>
         <p class="stats" id="watch-stats"></p>
       </footer>
@@ -832,11 +841,11 @@
       <header class="bar">
         <div class="live-head">
           <span class="dot live"></span>
-          <h2>Mosaic</h2>
+          <h2 data-i18n="view.mosaic.mosaic">Mosaic</h2>
           <span class="pill" id="mosaic-count">0 streams</span>
         </div>
         <div class="controls">
-          <button class="ghost" id="mosaic-add">+ Add stream</button>
+          <button class="ghost" id="mosaic-add" data-i18n="mosaic_add.add_stream">+ Add stream</button>
           <button class="ghost" id="mosaic-leave">Leave</button>
         </div>
       </header>
@@ -845,12 +854,12 @@
 
       <footer class="bar bottom">
         <div class="controls">
-          <span class="muted">All volumes</span>
+          <span class="muted" data-i18n="view.mosaic.all_volumes">All volumes</span>
           <button class="ghost icon" id="mosaic-mute" title="Mute everything" aria-label="Mute everything" data-icon="speaker-high"></button>
           <input id="mosaic-volume" type="range" min="0" max="350" value="100" />
           <span class="volume-value" id="mosaic-volume-label">100%</span>
         </div>
-        <p class="stats" id="mosaic-hint">
+        <p class="stats" id="mosaic-hint" data-i18n="mosaic_hint.each_tile_has_its">
           Each tile has its own volume. &#10530; maximizes, &#9974; or double-click goes fullscreen,
           &#10005; closes.
         </p>
@@ -875,7 +884,7 @@
           class="search-field"
           type="search"
           placeholder="Find the perfect sound"
-          autocomplete="off"
+          autocomplete="off" data-i18n-placeholder="soundpad.find_the_perfect_sound"
         />
         <!--
           How loudly clips play FOR YOU. Local, like every other volume in
@@ -892,10 +901,10 @@
           max="350"
           step="5"
           value="100"
-          title="How loudly soundpad clips play for you"
+          title="How loudly soundpad clips play for you" data-i18n-title="soundpad.how_loudly_soundpad_clips"
         />
         <span class="peer-volume-label" id="soundpad-volume-label">100%</span>
-        <button class="ghost small" id="soundpad-add" hidden>+ Add</button>
+        <button class="ghost small" id="soundpad-add" hidden data-i18n="soundpad_add.add">+ Add</button>
         <input id="soundpad-file" type="file" accept="audio/*" hidden />
       </div>
       <div class="soundpad-grid" id="soundpad-grid"></div>
@@ -913,11 +922,11 @@
     -->
     <dialog id="server-dialog" class="ask">
       <form method="dialog" id="server-form">
-        <h2>This server</h2>
+        <h2 data-i18n="server_form.this_server">This server</h2>
         <label class="field">
-          <span>Name</span>
+          <span data-i18n="server_form.name">Name</span>
           <input id="server-name-input" type="text" maxlength="32" autocomplete="off" />
-          <small>What it is called in the title bar, for everybody.</small>
+          <small data-i18n="server_form.what_it_is_called">What it is called in the title bar, for everybody.</small>
         </label>
         <!--
           The logo everybody sees beside this server in their server list.
@@ -925,21 +934,21 @@
           like the name and the password beside it.
         -->
         <div class="field">
-          <span>Logo</span>
+          <span data-i18n="server_form.logo">Logo</span>
           <div class="server-logo-row">
             <span class="server-badge large" id="server-logo-preview"></span>
-            <button type="button" class="ghost small" id="server-logo-pick">Choose image&hellip;</button>
-            <button type="button" class="ghost small" id="server-logo-remove">Remove</button>
+            <button type="button" class="ghost small" id="server-logo-pick" data-i18n="server_logo_pick.choose_image">Choose image&hellip;</button>
+            <button type="button" class="ghost small" id="server-logo-remove" data-i18n="server_logo_remove.remove">Remove</button>
           </div>
-          <small>Shown in everybody's server list. Square works best; it is shrunk to 256 px.</small>
+          <small data-i18n="server_form.shown_in_everybody_s">Shown in everybody's server list. Square works best; it is shrunk to 256 px.</small>
         </div>
         <label class="field">
-          <span>Password</span>
+          <span data-i18n="server_form.password">Password</span>
           <input
             id="server-password-input"
             type="password"
             autocomplete="new-password"
-            placeholder="Leave blank to keep it as it is"
+            placeholder="Leave blank to keep it as it is" data-i18n-placeholder="server_form.leave_blank_to_keep"
           />
           <small id="server-password-note"></small>
         </label>
@@ -951,28 +960,28 @@
         <label class="check">
           <input type="checkbox" id="server-password-off" />
           <span>
-            No password at all
-            <small>Anybody who can reach this server can use it.</small>
+            <span data-i18n="server_form.no_password_at_all">No password at all</span>
+            <small data-i18n="server_form.anybody_who_can_reach">Anybody who can reach this server can use it.</small>
           </span>
         </label>
         <!-- Files in chat. Hidden for a server too old to say its limits. -->
         <div id="server-uploads">
           <label class="field">
-            <span>Largest file</span>
+            <span data-i18n="server_uploads.largest_file">Largest file</span>
             <select id="server-max-file">
-              <option value="8388608">8 MB</option>
-              <option value="26214400">25 MB</option>
-              <option value="52428800">50 MB</option>
-              <option value="104857600">100 MB</option>
-              <option value="262144000">250 MB</option>
-              <option value="524288000">500 MB</option>
-              <option value="1073741824">1 GB</option>
-              <option value="2147483648">2 GB</option>
+              <option value="8388608" data-i18n="server_max_file.8_mb">8 MB</option>
+              <option value="26214400" data-i18n="server_max_file.25_mb">25 MB</option>
+              <option value="52428800" data-i18n="server_max_file.50_mb">50 MB</option>
+              <option value="104857600" data-i18n="server_max_file.100_mb">100 MB</option>
+              <option value="262144000" data-i18n="server_max_file.250_mb">250 MB</option>
+              <option value="524288000" data-i18n="server_max_file.500_mb">500 MB</option>
+              <option value="1073741824" data-i18n="server_max_file.1_gb">1 GB</option>
+              <option value="2147483648" data-i18n="server_max_file.2_gb">2 GB</option>
             </select>
-            <small>The biggest file anybody can send in a chat.</small>
+            <small data-i18n="server_uploads.the_biggest_file_anybody">The biggest file anybody can send in a chat.</small>
           </label>
           <label class="field">
-            <span>Space for files (GB)</span>
+            <span data-i18n="server_uploads.space_for_files_gb">Space for files (GB)</span>
             <input id="server-storage" type="number" min="0.1" step="0.5" />
             <small id="server-storage-note"></small>
           </label>
@@ -980,8 +989,8 @@
         <p class="error" id="server-error" hidden></p>
         <p class="muted" id="server-note" hidden></p>
         <div class="ask-buttons">
-          <button type="button" class="ghost" id="server-cancel">Cancel</button>
-          <button type="submit" class="primary" id="server-save">Save</button>
+          <button type="button" class="ghost" id="server-cancel" data-i18n="server_cancel.cancel">Cancel</button>
+          <button type="submit" class="primary" id="server-save" data-i18n="server_save.save">Save</button>
         </div>
       </form>
     </dialog>
@@ -1045,14 +1054,14 @@
           class="msg-tool"
           id="lightbox-save"
           data-icon="download-simple"
-          title="Save a copy"
+          title="Save a copy" data-i18n-title="lightbox.save_a_copy" data-i18n="lightbox_save.save"
         >Save</button>
         <button
           type="button"
           class="msg-tool"
           id="lightbox-close"
           data-icon="x"
-          title="Close"
+          title="Close" data-i18n-title="lightbox.close" data-i18n="lightbox_close.close"
         >Close</button>
       </div>
     </div>
@@ -1076,9 +1085,9 @@
           class="search-field"
           type="search"
           placeholder="Search emoji"
-          autocomplete="off"
+          autocomplete="off" data-i18n-placeholder="emoji_pop.search_emoji"
         />
-        <button class="ghost small" id="emoji-add" title="Upload a custom emoji">+ Add</button>
+        <button class="ghost small" id="emoji-add" title="Upload a custom emoji" data-i18n-title="emoji_pop.upload_a_custom_emoji" data-i18n="emoji_add.add">+ Add</button>
         <input id="emoji-file" type="file" accept="image/*" hidden />
       </div>
       <div class="emoji-grid" id="emoji-grid"></div>
@@ -1120,40 +1129,177 @@
           menu entry as well as on the page, or a build without hotkeys or
           updates would keep a tab that opens onto nothing.
         -->
-        <nav class="settings-nav" role="tablist" aria-orientation="vertical" aria-label="Settings">
-          <h2>Settings</h2>
+        <nav class="settings-nav" role="tablist" aria-orientation="vertical" aria-label="Settings" data-i18n-aria-label="settings.settings">
+          <h2 data-i18n="settings.settings">Settings</h2>
+          <button type="button" role="tab" class="settings-tab" data-tab="profile" aria-selected="false">
+            <span class="settings-tab-icon" data-icon="user-circle" aria-hidden="true"></span><span data-i18n="settings.profile">Profile</span>
+          </button>
           <button type="button" role="tab" class="settings-tab" data-tab="appearance" aria-selected="true">
-            <span class="settings-tab-icon" data-icon="eye" aria-hidden="true"></span>Appearance
+            <span class="settings-tab-icon" data-icon="eye" aria-hidden="true"></span><span data-i18n="settings.appearance">Appearance</span>
           </button>
           <button type="button" role="tab" class="settings-tab" data-tab="voice" aria-selected="false">
-            <span class="settings-tab-icon" data-icon="microphone" aria-hidden="true"></span>Voice &amp; video
+            <span class="settings-tab-icon" data-icon="microphone" aria-hidden="true"></span><span data-i18n="settings.voice_video">Voice &amp; video</span>
           </button>
           <button type="button" role="tab" class="settings-tab" data-tab="sounds" aria-selected="false">
-            <span class="settings-tab-icon" data-icon="speaker-high" aria-hidden="true"></span>Sounds
+            <span class="settings-tab-icon" data-icon="speaker-high" aria-hidden="true"></span><span data-i18n="settings.sounds">Sounds</span>
           </button>
           <button type="button" role="tab" class="settings-tab" data-tab="hotkeys" data-cap="hotkeys" aria-selected="false">
-            <span class="settings-tab-icon" data-icon="list" aria-hidden="true"></span>Hotkeys
+            <span class="settings-tab-icon" data-icon="list" aria-hidden="true"></span><span data-i18n="settings.hotkeys">Hotkeys</span>
           </button>
           <button type="button" role="tab" class="settings-tab" data-tab="updates" data-cap="updates" aria-selected="false">
-            <span class="settings-tab-icon" data-icon="download-simple" aria-hidden="true"></span>Updates
+            <span class="settings-tab-icon" data-icon="download-simple" aria-hidden="true"></span><span data-i18n="settings.updates">Updates</span>
           </button>
         </nav>
 
         <div class="settings-main">
           <div class="settings-pages">
             <!--
+              Who you are to everybody else on this server: a picture and a
+              name. The same two things the bar at the bottom of the channel
+              list changes with one click each -- this is the page for people
+              who go looking in Settings for them.
+            -->
+            <section class="settings-page" role="tabpanel" data-page="profile" hidden>
+              <h3 class="settings-page-title" data-i18n="settings.profile.profile">Profile</h3>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="settings.profile.picture">Picture</span>
+                </div>
+                <div class="profile-picture">
+                  <span class="avatar profile-avatar" id="profile-avatar"></span>
+                  <div class="profile-actions">
+                    <button type="button" class="primary" id="profile-choose" data-i18n="profile_choose.change_picture">Change picture</button>
+                    <button type="button" class="ghost" id="profile-remove" data-i18n="profile_remove.remove_picture">Remove picture</button>
+                  </div>
+                </div>
+                <p class="setting-note" data-i18n="settings.profile.shown_to_everybody_on">
+                  Shown to everybody on this server, cropped to a circle. Any
+                  image works; it is shrunk to a small square before it is
+                  uploaded. Without one, your initials are drawn instead.
+                </p>
+                <p class="setting-note profile-status" id="profile-picture-note" role="status"></p>
+              </div>
+
+              <!--
+                A banner behind your name in the member list and in voice
+                channels. The preview is drawn with the very styles those rows
+                use (.has-banner), so what is shown here is what people see.
+              -->
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="settings.profile.banner">Banner</span>
+                </div>
+                <div class="member-row profile-banner-preview" id="profile-banner-preview" aria-hidden="true">
+                  <span class="avatar tiny" id="profile-banner-avatar"></span>
+                  <span class="member-name" id="profile-banner-name"></span>
+                </div>
+                <div class="profile-actions">
+                  <button type="button" class="primary" id="profile-banner-choose" data-i18n="profile_banner.choose_banner">Choose banner</button>
+                  <button type="button" class="ghost" id="profile-banner-remove" data-i18n="profile_banner.remove_banner">Remove banner</button>
+                </div>
+                <input id="profile-banner-file" type="file" accept="image/*" hidden />
+                <p class="setting-note" data-i18n="settings.profile.banner_note">
+                  Drawn behind your name in the member list and in voice
+                  channels, dimmed and fading out toward the left. A picture
+                  or a GIF, up to 2 MB; a still picture is shrunk to fit.
+                </p>
+                <p class="setting-note profile-status" id="profile-banner-note" role="status"></p>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <label class="setting-title" for="profile-name" data-i18n="settings.profile.display_name">Display name</label>
+                </div>
+                <div class="profile-name-row">
+                  <input id="profile-name" type="text" maxlength="32"
+                         autocomplete="off" spellcheck="false" />
+                  <button type="button" class="primary" id="profile-name-save" data-i18n="profile_name_save.save">Save</button>
+                  <button type="button" class="ghost" id="profile-name-reset" data-i18n="profile_name_reset.use_my_username">Use my username</button>
+                </div>
+                <p class="setting-note" data-i18n="settings.profile.shown_to_everybody_instead">
+                  Shown to everybody instead of your username. Capitals,
+                  spaces and accents are all fine, and two people can pick the
+                  same one. Empty goes back to your username.
+                </p>
+                <p class="setting-note profile-status" id="profile-name-note" role="status"></p>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" id="profile-font-title" data-i18n="settings.profile.name_font">Name font</span>
+                </div>
+                <div class="font-grid" id="profile-font-grid" role="radiogroup" aria-labelledby="profile-font-title"></div>
+                <p class="setting-note" data-i18n="settings.profile.name_font_note">
+                  How your display name is drawn for everybody on this server.
+                  The fonts come with the app, so everybody sees the same one.
+                </p>
+                <p class="setting-note profile-status" id="profile-font-note" role="status"></p>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="settings.profile.join_sound">Join sound</span>
+                </div>
+                <div class="profile-sound">
+                  <span class="profile-sound-state" id="profile-sound-state"></span>
+                  <div class="profile-actions">
+                    <button type="button" class="ghost" id="profile-sound-play" data-i18n="profile_sound.play">Play</button>
+                    <button type="button" class="primary" id="profile-sound-choose" data-i18n="profile_sound.choose_sound">Choose sound</button>
+                    <button type="button" class="ghost" id="profile-sound-remove" data-i18n="profile_sound.remove_sound">Remove</button>
+                  </div>
+                </div>
+                <input id="profile-sound-file" type="file" accept="audio/*" hidden />
+                <p class="setting-note" data-i18n="settings.profile.join_sound_note">
+                  Played for the people in a voice channel when you join it,
+                  instead of the usual tone. Up to 10 seconds: anything longer
+                  is cut at 10. Any audio file your computer can play works.
+                </p>
+                <p class="setting-note profile-status" id="profile-sound-note" role="status"></p>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="settings.profile.account">Account</span>
+                </div>
+                <dl class="profile-account">
+                  <dt data-i18n="settings.profile.username">Username</dt>
+                  <dd id="profile-nickname"></dd>
+                  <dt data-i18n="settings.profile.role">Role</dt>
+                  <dd id="profile-role"></dd>
+                </dl>
+                <p class="setting-note" data-i18n="settings.profile.your_username_is_what">
+                  Your username is what you sign in with and what people
+                  @mention. It does not change.
+                </p>
+              </div>
+            </section>
+
+            <!--
               Colour, first, because it is the one people come looking for and
               the only one here that is not about hardware. Size sits with it:
               both are about reading the app rather than the hardware under it.
             -->
             <section class="settings-page" role="tabpanel" data-page="appearance">
-              <h3 class="settings-page-title">Appearance</h3>
+              <h3 class="settings-page-title" data-i18n="settings.appearance.appearance">Appearance</h3>
 
               <div class="setting-group">
                 <div class="setting-head">
-                  <span class="setting-title">Colour palette</span>
+                  <label class="setting-title" for="language-select" data-i18n="settings.language.title">Language</label>
                 </div>
-                <p class="setting-note">
+                <select id="language-select"></select>
+                <p class="setting-note" data-i18n="settings.language.note">
+                  The language of the menus and messages in this app. People on
+                  the same server can each use their own; what is written in a
+                  chat stays as it was written.
+                </p>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="settings.appearance.colour_palette">Colour palette</span>
+                </div>
+                <p class="setting-note" data-i18n="settings.appearance.yours_alone_nothing_is">
                   Yours alone. Nothing is sent to the server, and two people in
                   the same channel can be looking at different colours.
                 </p>
@@ -1164,7 +1310,7 @@
 
               <div class="setting-group" data-cap="scale">
                 <div class="setting-head">
-                  <label class="setting-title" for="ui-scale">Interface size</label>
+                  <label class="setting-title" for="ui-scale" data-i18n="settings.appearance.interface_size">Interface size</label>
                   <span class="setting-tools">
                     <output class="value-pill" id="scale-value" for="ui-scale">115%</output>
                     <!--
@@ -1174,44 +1320,61 @@
                       -, + or Reset changed the size and then closed the
                       settings.
                     -->
-                    <button type="button" class="ghost small" id="scale-reset">Reset</button>
+                    <button type="button" class="ghost small" id="scale-reset" data-i18n="scale_reset.reset">Reset</button>
                   </span>
                 </div>
-                <p class="setting-note">
+                <p class="setting-note" data-i18n="settings.appearance.everything_at_once_the">
                   Everything at once: the type, the icons, the pictures and the
                   spacing between them. This is the window's own zoom, so a
                   bigger setting fits less on screen.
                 </p>
                 <div class="scale-row">
-                  <button type="button" class="step-btn" id="scale-down" title="Smaller" aria-label="Smaller">&#8722;</button>
+                  <button type="button" class="step-btn" id="scale-down" title="Smaller" aria-label="Smaller" data-i18n-title="settings.appearance.smaller" data-i18n-aria-label="settings.appearance.smaller">&#8722;</button>
                   <input id="ui-scale" type="range" min="70" max="180" step="5" value="115" />
-                  <button type="button" class="step-btn" id="scale-up" title="Bigger" aria-label="Bigger">&#43;</button>
+                  <button type="button" class="step-btn" id="scale-up" title="Bigger" aria-label="Bigger" data-i18n-title="settings.appearance.bigger" data-i18n-aria-label="settings.appearance.bigger">&#43;</button>
                 </div>
               </div>
             </section>
 
             <section class="settings-page" role="tabpanel" data-page="voice" hidden>
-              <h3 class="settings-page-title">Voice &amp; video</h3>
+              <h3 class="settings-page-title" data-i18n="settings.voice.voice_video">Voice &amp; video</h3>
 
               <div class="setting-group">
                 <div class="setting-head">
-                  <span class="setting-title">Devices</span>
+                  <span class="setting-title" data-i18n="settings.voice.devices">Devices</span>
                 </div>
                 <div class="voice-devices">
                   <label class="field inline">
-                    <span>Microphone</span>
+                    <span data-i18n="settings.voice.microphone">Microphone</span>
                     <select id="voice-input"></select>
                   </label>
                   <label class="field inline">
-                    <span>Output</span>
+                    <span data-i18n="settings.voice.output">Output</span>
                     <select id="voice-output"></select>
                   </label>
                   <label class="field inline">
-                    <span>Camera</span>
+                    <span data-i18n="settings.voice.camera">Camera</span>
                     <select id="voice-camera"></select>
                   </label>
                   <span class="muted" id="voice-device-note"></span>
                 </div>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="settings.voice.camera_quality">Camera quality</span>
+                </div>
+                <div class="voice-devices">
+                  <label class="field inline">
+                    <span data-i18n="settings.voice.resolution">Resolution</span>
+                    <select id="cam-resolution"></select>
+                  </label>
+                  <label class="field inline">
+                    <span data-i18n="settings.voice.frame_rate">Frame rate</span>
+                    <select id="cam-framerate"></select>
+                  </label>
+                </div>
+                <p class="setting-note" id="cam-quality-note"></p>
               </div>
 
               <!--
@@ -1224,13 +1387,13 @@
               -->
               <div class="setting-group mic-tuning">
                 <div class="setting-head">
-                  <label class="setting-title" for="mic-gain">Input volume</label>
+                  <label class="setting-title" for="mic-gain" data-i18n="settings.voice.input_volume">Input volume</label>
                   <output class="value-pill" id="mic-gain-label" for="mic-gain">100%</output>
                 </div>
                 <input id="mic-gain" type="range" min="0" max="200" step="5" value="100" />
 
                 <div class="setting-head">
-                  <label class="setting-title" for="mic-gate">Input sensitivity</label>
+                  <label class="setting-title" for="mic-gate" data-i18n="settings.voice.input_sensitivity">Input sensitivity</label>
                   <output class="value-pill" id="mic-gate-label" for="mic-gate">Off</output>
                 </div>
                 <input id="mic-gate" type="range" min="0" max="100" step="1" value="0" />
@@ -1239,10 +1402,31 @@
                   <div class="mic-meter-fill" id="mic-meter-fill"></div>
                   <div class="mic-meter-mark" id="mic-meter-mark" hidden></div>
                 </div>
-                <p class="setting-note mic-hint">
+                <p class="setting-note mic-hint" data-i18n="settings.voice.speak_normally_put_the">
                   Speak normally. Put the marker just above where the bar sits
                   when you are quiet, and below where it sits when you talk.
                 </p>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.echo_cancellation">Echo cancellation</span>
+                    <small data-i18n="settings.voice.echo_cancellation_hint">Stops your speakers from being picked up by your microphone.
+                      Useful without a headset; it can make your voice duck
+                      while sound is playing.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="mic-echo-cancellation" />
+                </label>
+
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.noise_suppression">Noise suppression</span>
+                    <small data-i18n="settings.voice.noise_suppression_hint">Filters out steady background noise such as fans and
+                      keyboards. It can clip the ends of words.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="mic-noise-suppression" />
+                </label>
               </div>
                           <!--
                 What is behind you on the camera.
@@ -1254,24 +1438,24 @@
               -->
               <div class="setting-group" id="bg-group" hidden>
                 <div class="setting-head">
-                  <span class="setting-title">Camera background</span>
+                  <span class="setting-title" data-i18n="bg_group.camera_background">Camera background</span>
                 </div>
-                <p class="setting-note">
+                <p class="setting-note" data-i18n="bg_group.done_on_your_computer">
                   Done on your computer before anything is sent. Nobody, the
                   server included, ever sees what is behind you.
                 </p>
 
-                <div class="segmented bg-modes" id="bg-mode" role="radiogroup" aria-label="Camera background">
-                  <button type="button" role="radio" data-value="off">None</button>
-                  <button type="button" role="radio" data-value="blur">Blur</button>
-                  <button type="button" role="radio" data-value="color">Colour</button>
-                  <button type="button" role="radio" data-value="gradient">Gradient</button>
-                  <button type="button" role="radio" data-value="image">Image</button>
+                <div class="segmented bg-modes" id="bg-mode" role="radiogroup" aria-label="Camera background" data-i18n-aria-label="bg_group.camera_background">
+                  <button type="button" role="radio" data-value="off" data-i18n="bg_mode.none">None</button>
+                  <button type="button" role="radio" data-value="blur" data-i18n="bg_mode.blur">Blur</button>
+                  <button type="button" role="radio" data-value="color" data-i18n="bg_mode.colour">Colour</button>
+                  <button type="button" role="radio" data-value="gradient" data-i18n="bg_mode.gradient">Gradient</button>
+                  <button type="button" role="radio" data-value="image" data-i18n="bg_mode.image">Image</button>
                 </div>
 
                 <div class="bg-panel" data-panel="blur" hidden>
                   <div class="setting-head">
-                    <label class="setting-title" for="bg-blur">Blur</label>
+                    <label class="setting-title" for="bg-blur" data-i18n="bg_group.blur">Blur</label>
                     <output class="value-pill" id="bg-blur-label" for="bg-blur">60%</output>
                   </div>
                   <input id="bg-blur" type="range" min="0" max="100" step="5" value="60" />
@@ -1279,28 +1463,28 @@
 
                 <div class="bg-panel" data-panel="color" hidden>
                   <div class="bg-colors">
-                    <div class="bg-swatches" id="bg-swatches" role="group" aria-label="Colours"></div>
-                    <label class="bg-picker" title="Pick any colour">
-                      <input id="bg-color" type="color" value="#1f6feb" aria-label="Background colour" />
-                      <span>Custom</span>
+                    <div class="bg-swatches" id="bg-swatches" role="group" aria-label="Colours" data-i18n-aria-label="bg_group.colours"></div>
+                    <label class="bg-picker" title="Pick any colour" data-i18n-title="bg_group.pick_any_colour">
+                      <input id="bg-color" type="color" value="#1f6feb" aria-label="Background colour" data-i18n-aria-label="bg_group.background_colour" />
+                      <span data-i18n="bg_group.custom">Custom</span>
                     </label>
                   </div>
                 </div>
 
                 <div class="bg-panel" data-panel="gradient" hidden>
-                  <div class="bg-swatches" id="bg-presets" role="group" aria-label="Gradients"></div>
+                  <div class="bg-swatches" id="bg-presets" role="group" aria-label="Gradients" data-i18n-aria-label="bg_group.gradients"></div>
                   <div class="bg-gradient-row">
-                    <label class="bg-picker" title="First colour">
-                      <input id="bg-from" type="color" value="#5b8cff" aria-label="Gradient from" />
-                      <span>From</span>
+                    <label class="bg-picker" title="First colour" data-i18n-title="bg_group.first_colour">
+                      <input id="bg-from" type="color" value="#5b8cff" aria-label="Gradient from" data-i18n-aria-label="bg_group.gradient_from" />
+                      <span data-i18n="bg_group.from">From</span>
                     </label>
-                    <label class="bg-picker" title="Second colour">
-                      <input id="bg-to" type="color" value="#9a7bff" aria-label="Gradient to" />
-                      <span>To</span>
+                    <label class="bg-picker" title="Second colour" data-i18n-title="bg_group.second_colour">
+                      <input id="bg-to" type="color" value="#9a7bff" aria-label="Gradient to" data-i18n-aria-label="bg_group.gradient_to" />
+                      <span data-i18n="bg_group.to">To</span>
                     </label>
                   </div>
                   <div class="setting-head">
-                    <label class="setting-title" for="bg-angle">Direction</label>
+                    <label class="setting-title" for="bg-angle" data-i18n="bg_group.direction">Direction</label>
                     <output class="value-pill" id="bg-angle-label" for="bg-angle">135&deg;</output>
                   </div>
                   <input id="bg-angle" type="range" min="0" max="360" step="5" value="135" />
@@ -1311,10 +1495,10 @@
                     <img class="bg-thumb" id="bg-thumb" alt="" hidden />
                     <div class="bg-image-text">
                       <strong id="bg-image-name">No picture chosen</strong>
-                      <small>A picture or a GIF, up to 25 MB. It stays on this computer.</small>
+                      <small data-i18n="bg_group.a_picture_or_a">A picture or a GIF, up to 25 MB. It stays on this computer.</small>
                     </div>
                     <button type="button" class="ghost small" id="bg-choose">Choose&hellip;</button>
-                    <button type="button" class="ghost small" id="bg-remove" hidden>Remove</button>
+                    <button type="button" class="ghost small" id="bg-remove" hidden data-i18n="bg_remove.remove">Remove</button>
                     <input type="file" id="bg-file" accept="image/*" hidden />
                   </div>
                 </div>
@@ -1327,13 +1511,13 @@
             </section>
 
             <section class="settings-page" role="tabpanel" data-page="sounds" hidden>
-              <h3 class="settings-page-title">Sounds</h3>
+              <h3 class="settings-page-title" data-i18n="settings.sounds.sounds">Sounds</h3>
 
               <div class="setting-group">
                 <label class="setting-toggle">
                   <span class="setting-text">
-                    <span class="setting-title">Voice channel sounds</span>
-                    <small>When you or somebody else joins or leaves, a stream
+                    <span class="setting-title" data-i18n="settings.sounds.voice_channel_sounds">Voice channel sounds</span>
+                    <small data-i18n="settings.sounds.when_you_or_somebody">When you or somebody else joins or leaves, a stream
                       starts or stops, and when you mute or deafen. Rising means
                       on, falling means off.</small>
                   </span>
@@ -1342,8 +1526,18 @@
 
                 <label class="setting-toggle">
                   <span class="setting-text">
-                    <span class="setting-title">Mention sound</span>
-                    <small>Three rising notes when somebody writes your name,
+                    <span class="setting-title" data-i18n="settings.sounds.members_join_sounds">Members' join sounds</span>
+                    <small data-i18n="settings.sounds.members_join_sounds_hint">When somebody who has picked their own join sound joins
+                      your voice channel, you hear theirs instead of the usual
+                      tone. Off plays the usual tone for everybody.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="custom-join-sounds" checked />
+                </label>
+
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.sounds.mention_sound">Mention sound</span>
+                    <small data-i18n="settings.sounds.three_rising_notes_when">Three rising notes when somebody writes your name,
                       and the only cue that fires for a channel you are not
                       looking at.</small>
                   </span>
@@ -1353,7 +1547,7 @@
 
               <div class="setting-group">
                 <div class="setting-head">
-                  <label class="setting-title" for="sound-volume">Sound effects volume</label>
+                  <label class="setting-title" for="sound-volume" data-i18n="settings.sounds.sound_effects_volume">Sound effects volume</label>
                   <output class="value-pill" id="sound-volume-label" for="sound-volume">100%</output>
                 </div>
                 <input id="sound-volume" type="range" min="0" max="200" step="5" value="100" />
@@ -1367,13 +1561,14 @@
               list here that would have to repeat the whole soundpad.
             -->
             <section class="settings-page" role="tabpanel" data-page="hotkeys" data-cap="hotkeys" hidden>
-              <h3 class="settings-page-title">Hotkeys</h3>
+              <h3 class="settings-page-title" data-i18n="settings.hotkeys.hotkeys">Hotkeys</h3>
               <div class="setting-group">
-                <p class="setting-note">
+                <p class="setting-note" data-i18n="settings.hotkeys.work_anywhere_even_while">
                   Work anywhere, even while a game has focus. A combination you
                   bind here is taken from every other program while Harmony is
-                  open, so use a modifier (Ctrl, Alt, Shift) or an F-key. To
-                  give a soundpad clip a hotkey, right-click it.
+                  open, so use a modifier (Ctrl, Alt, Shift) or an F-key. Every
+                  soundpad clip on this server is listed below; right-clicking
+                  a clip in the soundpad does the same.
                 </p>
                 <div class="hotkey-list" id="hotkey-list"></div>
               </div>
@@ -1386,14 +1581,14 @@
               install its own update.
             -->
             <section class="settings-page" role="tabpanel" data-page="updates" data-cap="updates" hidden>
-              <h3 class="settings-page-title">Updates</h3>
+              <h3 class="settings-page-title" data-i18n="settings.updates.updates">Updates</h3>
               <div class="setting-group">
                 <div class="update-row">
                   <div class="update-text">
                     <strong id="update-version">Harmony</strong>
                     <span class="muted" id="update-status">Not checked yet.</span>
                   </div>
-                  <button type="button" class="ghost small" id="update-check">Check now</button>
+                  <button type="button" class="ghost small" id="update-check" data-i18n="update_check.check_now">Check now</button>
                   <button type="button" class="primary" id="update-action" hidden>Download</button>
                 </div>
               </div>
@@ -1401,7 +1596,7 @@
           </div>
 
           <div class="ask-buttons settings-footer">
-            <button type="submit" class="primary" id="devices-close">Done</button>
+            <button type="submit" class="primary" id="devices-close" data-i18n="devices_close.done">Done</button>
           </div>
         </div>
       </form>
@@ -1420,20 +1615,20 @@
     <!-- ================= Add-stream picker ================= -->
     <div class="modal" id="add-stream" hidden>
       <div class="modal-card">
-        <h2>Add a stream</h2>
+        <h2 data-i18n="add_stream.add_a_stream">Add a stream</h2>
         <ul id="add-stream-items"></ul>
-        <p class="muted" id="add-stream-empty" hidden>No other streams are live right now.</p>
-        <button class="ghost" id="add-stream-close">Cancel</button>
+        <p class="muted" id="add-stream-empty" hidden data-i18n="add_stream_empty.no_other_streams_are">No other streams are live right now.</p>
+        <button class="ghost" id="add-stream-close" data-i18n="add_stream_close.cancel">Cancel</button>
       </div>
     </div>
 
     <!-- ================= Connection diagnostic ================= -->
     <div class="modal" id="diag" hidden>
       <div class="modal-card">
-        <h2>Connection test</h2>
+        <h2 data-i18n="diag.connection_test">Connection test</h2>
         <ul class="diag-list" id="diag-steps"></ul>
         <p class="muted" id="diag-verdict"></p>
-        <button class="ghost" id="diag-close">Close</button>
+        <button class="ghost" id="diag-close" data-i18n="diag_close.close">Close</button>
       </div>
     </div>
 

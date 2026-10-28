@@ -1,4 +1,5 @@
 // Composite sharing: several sources, arranged, as ONE stream.
+import { t, applyDom } from './i18n.js';
 //
 // Screens, windows and cameras are each captured on their own and drawn,
 // every frame, onto one canvas at the place and size the broadcaster chose.
@@ -362,21 +363,22 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
   root.className = 'comp-editor';
   root.innerHTML = `
     <header class="comp-bar">
-      <strong>Composition</strong>
-      <span class="muted comp-hint">Live as you edit. Drag to move, drag a corner to resize, right-click for more.</span>
+      <strong data-i18n="comp.title">Composition</strong>
+      <span class="muted comp-hint" data-i18n="comp.hint">Live as you edit. Drag to move, drag a corner to resize, right-click for more.</span>
       <span class="comp-actions">
-        <button type="button" class="ghost small" data-act="add">+ Add source</button>
-        <button type="button" class="primary small" data-act="done">Done</button>
+        <button type="button" class="ghost small" data-act="add" data-i18n="comp.add_source">+ Add source</button>
+        <button type="button" class="primary small" data-act="done" data-i18n="comp.done">Done</button>
       </span>
     </header>
     <div class="comp-stage">
       <div class="comp-frame">
-        <div class="comp-empty muted">Right-click to add a screen, window or camera.</div>
+        <div class="comp-empty muted" data-i18n="comp.empty_hint">Right-click to add a screen, window or camera.</div>
         <div class="comp-select" hidden>
           <span class="comp-name"></span>
         </div>
       </div>
     </div>`;
+  applyDom(root);
   const frame = root.querySelector('.comp-frame');
   const selectBox = root.querySelector('.comp-select');
   const nameTag = root.querySelector('.comp-name');
@@ -414,8 +416,8 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
     selectBox.toggleAttribute('data-crop', cropping);
     selectBox.toggleAttribute('data-stretch', stretching && !cropping);
     nameTag.textContent = cropping
-      ? `Cropping ${layer.source.name}`
-      : stretching ? `Free resize: ${layer.source.name}` : layer.source.name;
+      ? t('comp.cropping', { name: layer.source.name })
+      : stretching ? t('comp.free_resize', { name: layer.source.name }) : layer.source.name;
   }
 
   const offChange = comp.onChange(paintSelection);
@@ -610,24 +612,24 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
         paintSelection();
       };
       items.push(
-        { label: cropping ? 'Finish cropping' : 'Crop', run: mode(!cropping, false) },
-        ...(cropped ? [{ label: 'Reset crop', run: () => comp.resetCrop(hit.id) }] : []),
+        { label: cropping ? t('comp.finish_cropping') : t('comp.crop'), run: mode(!cropping, false) },
+        ...(cropped ? [{ label: t('comp.reset_crop'), run: () => comp.resetCrop(hit.id) }] : []),
         '-',
-        { label: stretching ? 'Finish free resize' : 'Free resize (stretch)', run: mode(false, !stretching) },
-        { label: 'Fit to canvas', run: () => comp.fit(hit.id) },
-        { label: 'Fill canvas', run: () => comp.fill(hit.id) },
-        { label: 'Original size (1:1)', run: () => comp.originalSize(hit.id) },
-        { label: 'Size: 75% of the width', run: () => comp.scaleTo(hit.id, 0.75) },
-        { label: 'Size: 50% of the width', run: () => comp.scaleTo(hit.id, 0.5) },
-        { label: 'Size: 25% of the width', run: () => comp.scaleTo(hit.id, 0.25) },
+        { label: stretching ? t('comp.finish_free_resize') : t('comp.free_resize_stretch'), run: mode(false, !stretching) },
+        { label: t('comp.fit_to_canvas'), run: () => comp.fit(hit.id) },
+        { label: t('comp.fill_canvas'), run: () => comp.fill(hit.id) },
+        { label: t('comp.original_size_1_1'), run: () => comp.originalSize(hit.id) },
+        { label: t('comp.size_75_of_the_width'), run: () => comp.scaleTo(hit.id, 0.75) },
+        { label: t('comp.size_50_of_the_width'), run: () => comp.scaleTo(hit.id, 0.5) },
+        { label: t('comp.size_25_of_the_width'), run: () => comp.scaleTo(hit.id, 0.25) },
         '-',
-        { label: 'Bring to front', run: () => comp.bringToFront(hit.id) },
-        { label: 'Send to back', run: () => comp.sendToBack(hit.id) },
-        { label: `Remove ${hit.source.name}`, danger: true, run: () => comp.removeLayer(hit.id) },
+        { label: t('comp.bring_to_front'), run: () => comp.bringToFront(hit.id) },
+        { label: t('comp.send_to_back'), run: () => comp.sendToBack(hit.id) },
+        { label: t('comp.remove', { name: hit.source.name }), danger: true, run: () => comp.removeLayer(hit.id) },
         '-',
       );
     }
-    items.push({ label: 'Add a screen, window or camera…', run: () => openChooser() });
+    items.push({ label: t('comp.add_a_screen_window_or'), run: () => openChooser() });
     openMenu(event, items);
   });
 
@@ -638,9 +640,10 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
     chooser = document.createElement('div');
     chooser.className = 'comp-chooser';
     chooser.innerHTML = `
-      <header><strong>Add a source</strong>
-        <button type="button" class="ghost small" data-act="close">Cancel</button></header>
-      <div class="comp-sources"><p class="muted">Looking for sources…</p></div>`;
+      <header><strong data-i18n="comp.add_a_source">Add a source</strong>
+        <button type="button" class="ghost small" data-act="close" data-i18n="app.cancel">Cancel</button></header>
+      <div class="comp-sources"><p class="muted" data-i18n="comp.looking">Looking for sources…</p></div>`;
+    applyDom(chooser);
     root.append(chooser);
     chooser.querySelector('[data-act="close"]').addEventListener('click', closeChooser);
     const grid = chooser.querySelector('.comp-sources');
@@ -678,12 +681,12 @@ export function openCompositionEditor(comp, { listSources, onError = () => {} })
             paintSelection();
           }
         } catch (err) {
-          onError(`Could not add ${source.name}: ${err.message}`);
+          onError(t('comp.could_not_add', { name: source.name, message: err.message }));
         }
       });
       grid.append(b);
     }
-    if (!sources.length) grid.append(Object.assign(document.createElement('p'), { textContent: 'Nothing to add.' }));
+    if (!sources.length) grid.append(Object.assign(document.createElement('p'), { textContent: t('comp.nothing_to_add') }));
   }
 
   function closeChooser() {

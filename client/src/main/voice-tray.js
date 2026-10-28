@@ -21,6 +21,7 @@ const {
 const path = require('node:path');
 
 const settings = require('./settings');
+const strings = require('./strings');
 
 /** @type {Tray|null} */
 let tray = null;
@@ -96,31 +97,31 @@ function trayImage() {
 function tooltip() {
   if (!voice.inVoice) return 'Harmony';
   const where = voice.channel ? ` — ${voice.channel}` : '';
-  const how = voice.deafened ? ' (deafened)' : voice.muted ? ' (muted)' : '';
+  const how = voice.deafened ? ` (${strings.get('main.deafened')})` : voice.muted ? ` (${strings.get('main.muted')})` : '';
   return `Harmony${where}${how}`;
 }
 
 function menu() {
   return Menu.buildFromTemplate([
-    { label: 'Open Harmony', click: showWindow },
+    { label: strings.get('main.open'), click: showWindow },
     { type: 'separator' },
     {
-      label: 'Mute',
+      label: strings.get('main.mute'),
       type: 'checkbox',
       checked: voice.muted,
       enabled: voice.inVoice,
       click: () => command('mute'),
     },
     {
-      label: 'Deafen',
+      label: strings.get('main.deafen'),
       type: 'checkbox',
       checked: voice.deafened,
       enabled: voice.inVoice,
       click: () => command('deafen'),
     },
-    { label: 'Disconnect', visible: voice.inVoice, click: () => command('leave') },
+    { label: strings.get('main.disconnect'), visible: voice.inVoice, click: () => command('leave') },
     { type: 'separator' },
-    { label: 'Quit Harmony', click: quit },
+    { label: strings.get('main.quit'), click: quit },
   ]);
 }
 
@@ -169,17 +170,17 @@ function applyThumbar({ force = false } = {}) {
   // false while the window is hidden; 'show' puts them on again.
   const ok = win.setThumbarButtons([
     {
-      tooltip: voice.muted ? 'Unmute' : 'Mute',
+      tooltip: voice.muted ? strings.get('main.unmute') : strings.get('main.mute'),
       icon: voice.muted ? set.micOff : set.mic,
       click: () => sendCommand('mute'),
     },
     {
-      tooltip: voice.deafened ? 'Undeafen' : 'Deafen',
+      tooltip: voice.deafened ? strings.get('main.undeafen') : strings.get('main.deafen'),
       icon: voice.deafened ? set.deafenOff : set.deafen,
       click: () => sendCommand('deafen'),
     },
     {
-      tooltip: 'Disconnect',
+      tooltip: strings.get('main.disconnect'),
       icon: set.leave,
       click: () => sendCommand('leave'),
     },
@@ -191,12 +192,13 @@ function applyThumbar({ force = false } = {}) {
 function firstCloseHint() {
   if (settings.read().trayHintShown) return;
   settings.write({ trayHintShown: true });
-  const title = 'Harmony is still running';
-  const content = 'It keeps going down here, calls included. Right-click this icon to quit.';
+  const title = strings.get('main.still_running');
   if (process.platform === 'win32' && tray) {
-    tray.displayBalloon({ iconType: 'custom', icon: appIcon(), title, content });
+    tray.displayBalloon({
+      iconType: 'custom', icon: appIcon(), title, content: strings.get('main.still_running_balloon'),
+    });
   } else if (Notification.isSupported()) {
-    new Notification({ title, body: content.replace('down here', 'in the tray') }).show();
+    new Notification({ title, body: strings.get('main.still_running_notice') }).show();
   }
 }
 
@@ -224,6 +226,13 @@ function start({ window, onCommand }) {
   // system's close by hiding would hold up the shutdown.
   powerMonitor.on('shutdown', () => { quitting = true; });
   nativeTheme.on('updated', () => applyThumbar());
+  // A new language: the menu and the thumbnail's tooltips are built from words.
+  strings.onChange(() => {
+    menuKey = '';
+    thumbarKey = '';
+    applyTray();
+    applyThumbar({ force: true });
+  });
 }
 
 /**

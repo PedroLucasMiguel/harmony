@@ -141,7 +141,9 @@ export async function applySenderSettings(sender, { maxBitrate, maxFramerate, de
   const params = sender.getParameters();
   if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
   params.encodings[0].maxBitrate = maxBitrate;
+  // No rate means no ceiling: a cap set earlier is lifted, not left behind.
   if (maxFramerate) params.encodings[0].maxFramerate = maxFramerate;
+  else delete params.encodings[0].maxFramerate;
 
   // How the encoder should spend a bitrate budget it cannot meet:
   //   maintain-resolution -- keep every pixel, drop frames (sharp but choppy)

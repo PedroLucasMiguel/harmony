@@ -56,6 +56,11 @@ contextBridge.exposeInMainWorld('harmony', {
     },
   },
 
+  /** The words the main process shows itself, in the language in use (main/strings.js). */
+  strings: {
+    set: invoke('strings:set'),
+  },
+
   /** The tray icon and the taskbar thumbnail's buttons (main/voice-tray.js). */
   voiceTray: {
     setPictures: invoke('voice-tray:pictures'),
@@ -173,6 +178,9 @@ contextBridge.exposeInMainWorld('harmony', {
     logout: invoke('api:logout'),
     me: invoke('api:me'),
     setAvatar: invoke('api:set-avatar'),
+    setBanner: invoke('api:set-banner'),
+    setJoinSound: invoke('api:set-join-sound'),
+    setNameFont: invoke('api:set-name-font'),
     roster: invoke('api:roster'),
     setRole: invoke('api:set-role'),
     setDisplayName: invoke('api:set-display-name'),

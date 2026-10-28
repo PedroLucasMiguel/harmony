@@ -90,6 +90,9 @@ const desktop = () => ({
     set: lift(raw.hotkeys.set),
     onFired: (handler) => raw.hotkeys.onFired(handler),
   },
+  strings: {
+    set: lift(raw.strings.set),
+  },
   voiceTray: {
     setPictures: lift(raw.voiceTray.setPictures),
     setState: lift(raw.voiceTray.setState),
@@ -138,6 +141,9 @@ const desktop = () => ({
     logout: lift(raw.api.logout),
     me: lift(raw.api.me),
     setAvatar: lift(raw.api.setAvatar),
+    setBanner: lift(raw.api.setBanner),
+    setJoinSound: lift(raw.api.setJoinSound),
+    setNameFont: lift(raw.api.setNameFont),
     roster: lift(raw.api.roster),
     setRole: lift(raw.api.setRole),
     setDisplayName: lift(raw.api.setDisplayName),

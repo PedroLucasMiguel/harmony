@@ -261,6 +261,64 @@ describe('uploads', () => {
     assert.equal(back.headers.get('x-content-type-options'), 'nosniff');
   });
 
+  it('takes any file at all, whatever it is called or claims to be', async () => {
+    const files = [
+      ['application/zip', Buffer.from('PK\x03\x04 an archive')],
+      ['application/x-msdownload', Buffer.from('MZ not really a program')],
+      ['video/quicktime', Buffer.from('a movie')],
+      ['audio/flac', Buffer.from('fLaC')],
+      ['image/svg+xml', Buffer.from('<svg onload="alert(1)"/>')],
+      ['application/x-made-up', Buffer.from('invented')],
+      ['', Buffer.from('no type at all')],
+    ];
+    for (const [type, raw] of files) {
+      const res = await api('/api/uploads', {
+        method: 'POST', raw, contentType: type || 'application/octet-stream', token: memberToken,
+      });
+      assert.equal(res.status, 201, `${type || '(none)'} was refused`);
+      assert.equal(res.body.contentType, 'application/octet-stream');
+      assert.equal(res.body.bytes, raw.length);
+    }
+  });
+
+  it('takes a JSON file, however large, as a file and not as a request body', async () => {
+    // The app parses JSON bodies and stops at 16 kb; an upload is not one.
+    const raw = Buffer.from(JSON.stringify({ rows: Array.from({ length: 4000 }, (_, i) => ({ i, text: 'row of data' })) }));
+    assert.ok(raw.length > 16 * 1024);
+    const res = await api('/api/uploads', {
+      method: 'POST', raw, contentType: 'application/json', token: memberToken,
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(res.body.bytes, raw.length);
+    const back = await fetch(`${BASE}/api/uploads/${res.body.hash}`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    assert.deepEqual(Buffer.from(await back.arrayBuffer()), raw);
+  });
+
+  it('takes an empty file, in one request and in pieces', async () => {
+    const one = await api('/api/uploads', {
+      method: 'POST', raw: Buffer.alloc(0), contentType: 'text/plain', token: memberToken,
+    });
+    assert.equal(one.status, 201, JSON.stringify(one.body));
+    assert.equal(one.body.bytes, 0);
+
+    const opened = await api('/api/uploads/sessions', {
+      method: 'POST', body: { size: 0, contentType: 'text/plain' }, token: memberToken,
+    });
+    assert.equal(opened.status, 201, JSON.stringify(opened.body));
+    const done = await api(`/api/uploads/sessions/${opened.body.id}/finish`, { method: 'POST', token: memberToken });
+    assert.equal(done.status, 201, JSON.stringify(done.body));
+    assert.equal(done.body.bytes, 0);
+    assert.equal(done.body.hash, one.body.hash, 'the same nothing, stored once');
+
+    const back = await fetch(`${BASE}/api/uploads/${one.body.hash}`, {
+      headers: { Authorization: `Bearer ${memberToken}` },
+    });
+    assert.equal(back.status, 200);
+    assert.equal((await back.arrayBuffer()).byteLength, 0);
+  });
+
   it('serves the file back with its stored type and nosniff', async () => {
     const res = await fetch(`${BASE}/api/uploads/${hash}`, {
       headers: { Authorization: `Bearer ${memberToken}` },
@@ -866,6 +924,28 @@ describe('the name an attachment is saved under', () => {
     assert.equal(Chat.cleanFilename('C:@@Windows@@System32@@evil.dll'.replaceAll('@@', '\\')),
       'evil.dll');
     assert.equal(Chat.cleanFilename('..'), null, 'nothing left is no name at all');
+  });
+
+  it('KEEPS A LEADING DOT: .gitignore is the file it was', () => {
+    assert.equal(Chat.cleanFilename('.gitignore'), '.gitignore');
+    assert.equal(Chat.cleanFilename('/home/me/.env'), '.env');
+    assert.equal(Chat.cleanFilename('.'), null, 'a directory is not a file name');
+    assert.equal(Chat.cleanFilename('...'), null);
+  });
+
+  it('keeps the extension when a long name is cut', () => {
+    const long = `${'a'.repeat(300)}.tar.gz`;
+    const cut = Chat.cleanFilename(long);
+    assert.equal([...cut].length, 120);
+    assert.ok(cut.endsWith('.gz'));
+    assert.equal(Chat.cleanFilename(`${'é'.repeat(200)}.pdf`).endsWith('.pdf'), true);
+  });
+
+  it('does not cut an emoji in half', () => {
+    const cut = Chat.cleanFilename(`${'🎉'.repeat(200)}.txt`);
+    assert.equal([...cut].length, 120);
+    assert.equal(cut.includes('\ufffd'), false);
+    assert.ok(!/[\ud800-\udbff]$/.test(cut.slice(0, -4)), 'ends on a whole character');
   });
 
   it('strips control characters', () => {

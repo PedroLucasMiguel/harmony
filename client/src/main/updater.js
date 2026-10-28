@@ -89,9 +89,9 @@ function set(patch) {
 
 /** Why this build cannot update itself, or null when it can. */
 function unsupportedReason() {
-  if (!app.isPackaged) return 'Updates apply to an installed build, not a development run.';
+  if (!app.isPackaged) return { code: 'development', message: 'Updates apply to an installed build, not a development run.' };
   if (process.platform === 'linux' && !process.env.APPIMAGE) {
-    return 'Only the AppImage build updates itself.';
+    return { code: 'appimage', message: 'Only the AppImage build updates itself.' };
   }
   return null;
 }
@@ -199,7 +199,7 @@ async function checkManually() {
 async function check() {
   const reason = unsupportedReason();
   if (reason) {
-    set({ state: 'unsupported', error: reason });
+    set({ state: 'unsupported', error: reason.message, reason: reason.code });
     return status;
   }
   // Fetching or fetched: checking again would only lose that. A check that
@@ -262,7 +262,7 @@ function start(onStatus) {
   notify = onStatus;
   const reason = unsupportedReason();
   if (reason) {
-    set({ state: 'unsupported', error: reason });
+    set({ state: 'unsupported', error: reason.message, reason: reason.code });
     return;
   }
   setTimeout(() => check(), FIRST_CHECK_MS).unref?.();

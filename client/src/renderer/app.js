@@ -7,10 +7,13 @@ import { ClipBuffer, CLIP_SECONDS } from './clip-buffer.js';
 import { VoiceSession } from './voice.js';
 import { Compositor, openCompositionEditor } from './compositor.js';
 import { drawTrayIcons } from './tray-icons.js';
+import { t, texts, setLanguage, languages, currentLanguage, resolveLanguage, cachedPreference, onLanguageChange } from './i18n.js';
 import {
   createSink, MAX_GAIN, asPercent, playSample, setOutputDevice, monitorStream, playCue,
-  setCueVolume,
+  setCueVolume, playJoinSound, stopJoinSounds,
 } from './gain.js';
+import { NAME_FONTS, nameFontOf } from './name-fonts.js';
+import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
 
 // ---------------------------------------------------------------------------
 // Stream presets
@@ -28,7 +31,7 @@ const RESOLUTIONS = {
   480: { label: '480p', width: 854, height: 480 },
   720: { label: '720p', width: 1280, height: 720 },
   1080: { label: '1080p', width: 1920, height: 1080 },
-  native: { label: 'Native', width: null, height: null },
+  native: { get label() { return t('quality.native'); }, width: null, height: null },
 };
 
 const FRAMERATES = [30, 60, 120];
@@ -83,12 +86,12 @@ function streamPreset(resolution, fps) {
  */
 const PRIORITY = {
   sharp: {
-    label: 'Sharp — keep resolution',
+    get label() { return t('priority.sharp'); },
     contentHint: 'detail',
     degradationPreference: 'maintain-resolution',
   },
   smooth: {
-    label: 'Smooth — keep framerate',
+    get label() { return t('priority.smooth'); },
     contentHint: 'motion',
     degradationPreference: 'balanced',
   },
@@ -170,6 +173,34 @@ const el = {
   channelsAvatar: $('channels-avatar'),
   avatarButton: $('avatar-button'),
   avatarFile: $('avatar-file'),
+  languageSelect: $('language-select'),
+  loginLanguage: $('login-language'),
+  profileAvatar: $('profile-avatar'),
+  profileChoose: $('profile-choose'),
+  profileRemove: $('profile-remove'),
+  profilePictureNote: $('profile-picture-note'),
+  profileName: $('profile-name'),
+  profileNameSave: $('profile-name-save'),
+  profileNameReset: $('profile-name-reset'),
+  profileNameNote: $('profile-name-note'),
+  profileBannerPreview: $('profile-banner-preview'),
+  profileBannerAvatar: $('profile-banner-avatar'),
+  profileBannerName: $('profile-banner-name'),
+  profileBannerChoose: $('profile-banner-choose'),
+  profileBannerRemove: $('profile-banner-remove'),
+  profileBannerFile: $('profile-banner-file'),
+  profileBannerNote: $('profile-banner-note'),
+  profileFontGrid: $('profile-font-grid'),
+  profileFontNote: $('profile-font-note'),
+  profileSoundState: $('profile-sound-state'),
+  profileSoundPlay: $('profile-sound-play'),
+  profileSoundChoose: $('profile-sound-choose'),
+  profileSoundRemove: $('profile-sound-remove'),
+  profileSoundFile: $('profile-sound-file'),
+  profileSoundNote: $('profile-sound-note'),
+  customJoinSounds: $('custom-join-sounds'),
+  profileNickname: $('profile-nickname'),
+  profileRole: $('profile-role'),
   channelsRole: $('channels-role'),
   serverName: $('server-name'),
   serverIcon: $('server-icon'),
@@ -285,6 +316,8 @@ const el = {
   voiceOutput: $('voice-output'),
   voiceDeviceNote: $('voice-device-note'),
   micGain: $('mic-gain'),
+  micEchoCancellation: $('mic-echo-cancellation'),
+  micNoiseSuppression: $('mic-noise-suppression'),
   micGainLabel: $('mic-gain-label'),
   micGate: $('mic-gate'),
   micGateLabel: $('mic-gate-label'),
@@ -331,6 +364,9 @@ const el = {
   themeGrid: $('theme-grid'),
   themeCustom: $('theme-custom'),
   voiceCamera: $('voice-camera'),
+  camResolution: $('cam-resolution'),
+  camFramerate: $('cam-framerate'),
+  camQualityNote: $('cam-quality-note'),
   voiceCam: $('voice-cam'),
   voiceFlip: $('voice-flip'),
   voiceScreen: $('voice-screen'),
@@ -836,9 +872,17 @@ function applyCapabilities() {
   document.documentElement.dataset.platform = harmony.platform;
 }
 
+// The last language used, before settings have even loaded, so the first thing
+// drawn is already in it. boot() settles it for real a moment later.
+const earlyLanguage = setLanguage(cachedPreference());
+
 async function boot() {
   applyCapabilities();
   state.settings = await harmony.settings.get();
+  await earlyLanguage;
+  if ((state.settings.language ?? 'auto') !== cachedPreference()) {
+    await setLanguage(state.settings.language ?? 'auto');
+  }
   // The desktop's main process applies the size as the window opens; a
   // build without one applies it here, before anything is laid out.
   if (harmony.platform === 'android') {
@@ -943,6 +987,7 @@ async function boot() {
   } else {
     showConnectStep('server');
   }
+  redrawTexts();
 }
 
 /**
@@ -970,9 +1015,10 @@ async function refreshGpuStatus() {
   if (multiGpu) {
     el.gpuPreference.value = state.gpu.adapterPreference ?? 'auto';
     el.gpuPreferenceField.querySelector('small').textContent =
-      `Currently on ${active ?? 'an unknown GPU'}, of ${adapters.map((a) => a.vendor).join(' + ')}. ` +
-      'Leave this alone unless you are troubleshooting: the discrete GPU is normally the right ' +
-      'choice, because it is where the game being captured already lives.';
+      t('gpu.current', {
+        active: active ?? t('gpu.unknown'),
+        all: adapters.map((a) => a.vendor).join(' + '),
+      });
   }
 
   /*
@@ -994,23 +1040,20 @@ async function refreshGpuStatus() {
   el.gpuHint.hidden = !showHint;
   if (showHint) {
     el.gpuHintText.textContent =
-      `This machine has two GPUs (${adapters.map((a) => a.vendor).join(' + ')}). If your screen is ` +
-      'wired to the integrated one, every frame Harmony draws is copied between GPUs before it ' +
-      'reaches the display, which costs roughly 10% of the machine while you stream. Look for a ' +
-      'MUX switch, NVIDIA Advanced Optimus, or a "display mode" setting in your laptop vendor\'s ' +
-      'utility, and point the panel at the discrete GPU. Worth doing once — it is the single ' +
-      'largest thing you can change.';
+      t('gpu.hint', {
+        all: adapters.map((a) => a.vendor).join(' + '),
+      });
   }
 
   if (preference === 'off') {
     el.hwEncodingNote.textContent =
-      'Off — encoding on the CPU. Turn this back on unless viewers saw a corrupt picture.';
+      t('app.off_encoding_on_the_cpu');
   } else if (encodeAccelerated) {
-    el.hwEncodingNote.textContent = `On — your GPU is encoding${
-      decodeAccelerated ? ' and decoding' : ''
-    }. NVENC, AMF or Quick Sync, whichever your driver provides.`;
+    el.hwEncodingNote.textContent = decodeAccelerated
+      ? t('gpu.on_both')
+      : t('gpu.on_encode');
   } else {
-    el.hwEncodingNote.textContent = `No GPU encoder available (${videoEncode}) — falling back to software H.264, which is slower but works everywhere.`;
+    el.hwEncodingNote.textContent = t('app.no_gpu_encoder_available_falling', { videoEncode });
   }
 }
 
@@ -1392,7 +1435,7 @@ function renderServerMenu() {
       forget.type = 'button';
       forget.className = 'server-option-forget';
       forget.textContent = '\u00D7';
-      forget.title = 'Forget this server and the sign-in saved for it';
+      forget.title = t('app.forget_this_server_and_the');
       forget.addEventListener('click', (event) => {
         event.stopPropagation();
         forgetServer(p.url);
@@ -1445,7 +1488,8 @@ function addServer() {
   el.password.value = '';
   el.passwordField.hidden = true;
   el.passwordField.classList.remove('bad');
-  el.serverHint.textContent = 'The address you were given for your Harmony server.';
+  el.serverHint.dataset.i18n = 'app.the_address_you_were_given';
+  el.serverHint.textContent = t('app.the_address_you_were_given');
   el.serverBackRow.hidden = !addingFrom.url;
   showError('');
   showConnectStep('server');
@@ -1476,12 +1520,12 @@ function renderServerChip() {
     reachable: connectServer?.reachable,
     checking: connectServer?.checking,
   });
-  el.serverChip.title = hidingDetails() ? 'Click to switch or add a server'
+  el.serverChip.title = hidingDetails() ? t('app.click_to_switch_or_add')
     : connectServer?.checking
-    ? `Checking ${address}…`
+    ? t('app.checking', { address })
     : connectServer?.reachable
-    ? `${address} -- click to switch or add a server`
-    : `${address} is not answering -- click to switch or add a server`;
+    ? t('app.click_to_switch_or_add_2', { address })
+    : t('app.is_not_answering_click_to', { address });
 }
 
 /** Take what /api/health says about accounts into the auth state. */
@@ -1517,13 +1561,14 @@ async function submitServer({ resuming = false } = {}) {
   const superseded = () => attempt !== serverAttempt;
   const server = el.serverUrl.value.trim();
   if (!server) {
-    showError('Enter the address of your Harmony server.');
+    showError(t('connect.enter_address'));
     el.serverUrl.focus();
     return;
   }
   showError('');
   el.serverContinue.disabled = true;
-  el.serverContinue.textContent = 'Checking…';
+  el.serverContinue.removeAttribute('data-i18n');
+  el.serverContinue.textContent = t('app.checking_2');
 
   try {
     /*
@@ -1557,7 +1602,7 @@ async function submitServer({ resuming = false } = {}) {
         await adoptServer(server);
         showConnectStep('account');
         applyAuthMode();
-        showError(`${serverHost(server)} is not answering. Check that it is running, or pick another server.`);
+        showError(t('connect.not_answering', { host: serverHost(server) }));
         return;
       }
       throw err;
@@ -1569,10 +1614,11 @@ async function submitServer({ resuming = false } = {}) {
       showConnectStep('server');
       if (el.password.value) {
         el.passwordField.classList.add('bad');
-        showError('Wrong server password.');
+        showError(t('connect.wrong_password'));
         el.password.select();
       } else {
-        el.serverHint.textContent = 'This server asks for a password before anything else.';
+        el.serverHint.removeAttribute('data-i18n');
+        el.serverHint.textContent = t('app.this_server_asks_for_a');
       }
       el.password.focus();
       return;
@@ -1603,7 +1649,8 @@ async function submitServer({ resuming = false } = {}) {
     el.serverUrl.focus();
   } finally {
     el.serverContinue.disabled = false;
-    el.serverContinue.textContent = 'Continue';
+    el.serverContinue.dataset.i18n = 'app.continue';
+    el.serverContinue.textContent = t('app.continue');
   }
 }
 
@@ -1629,8 +1676,8 @@ async function probeServer() {
      * assume is not wanted.
      */
     el.passwordField.querySelector('span').textContent = health.passwordRequired
-      ? 'Server password'
-      : 'Server password (not needed)';
+      ? t('app.server_password')
+      : t('app.server_password_not_needed');
     applyHealth(health);
     await restoreSession();
     applyAuthMode();
@@ -1704,39 +1751,36 @@ function applyAuthMode() {
     el.accountPassword.placeholder = '•'.repeat(10);
     el.accountPassword.readOnly = true;
     el.accountPassword.setAttribute('data-saved', '');
-    el.accountPasswordLabel.textContent = 'Password';
+    el.accountPasswordLabel.textContent = t('app.password');
     el.accountConfirmField.hidden = true;
     el.ownerKeyField.hidden = true;
-    el.usernameHint.textContent = `Signed in as ${displayOf(
-      state.auth.user.id, state.auth.user.nickname,
-    )}.`;
-    el.authModeText.textContent = 'Not you?';
-    el.authModeToggle.textContent = 'Sign out';
-    el.continue.textContent = 'Connect';
+    el.usernameHint.textContent = t('app.signed_in_as', { name: displayOf( state.auth.user.id, state.auth.user.nickname, ) });
+    el.authModeText.textContent = t('app.not_you');
+    el.authModeToggle.textContent = t('app.sign_out');
+    el.continue.textContent = t('app.connect');
     return;
   }
 
   const registering = state.auth.mode === 'register';
   el.accountPassword.readOnly = false;
   el.accountPassword.removeAttribute('data-saved');
-  el.accountPasswordLabel.textContent = registering ? 'Choose a password' : 'Password';
-  el.accountPassword.placeholder = registering ? 'At least 6 characters' : '';
+  el.accountPasswordLabel.textContent = registering ? t('app.choose_a_password') : t('app.password');
+  el.accountPassword.placeholder = registering ? t('app.at_least_6_characters') : '';
   el.accountConfirmField.hidden = !registering;
   el.ownerKeyField.hidden = !(registering && state.auth.needsOwner);
 
   el.usernameHint.textContent = (() => {
     if (!on) {
-      return 'Free name \u2192 you start streaming. '
-        + 'Name already live \u2192 you join and watch.';
+      return t('connect.username_hint_stream');
     }
     return registering
-      ? 'This becomes your permanent name. 2-20 characters, and it is what your stream is called.'
-      : 'The nickname you registered with.';
+      ? t('connect.username_hint_new')
+      : t('connect.username_hint_login');
   })();
 
-  el.authModeText.textContent = registering ? 'Already registered?' : 'No account yet?';
-  el.authModeToggle.textContent = registering ? 'Sign in' : 'Create one';
-  el.continue.textContent = registering ? 'Create account' : 'Connect';
+  el.authModeText.textContent = registering ? t('app.already_registered') : t('app.no_account_yet');
+  el.authModeToggle.textContent = registering ? t('app.sign_in') : t('app.create_one');
+  el.continue.textContent = registering ? t('app.create_account') : t('app.connect');
 }
 
 /** Hand the token to main, and persist it only if they asked us to. */
@@ -1765,7 +1809,7 @@ async function authenticate(server, nickname) {
   const ownerKey = el.ownerKey.value.trim();
 
   if (registering && password !== el.accountConfirm.value) {
-    throw new Error('The two passwords do not match.');
+    throw new Error(t('app.the_two_passwords_do_not'));
   }
 
   const result = registering
@@ -1784,7 +1828,7 @@ async function authenticate(server, nickname) {
   // that does not work needs to know before they wonder why they cannot
   // create channels.
   if (result.ownerKeyRejected) {
-    showError('That owner key was not accepted, so this account is an ordinary member.');
+    showError(t('connect.owner_key_refused'));
   } else if (result.ownerClaimed) {
     showError('');
   }
@@ -1827,7 +1871,7 @@ async function refreshLiveList() {
 
       const count = document.createElement('span');
       count.className = 'pill';
-      count.textContent = `${stream.viewers} watching`;
+      count.textContent = t('app.watching', { viewers: stream.viewers });
 
       li.append(dot, who, count);
       li.addEventListener('click', () => {
@@ -1852,12 +1896,12 @@ async function startSession() {
   const server = el.serverUrl.value.trim();
   const username = normalizeName(el.username.value);
 
-  if (!server) return showError('Enter the address of your Harmony server.');
-  if (!username) return showError('Pick a username.');
+  if (!server) return showError(t('connect.enter_address'));
+  if (!username) return showError(t('connect.pick_username'));
 
   showError('');
   el.continue.disabled = true;
-  el.continue.textContent = 'Connecting…';
+  el.continue.textContent = t('app.connecting');
 
   try {
     // Before anything else reaches the server, so the very first request of the
@@ -1889,7 +1933,7 @@ async function startSession() {
     // this is what made "stay signed in" useless.
     if (mustSignIn && !state.auth.user && !el.accountPassword.value) {
       el.accountPassword.focus();
-      throw new Error('This server has accounts. Enter your password, or create an account.');
+      throw new Error(t('app.this_server_has_accounts_enter'));
     }
 
     if ((mustSignIn || wantsSignIn) && !state.auth.user) {
@@ -1942,7 +1986,7 @@ async function startSession() {
   } finally {
     el.continue.disabled = false;
     el.continue.textContent =
-      state.auth.supported && state.auth.mode === 'register' ? 'Create account' : 'Connect';
+      state.auth.supported && state.auth.mode === 'register' ? t('app.create_account') : t('app.connect');
   }
 }
 
@@ -1954,6 +1998,9 @@ function showChannelsError(message) {
   el.channelsError.textContent = message;
   el.channelsError.hidden = !message;
 }
+
+/** A role as a person reads it: 'owner', 'admin' or 'member', in their language. */
+const roleLabel = (role) => (['owner', 'admin', 'member'].includes(role) ? t(`roles.${role}`) : String(role ?? ''));
 
 const isAdmin = () => state.auth.user?.role === 'owner' || state.auth.user?.role === 'admin';
 const isOwner = () => state.auth.user?.role === 'owner';
@@ -2094,6 +2141,66 @@ const faceOf = (userId, fallback = '') =>
   knownUser(userId) ?? { nickname: fallback };
 
 /**
+ * Draw a name in the font its owner picked.
+ *
+ * Next to displayOf for the same reason: the font is part of how somebody's
+ * name looks, so it has to be applied wherever the name is, by the same
+ * lookup, or it shows in the list and not in the chat. An id this build has
+ * no font for is simply the ordinary font.
+ */
+function nameFont(node, userId, user = knownUser(userId)) {
+  const id = nameFontOf(user?.nameFont);
+  if (id) node.dataset.nameFont = id;
+  else delete node.dataset.nameFont;
+}
+
+/**
+ * A closed stream's square: the streamer's picture behind it, dimmed.
+ *
+ * Gives an otherwise empty square a face, so a row of closed streams can be
+ * told apart at a glance. Somebody with no picture keeps the plain square,
+ * since initials blown up to fill a tile are noise rather than identity.
+ * An <img> rather than a CSS background, for the reason showBanner gives.
+ */
+function ghostBackground(node, user) {
+  if (!user?.avatarHash) return;
+  const img = document.createElement('img');
+  img.className = 'ghost-bg';
+  img.alt = '';
+  img.draggable = false;
+  img.src = harmony.mediaUrl(user.avatarHash);
+  node.classList.add('has-picture');
+  node.prepend(img);
+}
+
+/**
+ * Put somebody's banner behind a row, or take it away.
+ *
+ * Idempotent, because the voice pane reuses its rows across roster pushes: the
+ * picture is only touched when it is a different one, so a GIF is not restarted
+ * by every mute somebody toggles. The <img> is the row's first child and is
+ * placed behind the rest by CSS (.profile-banner).
+ */
+function showBanner(row, hash) {
+  let img = row.querySelector(':scope > .profile-banner');
+  if (!hash) {
+    img?.remove();
+    row.classList.remove('has-banner');
+    return;
+  }
+  const src = harmony.mediaUrl(hash);
+  if (!img) {
+    img = document.createElement('img');
+    img.className = 'profile-banner';
+    img.alt = '';
+    img.draggable = false;
+    row.prepend(img);
+  }
+  if (img.getAttribute('src') !== src) img.src = src;
+  row.classList.add('has-banner');
+}
+
+/**
  * One avatar: the picture if there is one, initials if there is not.
  *
  * `harmony://app/media/<hash>` is same-origin, so the CSP's `img-src 'self'`
@@ -2126,6 +2233,166 @@ function avatarEl(user, extraClass = '') {
  */
 function renderOwnAvatar() {
   el.channelsAvatar.replaceChildren(...avatarEl(state.auth.user).childNodes);
+  // The same face on the Profile page, and the button that takes it away only
+  // when there is one to take.
+  el.profileAvatar.replaceChildren(...avatarEl(state.auth.user).childNodes);
+  el.profileRemove.disabled = !state.auth.user?.avatarHash;
+  renderProfileStyle();
+}
+
+/**
+ * The parts of the Profile page that show a look rather than a setting: the
+ * font choices drawn in their own faces, the banner preview and what the join
+ * sound is. From renderOwnAvatar, so it follows every change to who we are,
+ * whether it came from this page, the other client or the server.
+ */
+function renderProfileStyle() {
+  const me = state.auth.user;
+  if (!me) return;
+  const sample = me.displayName || me.nickname;
+
+  el.profileBannerAvatar.replaceChildren(...avatarEl(me).childNodes);
+  el.profileBannerName.textContent = sample;
+  nameFont(el.profileBannerName, me.id, me);
+  showBanner(el.profileBannerPreview, me.bannerHash);
+  el.profileBannerRemove.disabled = !me.bannerHash;
+
+  const choices = [{ id: null, label: t('profile.font_default') }, ...NAME_FONTS];
+  el.profileFontGrid.replaceChildren(...choices.map((font) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'font-choice';
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-checked', String((nameFontOf(me.nameFont) ?? null) === font.id));
+    button.title = font.label;
+    const name = document.createElement('span');
+    name.textContent = font.id ? sample : font.label;
+    if (font.id) name.dataset.nameFont = font.id;
+    button.append(name);
+    button.addEventListener('click', () => saveNameFont(font.id));
+    return button;
+  }));
+
+  el.profileSoundState.textContent = me.joinSoundHash
+    ? t('profile.join_sound_custom') : t('profile.join_sound_default');
+  el.profileSoundRemove.disabled = !me.joinSoundHash;
+}
+
+const BANNER_MAX_BYTES = 2 * 1024 * 1024;
+/** A banner is drawn about 250 px wide; this leaves room for a big window. */
+const BANNER_MAX_PX = 960;
+
+/**
+ * Upload a banner: a GIF as it is, anything else shrunk first.
+ *
+ * A GIF cannot be shrunk on a canvas without losing its animation, so it goes
+ * up untouched and is refused if it is over the server's limit. A still
+ * picture is scaled down and re-encoded until it fits, which makes the limit
+ * something only a GIF can run into.
+ */
+async function setOwnBanner(file) {
+  try {
+    profileNote(el.profileBannerNote, '');
+    let bytes;
+    let type;
+    if (file.type === 'image/gif') {
+      if (file.size > BANNER_MAX_BYTES) throw new Error(t('profile.banner_too_big'));
+      bytes = new Uint8Array(await file.arrayBuffer());
+      type = 'image/gif';
+    } else {
+      const bitmap = await createImageBitmap(file).catch(() => null);
+      if (!bitmap) throw new Error(t('app.could_not_read_that_image'));
+      const scale = Math.min(1, BANNER_MAX_PX / bitmap.width, BANNER_MAX_PX / bitmap.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext('2d');
+      // Under transparency, so a cut-out PNG is not drawn on a black bar.
+      ctx.fillStyle = '#202225';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      let blob = null;
+      for (const quality of [0.85, 0.7, 0.5, 0.35]) {
+        blob = await new Promise((done) => canvas.toBlob(done, 'image/jpeg', quality));
+        if (blob && blob.size <= BANNER_MAX_BYTES) break;
+      }
+      if (!blob || blob.size > BANNER_MAX_BYTES) throw new Error(t('profile.banner_too_big'));
+      bytes = new Uint8Array(await blob.arrayBuffer());
+      type = 'image/jpeg';
+    }
+    const upload = await harmony.media.upload(state.server, bytes, type);
+    const { user } = await harmony.api.setBanner(state.server, upload.hash);
+    adoptOwnUser(user);
+    profileNote(el.profileBannerNote, t('profile.banner_changed'));
+  } catch (err) {
+    profileNote(el.profileBannerNote, err.message, true);
+  }
+}
+
+async function clearOwnBanner() {
+  try {
+    const { user } = await harmony.api.setBanner(state.server, null);
+    adoptOwnUser(user);
+    profileNote(el.profileBannerNote, t('profile.banner_removed'));
+  } catch (err) {
+    profileNote(el.profileBannerNote, err.message, true);
+  }
+}
+
+/** Pick a font for our name, or null for the ordinary one. */
+async function saveNameFont(id) {
+  try {
+    const { user } = await harmony.api.setNameFont(state.server, id);
+    adoptOwnUser(user);
+    profileNote(el.profileFontNote, t('profile.font_saved'));
+  } catch (err) {
+    profileNote(el.profileFontNote, err.message, true);
+  }
+}
+
+/** Turn a picked recording into a join sound and set it. See join-sound.js. */
+async function setOwnJoinSound(file) {
+  try {
+    profileNote(el.profileSoundNote, '');
+    const sound = await prepareJoinSound(file).catch((err) => {
+      throw new Error(err.message === 'too_big'
+        ? t('profile.join_sound_too_big') : t('profile.join_sound_unreadable'));
+    });
+    const upload = await harmony.media.upload(state.server, sound.bytes, 'audio/wav');
+    const { user } = await harmony.api.setJoinSound(state.server, upload.hash);
+    adoptOwnUser(user);
+    profileNote(
+      el.profileSoundNote,
+      sound.trimmed
+        ? t('profile.join_sound_trimmed', { seconds: MAX_JOIN_SOUND_SECONDS })
+        : t('profile.join_sound_changed', { seconds: sound.seconds.toFixed(1) }),
+    );
+  } catch (err) {
+    profileNote(el.profileSoundNote, err.message, true);
+  }
+}
+
+async function clearOwnJoinSound() {
+  try {
+    const { user } = await harmony.api.setJoinSound(state.server, null);
+    adoptOwnUser(user);
+    profileNote(el.profileSoundNote, t('profile.join_sound_removed'));
+  } catch (err) {
+    profileNote(el.profileSoundNote, err.message, true);
+  }
+}
+
+/** Hear what others will: your sound if you have one, else the usual tone. */
+function previewJoinSound() {
+  const hash = state.auth.user?.joinSoundHash;
+  stopJoinSounds();
+  if (!hash) {
+    playCue('join');
+    return;
+  }
+  playJoinSound(harmony.mediaUrl(hash), { maxSeconds: MAX_JOIN_SOUND_SECONDS })
+    .catch(() => profileNote(el.profileSoundNote, t('profile.join_sound_unreadable'), true));
 }
 
 /**
@@ -2140,7 +2407,8 @@ function renderOwnAvatar() {
  */
 function refreshKeepSet() {
   return harmony.media.keep([
-    ...[...state.users.values()].map((u) => u.avatarHash).filter(Boolean),
+    ...[...state.users.values()].flatMap((u) => [u.avatarHash, u.bannerHash, u.joinSoundHash])
+      .filter(Boolean),
     ...state.soundpad.clips.map((c) => c.hash),
     ...state.emojis.list.map((e) => e.hash),
     ...state.chat.pinned.map((m) => m.attachmentHash).filter(Boolean),
@@ -2198,19 +2466,80 @@ async function setOwnAvatar(file) {
       new Promise((done) => canvas.toBlob(done, 'image/jpeg', quality));
     let blob = await encode(0.85);
     if (blob && blob.size > AVATAR_MAX_BYTES) blob = await encode(0.6);
-    if (!blob) throw new Error('Could not read that image.');
-    if (blob.size > AVATAR_MAX_BYTES) throw new Error('That picture is too detailed to shrink.');
+    if (!blob) throw new Error(t('app.could_not_read_that_image'));
+    if (blob.size > AVATAR_MAX_BYTES) throw new Error(t('app.that_picture_is_too_detailed'));
 
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const upload = await harmony.media.upload(state.server, bytes, 'image/jpeg');
     const { user } = await harmony.api.setAvatar(state.server, upload.hash);
-    state.auth.user = user;
-    state.users.set(user.id, user);
-    renderOwnAvatar();
-    refreshKeepSet();
+    adoptOwnUser(user);
+    profileNote(el.profilePictureNote, t('profile.picture_changed'));
   } catch (err) {
     showChannelsError(err.message);
+    profileNote(el.profilePictureNote, err.message, true);
   }
+}
+
+/** Take the picture away: the initials are drawn again. */
+async function clearOwnAvatar() {
+  try {
+    const { user } = await harmony.api.setAvatar(state.server, null);
+    adoptOwnUser(user);
+    profileNote(el.profilePictureNote, t('profile.picture_removed'));
+  } catch (err) {
+    profileNote(el.profilePictureNote, err.message, true);
+  }
+}
+
+/** What the server now says about us: kept, and repainted wherever we show. */
+function adoptOwnUser(user) {
+  state.auth.user = { ...state.auth.user, ...user };
+  state.users.set(user.id, state.auth.user);
+  el.channelsWho.textContent = state.auth.user.displayName || state.auth.user.nickname;
+  nameFont(el.channelsWho, state.auth.user.id, state.auth.user);
+  renderOwnAvatar();
+  refreshKeepSet();
+  // The broadcast repaints everybody else; this repaints us without waiting
+  // for our own message to come back round.
+  renderVoiceRoster(state.channels.roster);
+  renderChannels();
+  renderChat();
+}
+
+/**
+ * Your display name.
+ *
+ * Server-side only, and deliberately nothing like the nickname. The
+ * nickname is an identity -- folded, unique, what you log in with, and what
+ * a MediaMTX path is built from. This is a label: any character, capitals
+ * included, and two people may pick the same one. Clearing it puts the
+ * nickname back.
+ */
+async function saveDisplayName(value) {
+  const { user } = await harmony.api.setDisplayName(state.server, value ?? '');
+  adoptOwnUser(user);
+  renderProfile();
+}
+
+/** A line under a Profile control: what happened, or what went wrong. */
+function profileNote(node, text, isError = false) {
+  node.textContent = text;
+  node.toggleAttribute('data-error', Boolean(text) && isError);
+}
+
+/** The Profile page, from who we are now. Drawn each time Settings opens. */
+function renderProfile() {
+  const me = state.auth.user;
+  if (!me) return;
+  const current = me.customName ? me.displayName : '';
+  el.profileName.value = current;
+  el.profileName.placeholder = me.nickname;
+  el.profileNameSave.disabled = true;
+  el.profileNameReset.disabled = !me.customName;
+  el.profileNickname.textContent = me.nickname;
+  el.profileRole.textContent = roleLabel(me.role ?? 'member');
+  el.profileRole.style.textTransform = 'capitalize';
+  renderOwnAvatar();
 }
 
 /**
@@ -2222,7 +2551,8 @@ async function setOwnAvatar(file) {
  */
 async function enterChannels() {
   el.channelsWho.textContent = state.auth.user.displayName || state.auth.user.nickname;
-  el.channelsRole.textContent = state.auth.user.role === 'member' ? '' : state.auth.user.role;
+  nameFont(el.channelsWho, state.auth.user.id, state.auth.user);
+  el.channelsRole.textContent = state.auth.user.role === 'member' ? '' : roleLabel(state.auth.user.role);
   el.channelAdd.hidden = !isAdmin();
   // The media route serves `harmony://app/media/<hash>` -- a hash and nothing
   // else, which is what lets it be used straight in an <img src>. Main needs
@@ -2260,7 +2590,7 @@ async function enterChannels() {
     // whole picture arrives once with the hello.
     state.channels.rosters = hello.rosters ?? {};
   } catch (err) {
-    showChannelsError(`Live updates unavailable: ${err.message}`);
+    showChannelsError(t('app.live_updates_unavailable', { message: err.message }));
     // Fall back to the REST list so the lobby is still usable read-only.
     try {
       const {
@@ -2285,12 +2615,12 @@ async function enterChannels() {
  */
 async function editChannel(channel) {
   const answer = await ask({
-    title: `Edit #${channel.name}`,
-    text: 'Leave the password empty to remove it.',
-    okLabel: 'Save',
+    title: t('app.edit', { name: channel.name }),
+    text: t('app.leave_the_password_empty_to'),
+    okLabel: t('app.save'),
     fields: [
-      { name: 'name', label: 'Name', value: channel.name, required: true },
-      { name: 'password', label: 'Password', type: 'password', placeholder: 'No password' },
+      { name: 'name', label: t('app.name'), value: channel.name, required: true },
+      { name: 'password', label: t('app.password'), type: 'password', placeholder: t('app.no_password') },
     ],
   });
   if (!answer) return;
@@ -2376,43 +2706,84 @@ function openRowMenu(label, items, event, { above = null } = {}) {
  * leaving the sidebar showing an arrangement the server never accepted.
  */
 
-/** Channels in the order they are drawn: ungrouped, then group by group. */
-/**
- * Every channel, in the order the sidebar draws them.
+/*
+ * The sidebar is one list, top to bottom, and a group is a heading in it:
  *
- * `groups` is a parameter rather than always state, because moving a group
- * moves its channels with it: the caller works out the new group order and
- * asks what the channel order would be under it, without anything in state
- * changing until the server has agreed.
+ *   [ channel, group { channels }, channel, group { channels }, ... ]
+ *
+ * Ungrouped channels and groups sit in whatever order they were put in, so a
+ * group can be above a channel that belongs to none. Groups and ungrouped
+ * channels share one position sequence on the server for exactly that reason.
  */
-function orderedChannels(groups = state.channels.groups) {
-  const byGroup = new Map([[null, []]]);
-  for (const group of groups) byGroup.set(group.id, []);
+
+/** The sidebar as a list: ungrouped channels and groups by position, a group's own inside it. */
+function buildLayout() {
+  const byGroup = new Map(state.channels.groups.map((g) => [g.id, []]));
+  const top = [];
   for (const channel of state.channels.list) {
-    const key = channel.groupId ?? null;
     // A channel in a group this client has not heard of yet reads as
     // ungrouped rather than disappearing.
-    (byGroup.get(key) ?? byGroup.get(null)).push(channel);
+    const inside = channel.groupId == null ? null : byGroup.get(channel.groupId);
+    if (inside) inside.push(channel);
+    else top.push({ kind: 'channel', channel, position: channel.position });
   }
-  return [
-    ...byGroup.get(null),
-    ...groups.flatMap((group) => byGroup.get(group.id) ?? []),
-  ];
+  for (const group of state.channels.groups) {
+    top.push({ kind: 'group', group, channels: byGroup.get(group.id), position: group.position });
+  }
+  return top.sort((a, b) => a.position - b.position);
+}
+
+/** A copy that can be rearranged without touching what the server last said. */
+function editableLayout() {
+  return buildLayout().map((item) => (item.kind === 'group'
+    ? { ...item, channels: [...item.channels] }
+    : { ...item }));
+}
+
+/** Where a channel is in a layout: its place at the top, or in a group. */
+function findChannel(layout, id) {
+  for (const [index, item] of layout.entries()) {
+    if (item.kind === 'channel' && item.channel.id === id) return { list: layout, index, item, group: null };
+    if (item.kind === 'group') {
+      const at = item.channels.findIndex((c) => c.id === id);
+      if (at >= 0) return { list: item.channels, index: at, item: item.channels[at], group: item.group };
+    }
+  }
+  return null;
 }
 
 /**
  * Send the whole tree. See Channels.arrange for why it is not a move.
  *
- * Nothing in state is touched before this: both orders are worked out in
- * local arrays and sent, so a refusal can redraw from what the server last
- * said rather than from a guess this client made.
+ * Nothing in state is touched before this: the new order is worked out on a
+ * copy and sent, so a refusal can redraw from what the server last said
+ * rather than from a guess this client made.
+ *
+ * Sent three ways, so a server that is a version behind still takes it: the
+ * list in drawing order (`order`), which is the one that can put a group above
+ * a channel, and the older pair (ungrouped first, then the groups) that it
+ * reads instead.
  */
-async function applyArrangement(ordered, groups = state.channels.groups) {
+async function applyLayout(layout) {
+  const order = [];
+  const ungrouped = [];
+  const grouped = [];
+  const groups = [];
+  for (const item of layout) {
+    if (item.kind === 'channel') {
+      order.push({ id: item.channel.id, groupId: null });
+      ungrouped.push({ id: item.channel.id, groupId: null });
+      continue;
+    }
+    groups.push(item.group.id);
+    order.push({ group: item.group.id });
+    for (const channel of item.channels) {
+      order.push({ id: channel.id, groupId: item.group.id });
+      grouped.push({ id: channel.id, groupId: item.group.id });
+    }
+  }
   try {
-    await harmony.api.arrange(state.server, {
-      groups: groups.map((g) => g.id),
-      channels: ordered.map((c) => ({ id: c.id, groupId: c.groupId ?? null })),
-    });
+    await harmony.api.arrange(state.server, { order, groups, channels: [...ungrouped, ...grouped] });
   } catch (err) {
     showChannelsError(err.message);
     // Redraw from what we last heard, so a refused drag does not leave the
@@ -2422,77 +2793,113 @@ async function applyArrangement(ordered, groups = state.channels.groups) {
 }
 
 /**
- * Move a channel, by rebuilding the order rather than computing indices.
+ * Move a channel.
  *
  * @param {number} id        the channel being dragged
- * @param {object} to        {beforeId} to land above a channel, or
- *                           {groupId} to land at the end of a group
+ * @param {object} to        one of
+ *   {beforeId}       above another channel, in whatever it is in
+ *   {groupId}        the end of that group
+ *   {groupId: null}  the end of everything, ungrouped
+ *   {beforeGroupId}  above a group's heading, ungrouped
  */
 function moveChannel(id, to) {
-  const ordered = orderedChannels();
-  const moving = ordered.find((c) => c.id === id);
-  if (!moving) return;
+  const layout = editableLayout();
+  const from = findChannel(layout, id);
+  if (!from) return;
+  const [taken] = from.list.splice(from.index, 1);
+  // At the top it is an item of the list, inside a group it is the channel.
+  const channel = from.group ? taken : taken.channel;
+  const onTop = () => ({ kind: 'channel', channel: { ...channel, groupId: null }, position: 0 });
+  const inside = (groupId) => ({ ...channel, groupId });
 
-  const rest = ordered.filter((c) => c.id !== id);
-  let index = rest.length;
   if (to.beforeId != null) {
-    const anchor = rest.find((c) => c.id === to.beforeId);
+    const anchor = findChannel(layout, to.beforeId);
     if (!anchor) return;
-    moving.groupId = anchor.groupId ?? null;
-    index = rest.indexOf(anchor);
+    anchor.list.splice(anchor.index, 0, anchor.group ? inside(anchor.group.id) : onTop());
+  } else if (to.beforeGroupId != null) {
+    const at = layout.findIndex((item) => item.kind === 'group' && item.group.id === to.beforeGroupId);
+    if (at < 0) return;
+    layout.splice(at, 0, onTop());
+  } else if (to.groupId != null) {
+    const target = layout.find((item) => item.kind === 'group' && item.group.id === to.groupId);
+    if (!target) return;
+    target.channels.push(inside(to.groupId));
   } else {
-    moving.groupId = to.groupId ?? null;
-    // The end of that group, which is the last channel belonging to it --
-    // or, for an empty group, wherever the group's block begins.
-    const last = rest.map((c, i) => [c, i])
-      .filter(([c]) => (c.groupId ?? null) === moving.groupId)
-      .pop();
-    if (last) index = last[1] + 1;
-    else if (moving.groupId === null) index = 0;
-    else {
-      // An empty group: everything before it in group order, plus the
-      // ungrouped block, comes first.
-      const before = new Set([null]);
-      for (const g of state.channels.groups) {
-        if (g.id === moving.groupId) break;
-        before.add(g.id);
-      }
-      index = rest.filter((c) => before.has(c.groupId ?? null)).length;
-    }
+    layout.push(onTop());
   }
-
-  rest.splice(index, 0, moving);
-  applyArrangement(rest);
+  applyLayout(layout);
 }
 
 /**
  * Move a group, and everything in it.
  *
- * The channels are not mentioned anywhere below, and they do not need to
- * be: positions are written from the order of the submitted list, and
- * orderedChannels() walks the groups in the order it is given. Ask it about
- * the new group order and the channels come out already following their
- * headings.
- *
- * @param {number} id        the group being dragged
- * @param {number|null} beforeId  the group to land above, or null for last
+ * @param {number} id  the group being dragged
+ * @param {object|null} to  one of
+ *   {beforeGroupId}    above another group
+ *   {beforeChannelId}  above a channel -- or, if that channel is inside a group,
+ *                      above that group, since a group cannot go inside one
+ *   null               the end of everything
  */
-function moveGroup(id, beforeId) {
-  const groups = [...state.channels.groups];
-  const from = groups.findIndex((g) => g.id === id);
+function moveGroup(id, to) {
+  const layout = editableLayout();
+  const from = layout.findIndex((item) => item.kind === 'group' && item.group.id === id);
   if (from < 0) return;
+  const [moving] = layout.splice(from, 1);
 
-  const [moving] = groups.splice(from, 1);
-  let index = groups.length;
-  if (beforeId != null) {
-    index = groups.findIndex((g) => g.id === beforeId);
-    // The anchor was the group being dragged, or one this client has not
-    // heard of. Either way there is nothing to be above.
-    if (index < 0) return;
+  let at = layout.length;
+  if (to?.beforeGroupId != null) {
+    at = layout.findIndex((item) => item.kind === 'group' && item.group.id === to.beforeGroupId);
+    // Itself, or one this client has not heard of: nothing to be above.
+    if (at < 0) return;
+  } else if (to?.beforeChannelId != null) {
+    at = layout.findIndex((item) => (item.kind === 'channel' && item.channel.id === to.beforeChannelId)
+      || (item.kind === 'group' && item.channels.some((c) => c.id === to.beforeChannelId)));
+    // Dropped on its own channels: where it already is.
+    if (at < 0) return;
   }
-  groups.splice(index, 0, moving);
+  layout.splice(at, 0, moving);
+  applyLayout(layout);
+}
 
-  applyArrangement(orderedChannels(groups), groups);
+/**
+ * One place up or down, for the people who cannot drag -- a phone has no
+ * dragging -- and for anyone who would rather not.
+ *
+ * A group steps past the next group or ungrouped channel; a channel steps past
+ * its neighbour inside whatever it is in.
+ */
+function nudge(kind, id, step) {
+  const layout = editableLayout();
+  const place = kind === 'group'
+    ? { list: layout, index: layout.findIndex((item) => item.kind === 'group' && item.group.id === id) }
+    : findChannel(layout, id);
+  if (!place || place.index < 0) return;
+  const target = place.index + step;
+  if (target < 0 || target >= place.list.length) return;
+  const [moving] = place.list.splice(place.index, 1);
+  place.list.splice(target, 0, moving);
+  applyLayout(layout);
+}
+
+/** "Move up" and "Move down" for a context menu, only those that would move. */
+function nudgeItems(kind, id) {
+  return [
+    { label: t('app.move_up'), title: t('app.one_place_higher_in_the'), step: -1 },
+    { label: t('app.move_down'), title: t('app.one_place_lower_in_the'), step: 1 },
+  ]
+    .filter((item) => canNudge(kind, id, item.step))
+    .map(({ label, title, step }) => ({ label, title, run: () => nudge(kind, id, step) }));
+}
+
+/** Whether an item can step that way, so the menu offers only what will work. */
+function canNudge(kind, id, step) {
+  const layout = buildLayout();
+  if (kind === 'group') {
+    const at = layout.findIndex((item) => item.kind === 'group' && item.group.id === id);
+    return at >= 0 && at + step >= 0 && at + step < layout.length;
+  }
+  const place = findChannel(layout, id);
+  return Boolean(place) && place.index + step >= 0 && place.index + step < place.list.length;
 }
 
 /** The row for one channel, plus its member list where it has one. */
@@ -2519,7 +2926,7 @@ function channelNodes(channel) {
   if (mentions) {
     // The number itself is drawn by CSS from the attribute.
     li.dataset.mention = mentions > 99 ? '99+' : String(mentions);
-    li.title = `${mentions} ${mentions === 1 ? 'message mentions' : 'messages mention'} you`;
+    li.title = t('channels.mentions', { count: mentions });
   }
 
   const kind = document.createElement('span');
@@ -2536,7 +2943,7 @@ function channelNodes(channel) {
   if (channel.locked) {
     const lock = document.createElement('span');
     lock.className = 'tag';
-    lock.textContent = channel.unlocked ? 'unlocked' : 'locked';
+    lock.textContent = channel.unlocked ? t('app.unlocked') : t('app.locked');
     li.append(lock);
   }
 
@@ -2570,19 +2977,20 @@ function channelNodes(channel) {
       // sidebar and calling it #voice here would name it something it is
       // not called anywhere else.
       openRowMenu(channel.kind === 'text' ? `#${channel.name}` : channel.name, [
+        ...nudgeItems('channel', channel.id),
         {
-          label: 'Rename or set a password',
-          title: 'Change the name, or put a password on it',
+          label: t('app.rename_or_set_a_password'),
+          title: t('app.change_the_name_or_put'),
           run: () => editChannel(channel),
         },
         {
-          label: 'Delete this channel',
-          title: 'Removes the channel and everything written in it',
+          label: t('app.delete_this_channel'),
+          title: t('app.removes_the_channel_and_everything'),
           danger: true,
           run: async () => {
-            if (!await askConfirm(`Delete #${channel.name}?`, {
-              text: 'Everything written in it goes too. This cannot be undone.',
-              okLabel: 'Delete',
+            if (!await askConfirm(t('app.delete', { name: channel.name }), {
+              text: t('app.everything_written_in_it_goes'),
+              okLabel: t('app.delete_2'),
             })) return;
             try {
               await harmony.api.deleteChannel(state.server, channel.id);
@@ -2625,6 +3033,7 @@ function channelNodes(channel) {
       clearDropMarks();
       moveChannel(id, { beforeId: channel.id });
     });
+    acceptGroupDrop(li, channel);
   }
 
   li.addEventListener('click', () => {
@@ -2648,6 +3057,7 @@ function channelNodes(channel) {
   // Dropping onto the people already in a channel means that channel too;
   // the highlight goes on its row, which is what the drop is about.
   acceptMemberDrop(list, channel, li);
+  if (isAdmin()) acceptGroupDrop(list, channel);
   list.append(...members.map((member) => {
     const row = document.createElement('span');
     row.className = 'channel-member';
@@ -2656,7 +3066,9 @@ function channelNodes(channel) {
     const who = document.createElement('span');
     who.className = 'member-name';
     who.textContent = displayOf(member.userId, member.nickname);
+    nameFont(who, member.userId);
     row.append(who);
+    showBanner(row, knownUser(member.userId)?.bannerHash);
 
     // Exactly the indicators the voice pane shows, from the same helper --
     // the two lists are looked at side by side, and nothing is more
@@ -2672,7 +3084,7 @@ function channelNodes(channel) {
     // The same menu as the roster. Right-clicking somebody in the sidebar
     // is the natural thing to try, and an admin muting someone in a
     // channel they are not in is the main reason to want it.
-    row.title = 'Right-click for volume and controls';
+    row.title = t('app.right_click_for_volume_and');
     row.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2688,7 +3100,7 @@ function channelNodes(channel) {
      */
     if (isAdmin()) {
       row.draggable = true;
-      row.title = 'Drag to another voice channel to move, or right-click for controls';
+      row.title = t('app.drag_to_another_voice_channel');
       row.addEventListener('dragstart', (event) => {
         event.stopPropagation();
         dragging = { kind: 'member', userId: member.userId, from: channel.id };
@@ -2732,6 +3144,39 @@ function acceptMemberDrop(node, channel, mark) {
     dragging = null;
     clearDropMarks();
     if (from !== channel.id) moveMember(userId, channel.id);
+  });
+}
+
+/**
+ * Make a channel row a place a dragged GROUP can be dropped.
+ *
+ * A group cannot go inside anything, so it lands above this channel's place in
+ * the list: above the channel itself when it belongs to none, above its group's
+ * heading when it is in one. The mark is drawn there, so what lights up is
+ * where it will land.
+ */
+function acceptGroupDrop(node, channel) {
+  node.addEventListener('dragover', (event) => {
+    if (dragging?.kind !== 'group') return;
+    // Always handled here: letting it reach the list would read as "the end".
+    event.stopPropagation();
+    // Its own channels are where it already is.
+    if (channel.groupId === dragging.id) return;
+    event.preventDefault();
+    clearDropMarks();
+    const target = channel.groupId != null
+      ? el.channelItems.querySelector(`li.channel-group[data-group-id="${channel.groupId}"]`)
+      : el.channelItems.querySelector(`li.channel-row[data-id="${channel.id}"]`);
+    target?.setAttribute('data-drop-before', '');
+  });
+  node.addEventListener('drop', (event) => {
+    if (dragging?.kind !== 'group') return;
+    event.stopPropagation();
+    event.preventDefault();
+    const { id } = dragging;
+    dragging = null;
+    clearDropMarks();
+    if (channel.groupId !== id) moveGroup(id, { beforeChannelId: channel.id });
   });
 }
 
@@ -2787,14 +3232,15 @@ function groupNode(group) {
       event.preventDefault();
       event.stopPropagation();
       openRowMenu(group.name, [
+        ...nudgeItems('group', group.id),
         {
-          label: 'Rename this group',
-          title: 'Change what the heading says',
+          label: t('app.rename_this_group'),
+          title: t('app.change_what_the_heading_says'),
           run: async () => {
             const answer = await ask({
-              title: `Rename "${group.name}"`,
-              okLabel: 'Save',
-              fields: [{ name: 'name', label: 'Name', value: group.name, required: true }],
+              title: t('app.rename', { name: group.name }),
+              okLabel: t('app.save'),
+              fields: [{ name: 'name', label: t('app.name'), value: group.name, required: true }],
             });
             if (!answer?.name) return;
             try {
@@ -2805,15 +3251,15 @@ function groupNode(group) {
           },
         },
         {
-          label: 'Delete this group',
-          title: 'The channels in it stay',
+          label: t('app.delete_this_group'),
+          title: t('app.the_channels_in_it_stay'),
           danger: true,
           run: async () => {
-            if (!await askConfirm(`Delete the group "${group.name}"?`, {
+            if (!await askConfirm(t('app.delete_the_group', { name: group.name }), {
               // Worth saying plainly: every other delete in this app takes
               // its contents with it, and this one deliberately does not.
-              text: 'The channels in it stay, and move back to the top of the list.',
-              okLabel: 'Delete the group',
+              text: t('app.the_channels_in_it_stay_2'),
+              okLabel: t('app.delete_the_group_2'),
             })) return;
             try {
               await harmony.api.deleteGroup(state.server, group.id);
@@ -2840,23 +3286,32 @@ function groupNode(group) {
     });
 
     /*
-     * A heading is two different drop targets, and which one it is depends
-     * on what is being dragged.
+     * A heading is a different drop target depending on what is dragged, and
+     * on where over it.
      *
-     * A channel dropped on it goes INTO the group, at the end -- the only
-     * way to reach an empty one or to add to a collapsed one. A group
-     * dropped on it lands ABOVE it, which is how every other reorder in
-     * this sidebar works. Two marks, so the difference is visible before
-     * the mouse is released rather than after.
+     * A channel dropped on its lower half goes INTO the group, at the end --
+     * the only way to reach an empty one or to add to a collapsed one. On its
+     * upper half it lands ABOVE the group, ungrouped: the only way to put a
+     * channel between two groups. A group dropped on it lands above it, which
+     * is how every other reorder in this sidebar works. Two marks, so the
+     * difference is visible before the mouse is released rather than after.
      */
+    const upperHalf = (event) => {
+      const box = li.getBoundingClientRect();
+      return event.clientY < box.top + box.height / 2;
+    };
     li.addEventListener('dragover', (event) => {
       if (dragging?.kind === 'channel') {
         event.preventDefault();
+        event.stopPropagation();
         clearDropMarks();
-        li.setAttribute('data-drop-into', '');
+        li.setAttribute(upperHalf(event) ? 'data-drop-before' : 'data-drop-into', '');
         return;
       }
-      if (dragging?.kind === 'group' && dragging.id !== group.id) {
+      if (dragging?.kind === 'group') {
+        // Itself too: it is where it already is, and must not read as "the end".
+        event.stopPropagation();
+        if (dragging.id === group.id) return;
         event.preventDefault();
         clearDropMarks();
         li.setAttribute('data-drop-before', '');
@@ -2866,19 +3321,20 @@ function groupNode(group) {
       if (dragging?.kind === 'channel') {
         event.preventDefault();
         event.stopPropagation();
-        const id = dragging.id;
+        const { id } = dragging;
+        const above = upperHalf(event);
         dragging = null;
         clearDropMarks();
-        moveChannel(id, { groupId: group.id });
+        moveChannel(id, above ? { beforeGroupId: group.id } : { groupId: group.id });
         return;
       }
-      if (dragging?.kind === 'group' && dragging.id !== group.id) {
+      if (dragging?.kind === 'group') {
         event.preventDefault();
         event.stopPropagation();
-        const id = dragging.id;
+        const { id } = dragging;
         dragging = null;
         clearDropMarks();
-        moveGroup(id, group.id);
+        if (id !== group.id) moveGroup(id, { beforeGroupId: group.id });
       }
     });
   }
@@ -2941,21 +3397,20 @@ function openMemberMenu(user, event) {
     rows.push(item(
       canPromote ? 'Make admin' : 'Remove admin',
       canPromote
-        ? 'They can manage channels, mute and move people'
-        : 'Back to an ordinary member',
+        ? t('app.they_can_manage_channels_mute')
+        : t('app.back_to_an_ordinary_member'),
       async () => {
         closeMemberMenu();
         const next = canPromote ? 'admin' : 'member';
         if (!await askConfirm(
           canPromote
-            ? `Make ${displayOf(user.id, user.nickname)} an admin?`
-            : `Remove ${displayOf(user.id, user.nickname)}'s admin?`,
+            ? t('app.make_an_admin', { name: displayOf(user.id, user.nickname) })
+            : t('app.remove_s_admin', { name: displayOf(user.id, user.nickname) }),
           {
-            okLabel: canPromote ? 'Make admin' : 'Remove admin',
+            okLabel: canPromote ? t('app.make_admin') : t('app.remove_admin'),
             text: canPromote
-              ? 'They will be able to create and delete channels, force-mute and move '
-                + 'anybody, and delete anybody\u0027s messages. Only you can take it back.'
-              : 'They go back to being an ordinary member.',
+              ? t('admin.promote_details')
+              : t('app.they_go_back_to_being'),
           },
         )) return;
         try {
@@ -2971,7 +3426,7 @@ function openMemberMenu(user, event) {
     if (rows.length) rows.push(document.createElement('hr'));
     rows.push(item(
       'Delete account',
-      'Removes them and everything they have written',
+      t('members.delete_hint'),
       async () => {
         closeMemberMenu();
         const who = displayOf(user.id, user.nickname);
@@ -2983,29 +3438,26 @@ function openMemberMenu(user, event) {
          * person's entire history, there is no undo anywhere in the app,
          * and the rows in a member list are four pixels apart.
          */
-        if (!await askConfirm(`Delete ${who}'s account?`, {
-          okLabel: 'Continue',
-          text: 'Their account and every message they have ever written are removed '
-            + 'from the server. Pinned messages and attachments go with them. '
-            + 'This cannot be undone.',
+        if (!await askConfirm(t('app.delete_s_account', { who }), {
+          okLabel: t('app.continue'),
+          text: t('account.delete_details'),
         })) return;
 
         const typed = await ask({
-          title: `Type ${user.nickname} to confirm`,
-          text: 'This is the last step.',
-          okLabel: 'Delete the account',
-          fields: [{ name: 'nickname', label: 'Nickname', required: true }],
+          title: t('app.type_to_confirm', { nickname: user.nickname }),
+          text: t('app.this_is_the_last_step'),
+          okLabel: t('app.delete_the_account'),
+          fields: [{ name: 'nickname', label: t('app.nickname'), required: true }],
         });
         if (typed?.nickname?.trim().toLowerCase() !== user.nickname) {
-          if (typed) showChannelsError('That is not the right nickname. Nothing was deleted.');
+          if (typed) showChannelsError(t('app.that_is_not_the_right'));
           return;
         }
 
         try {
           const result = await harmony.api.deleteAccount(state.server, user.id);
           showChannelsError('');
-          el.chatNote.textContent =
-            `${who} removed, with ${result.messages} message${result.messages === 1 ? '' : 's'}.`;
+          el.chatNote.textContent = t('account.removed', { who, count: result.messages });
           await refreshUsers();
         } catch (err) {
           showChannelsError(err.message);
@@ -3119,8 +3571,8 @@ async function stageServerLogo(file) {
   canvas.getContext('2d').drawImage(bitmap, (SIZE - w) / 2, (SIZE - h) / 2, w, h);
   bitmap.close();
   const blob = await new Promise((done) => canvas.toBlob(done, 'image/png'));
-  if (!blob) throw new Error('Could not read that image.');
-  if (blob.size > AVATAR_MAX_BYTES) throw new Error('That image is too detailed to use as a logo.');
+  if (!blob) throw new Error(t('app.could_not_read_that_image'));
+  if (blob.size > AVATAR_MAX_BYTES) throw new Error(t('app.that_image_is_too_detailed'));
   const upload = await harmony.media.upload(
     state.server, new Uint8Array(await blob.arrayBuffer()), 'image/png',
   );
@@ -3147,8 +3599,8 @@ function openServerDialog() {
   el.serverPasswordOff.checked = false;
   el.serverPasswordInput.disabled = false;
   el.serverPasswordNote.textContent = serverInfo.passwordRequired
-    ? 'This server has a password. Leave this blank to keep the one it has.'
-    : 'This server has no password. Type one here to start asking for it.';
+    ? t('app.this_server_has_a_password')
+    : t('app.this_server_has_no_password');
   // Files: shown only by a server that says its limits.
   el.serverUploads.hidden = !serverInfo.maxFileBytes;
   if (serverInfo.maxFileBytes) {
@@ -3158,11 +3610,12 @@ function openServerDialog() {
     }
     el.serverMaxFile.value = current;
     el.serverStorage.value = String(+(serverInfo.storageBytes / 1024 ** 3).toFixed(2));
-    el.serverStorageNote.textContent = `${formatBytes(serverInfo.usedBytes ?? 0)} used`
-      + (serverInfo.diskFreeBytes != null
-        ? ` \u00B7 ${formatBytes(serverInfo.diskFreeBytes)} free on the server's disk`
-        : '')
-      + '. Old files nobody uses any more are cleared to make room.';
+    const used = formatBytes(serverInfo.usedBytes ?? 0);
+    el.serverStorageNote.textContent = serverInfo.diskFreeBytes != null
+      ? t('server.storage_note', {
+        used, free: formatBytes(serverInfo.diskFreeBytes),
+      })
+      : t('server.storage_note_short', { used });
   }
   el.serverErrorLine.hidden = true;
   el.serverNote.hidden = true;
@@ -3214,8 +3667,8 @@ async function saveServerSettings() {
 
     el.serverDialog.close();
     el.chatNote.textContent = server.restartRequired
-      ? 'Saved. The media relay keeps its old setting until the server is restarted.'
-      : 'Saved.';
+      ? t('app.saved_the_media_relay_keeps')
+      : t('app.saved');
   } catch (err) {
     el.serverErrorLine.textContent = err.message;
     el.serverErrorLine.hidden = false;
@@ -3254,12 +3707,14 @@ function renderMembers() {
     const name = document.createElement('span');
     name.className = 'member-name';
     name.textContent = displayOf(user.id, user.nickname);
+    nameFont(name, user.id);
     li.append(name);
+    showBanner(li, user.bannerHash);
 
     if (user.role === 'owner' || user.role === 'admin') {
       const tag = document.createElement('span');
       tag.className = 'role-tag';
-      tag.textContent = user.role;
+      tag.textContent = roleLabel(user.role);
       li.append(tag);
     }
 
@@ -3272,7 +3727,7 @@ function renderMembers() {
       openMemberMenu(state.users.get(user.id) ?? user, event);
     });
     // Promised only to the people for whom the menu has anything on it.
-    if (isAdmin()) li.title = 'Right-click for admin controls';
+    if (isAdmin()) li.title = t('app.right_click_for_admin_controls');
     return li;
   };
 
@@ -3286,31 +3741,26 @@ function renderMembers() {
   const nodes = [];
   // The headings are drawn even for an empty half, so the list does not
   // silently become "just the people who are here" on a quiet server.
-  nodes.push(head(`Online \u2014 ${online.length}`));
+  nodes.push(head(t('members.online', { count: online.length })));
   nodes.push(...online.map((u) => row(u, false)));
   if (offline.length) {
-    nodes.push(head(`Offline \u2014 ${offline.length}`));
+    nodes.push(head(t('members.offline', { count: offline.length })));
     nodes.push(...offline.map((u) => row(u, true)));
   }
   el.memberItems.replaceChildren(...nodes);
 }
 
 function renderChannels() {
-  const byGroup = new Map([[null, []]]);
-  for (const group of state.channels.groups) byGroup.set(group.id, []);
-  for (const channel of state.channels.list) {
-    const key = channel.groupId ?? null;
-    (byGroup.get(key) ?? byGroup.get(null)).push(channel);
-  }
-
   const nodes = [];
-  for (const channel of byGroup.get(null)) nodes.push(...channelNodes(channel));
-  for (const group of state.channels.groups) {
-    nodes.push(groupNode(group));
-    if (state.channels.collapsed.has(group.id)) continue;
-    for (const channel of byGroup.get(group.id) ?? []) nodes.push(...channelNodes(channel));
+  for (const item of buildLayout()) {
+    if (item.kind === 'channel') {
+      nodes.push(...channelNodes(item.channel));
+      continue;
+    }
+    nodes.push(groupNode(item.group));
+    if (state.channels.collapsed.has(item.group.id)) continue;
+    for (const channel of item.channels) nodes.push(...channelNodes(channel));
   }
-
   el.channelItems.replaceChildren(...nodes);
 }
 
@@ -3377,18 +3827,18 @@ async function joinVoice(channel, password) {
       if (reply.error === 'password_required' || reply.error === 'bad_password') {
         state.channels.joining = false;
         const answer = await ask({
-          title: `${channel.name} needs a password`,
-          text: reply.error === 'bad_password' ? 'That one was not right.' : '',
-          okLabel: 'Join',
-          fields: [{ name: 'password', label: 'Password', type: 'password', required: true }],
+          title: t('app.needs_a_password', { name: channel.name }),
+          text: reply.error === 'bad_password' ? t('app.that_one_was_not_right') : '',
+          okLabel: t('app.join'),
+          fields: [{ name: 'password', label: t('app.password'), type: 'password', required: true }],
         });
         if (answer?.password) return joinVoice(channel, answer.password);
         return;
       }
       if (reply.error === 'channel_full') {
-        return showChannelsError(`${channel.name} is full (${reply.cap} people).`);
+        return showChannelsError(t('app.is_full_people', { name: channel.name, cap: reply.cap }));
       }
-      return showChannelsError(`Could not join: ${reply.error}`);
+      return showChannelsError(t('app.could_not_join', { error: reply.error }));
     }
 
     state.voice.configure({
@@ -3418,6 +3868,8 @@ async function joinVoice(channel, password) {
     voiceCue('connect');
     applyStage();
 
+    // Before the capture opens: the constraints only apply to a new one.
+    await applyMicProcessing();
     await state.voice.startMic(
       reply.publish.voice,
       // The voice preference, not the capture-card one. See settings.js.
@@ -3671,6 +4123,7 @@ async function leaveVoice({ silent = false } = {}) {
   }
   state.channels.roster = [];
   resetCues();
+  stopJoinSounds();
   closePeerMenu();
   closeSoundpad();
   el.voiceActive.hidden = true;
@@ -3695,11 +4148,11 @@ function setButtonLabel(button, label) {
 }
 
 function applyVoiceButtons() {
-  setButtonLabel(el.voiceMute, state.voice.muted ? 'Unmute mic' : 'Mute mic');
+  setButtonLabel(el.voiceMute, state.voice.muted ? t('app.unmute_mic') : t('app.mute_mic'));
   el.voiceMute.toggleAttribute('data-on', state.voice.muted);
-  setButtonLabel(el.voiceDeafen, state.voice.deafened ? 'Undeafen' : 'Deafen');
+  setButtonLabel(el.voiceDeafen, state.voice.deafened ? t('app.undeafen') : t('app.deafen'));
   el.voiceDeafen.toggleAttribute('data-on', state.voice.deafened);
-  setButtonLabel(el.voiceCam, state.voice.camLive ? 'Stop camera' : 'Start camera');
+  setButtonLabel(el.voiceCam, state.voice.camLive ? t('app.stop_camera') : t('app.start_camera'));
   el.voiceCam.toggleAttribute('data-on', state.voice.camLive);
   el.voiceFlip.hidden = !(state.voice.camLive && state.camera.several);
 
@@ -3714,7 +4167,7 @@ function applyVoiceButtons() {
     state.share.target?.channelId === state.voice.channelId
     || state.nativeShare?.channelId === state.voice.channelId
   );
-  setButtonLabel(el.voiceScreen, sharing ? 'Change source or stop sharing' : 'Share screen here');
+  setButtonLabel(el.voiceScreen, sharing ? t('app.change_source_or_stop_sharing') : t('app.share_screen_here'));
   el.voiceScreen.toggleAttribute('data-on', sharing);
 
   el.voiceSoundboard.toggleAttribute('data-on', !el.soundpad.hidden);
@@ -3728,10 +4181,10 @@ function applyVoiceButtons() {
    * cannot hear anything.
    */
   const inVoice = Boolean(state.voice.channelId);
-  el.selfStatus.textContent = !inVoice ? 'Online'
-    : state.voice.deafened ? 'Deafened'
-      : state.voice.muted ? 'Muted'
-        : 'In voice';
+  el.selfStatus.textContent = !inVoice ? t('app.online')
+    : state.voice.deafened ? t('app.deafened')
+      : state.voice.muted ? t('app.muted')
+        : t('app.in_voice');
   el.selfStatus.toggleAttribute('data-in-voice', inVoice);
 
   const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
@@ -3785,7 +4238,7 @@ const PING_OK_MS = 60;
 const PING_BAD_MS = 150;
 
 function clearPing() {
-  el.voiceSignal.dataset.ping = 'Measuring\u2026';
+  el.voiceSignal.dataset.ping = t('voice.measuring');
   el.voiceSignal.removeAttribute('data-quality');
 }
 
@@ -3799,22 +4252,22 @@ async function renderPing() {
   // old connection's number onto the new one would be worse than nothing.
   if (!state.voice.channelId) return;
   if (ms === null) {
-    el.voiceSignal.dataset.ping = 'Measuring\u2026';
+    el.voiceSignal.dataset.ping = t('voice.measuring');
     el.voiceSignal.dataset.quality = 'ok';
-    el.voiceSignal.setAttribute('aria-label', 'Connection quality: measuring');
+    el.voiceSignal.setAttribute('aria-label', t('app.connection_quality_measuring'));
     return;
   }
-  el.voiceSignal.dataset.ping = `${ms} ms to the relay`;
+  el.voiceSignal.dataset.ping = t('voice.ms_to_relay', { ms });
   el.voiceSignal.dataset.quality = ms <= PING_OK_MS ? 'good' : ms <= PING_BAD_MS ? 'ok' : 'bad';
-  el.voiceSignal.setAttribute('aria-label', `Connection quality: ${ms} milliseconds`);
+  el.voiceSignal.setAttribute('aria-label', t('app.connection_quality_milliseconds', { ms }));
 }
 
 /** Connected, or trying to be. Driven by the socket, never by guesswork. */
 function applyVoiceConnection(up) {
   el.voicePanel.dataset.state = up ? 'connected' : 'connecting';
-  el.voiceState.textContent = up ? 'Voice connected' : 'Reconnecting\u2026';
+  el.voiceState.textContent = up ? t('app.voice_connected') : t('app.reconnecting');
   if (!up) {
-    el.voiceSignal.dataset.ping = 'Reconnecting\u2026';
+    el.voiceSignal.dataset.ping = t('voice.reconnecting');
     el.voiceSignal.removeAttribute('data-quality');
   }
 }
@@ -3838,11 +4291,11 @@ function applyVoiceConnection(up) {
  * the tooltip carry.
  */
 const STATUS = [
-  { key: 'forced', icon: 'microphone-slash', title: 'muted by an admin' },
-  { key: 'muted', icon: 'microphone-slash', title: 'muted themselves' },
-  { key: 'deaf', icon: 'speaker-slash', title: 'deafened -- cannot hear anybody' },
-  { key: 'cam', icon: 'video-camera', title: 'camera on' },
-  { key: 'screen', icon: 'monitor', title: 'sharing a screen' },
+  { key: 'forced', icon: 'microphone-slash', get title() { return t('status.forced'); } },
+  { key: 'muted', icon: 'microphone-slash', get title() { return t('status.muted'); } },
+  { key: 'deaf', icon: 'speaker-slash', get title() { return t('status.deaf'); } },
+  { key: 'cam', icon: 'video-camera', get title() { return t('status.cam'); } },
+  { key: 'screen', icon: 'monitor', get title() { return t('status.screen'); } },
 ];
 
 function statusKeys(member) {
@@ -3906,7 +4359,7 @@ function voiceRow(member) {
    * row currently belongs to at the moment it is opened -- see the comment
    * on openPeerMenu.
    */
-  li.title = 'Right-click for volume and controls';
+  li.title = t('app.right_click_for_volume_and');
   li.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     openPeerMenu(state.voice.channelId, Number(li.dataset.mid), event);
@@ -3956,9 +4409,9 @@ function showVolume(slider, label, percent, muted = false) {
   slider.toggleAttribute('data-boosted', boosted);
   if (!label) return;
   label.toggleAttribute('data-boosted', boosted);
-  label.textContent = muted ? 'muted' : `${percent}%`;
+  label.textContent = muted ? t('app.muted_2') : `${percent}%`;
   label.title = boosted
-    ? 'Louder than the original. Amplified audio can distort.'
+    ? t('app.louder_than_the_original_amplified')
     : '';
 }
 
@@ -4014,7 +4467,7 @@ function openPeerMenu(channelId, mid, event) {
     volume.min = '0';
     volume.max = String(asPercent(MAX_GAIN));
     volume.step = '5';
-    volume.title = 'How loudly you hear this person';
+    volume.title = t('app.how_loudly_you_hear_this');
     const label = document.createElement('span');
     label.className = 'peer-volume-label';
     row.append(volume, label);
@@ -4022,7 +4475,7 @@ function openPeerMenu(channelId, mid, event) {
     const paint = () => {
       const muted = state.voice.peerMuted(userId);
       showVolume(volume, label, asPercent(state.voice.peerGain(userId)), muted);
-      mute.textContent = muted ? 'Unmute for me' : 'Mute for me';
+      mute.textContent = muted ? t('app.unmute_for_me') : t('app.mute_for_me');
       mute.toggleAttribute('data-on', muted);
     };
 
@@ -4050,7 +4503,7 @@ function openPeerMenu(channelId, mid, event) {
     const force = document.createElement('button');
     force.type = 'button';
     force.className = 'ghost menu-item force-mute';
-    force.textContent = member.forceMuted ? 'Unmute' : 'Force mute';
+    force.textContent = member.forceMuted ? t('app.unmute') : t('app.force_mute');
     force.addEventListener('click', () => {
       // Read the CURRENT roster rather than the member captured above: the
       // menu can sit open while somebody else mutes them.
@@ -4073,8 +4526,8 @@ function openPeerMenu(channelId, mid, event) {
      */
     const move = document.createElement('select');
     move.className = 'move-select';
-    move.title = 'Move this person';
-    move.append(new Option('Move\u2026', ''));
+    move.title = t('app.move_this_person');
+    move.append(new Option(t('members.move'), ''));
     for (const channel of state.channels.list) {
       if (channel.kind !== 'voice' || channel.id === channelId) continue;
       move.append(new Option(channel.name, String(channel.id)));
@@ -4116,23 +4569,22 @@ function openPeerMenu(channelId, mid, event) {
     const role = document.createElement('button');
     role.type = 'button';
     role.className = 'ghost menu-item set-role';
-    role.textContent = canPromote ? 'Make admin' : 'Remove admin';
+    role.textContent = canPromote ? t('app.make_admin') : t('app.remove_admin');
     role.title = canPromote
-      ? 'They can manage channels, mute and move people'
-      : 'Back to an ordinary member';
+      ? t('app.they_can_manage_channels_mute')
+      : t('app.back_to_an_ordinary_member');
     role.addEventListener('click', async () => {
       closePeerMenu();
       const next = canPromote ? 'admin' : 'member';
       if (!await askConfirm(
         canPromote
-          ? `Make ${displayOf(userId, member.nickname)} an admin?`
-          : `Remove ${displayOf(userId, member.nickname)}'s admin?`,
+          ? t('app.make_an_admin', { name: displayOf(userId, member.nickname) })
+          : t('app.remove_s_admin', { name: displayOf(userId, member.nickname) }),
         {
-          okLabel: canPromote ? 'Make admin' : 'Remove admin',
+          okLabel: canPromote ? t('app.make_admin') : t('app.remove_admin'),
           text: canPromote
-            ? 'They will be able to create and delete channels, force-mute and move anybody, '
-              + 'and delete anybody\u0027s messages. Only you can take it back.'
-            : 'They go back to being an ordinary member.',
+            ? t('admin.promote_details')
+            : t('app.they_go_back_to_being'),
         },
       )) return;
       try {
@@ -4188,6 +4640,23 @@ function voiceCue(name) {
   if (state.settings?.voiceSounds !== false) playCue(name);
 }
 
+/**
+ * The sound for somebody arriving: their own, if they picked one and it is
+ * not switched off here, and the ordinary tone otherwise -- including when
+ * their file will not load, so a join is never silent because of a bad file.
+ * Never your own: you hear the room's tone for yourself, not a recording of
+ * you.
+ */
+function playJoinCue(userId, me) {
+  const hash = knownUser(userId)?.joinSoundHash;
+  if (!hash || userId === me || state.settings?.customJoinSounds === false) {
+    playCue('join');
+    return;
+  }
+  playJoinSound(harmony.mediaUrl(hash), { maxSeconds: MAX_JOIN_SOUND_SECONDS })
+    .catch(() => playCue('join'));
+}
+
 function playRosterCues(roster) {
   const now = new Map(roster.map((m) => [m.userId, m]));
   if (state.settings?.voiceSounds === false) {
@@ -4202,7 +4671,7 @@ function playRosterCues(roster) {
   }
 
   for (const userId of now.keys()) {
-    if (!lastCueRoster.has(userId)) playCue('join');
+    if (!lastCueRoster.has(userId)) playJoinCue(userId, me);
   }
   for (const userId of lastCueRoster.keys()) {
     if (!now.has(userId)) playCue('leave');
@@ -4246,6 +4715,8 @@ function renderVoiceRoster(roster) {
     li.querySelector('.member-name').textContent =
       displayOf(member.userId, member.nickname)
       + (member.mid === state.voice.mid ? ' (you)' : '');
+    nameFont(li.querySelector('.member-name'), member.userId);
+    showBanner(li, knownUser(member.userId)?.bannerHash);
 
     // Who can throw you out is worth being able to see without opening a
     // menu on every person in turn.
@@ -4257,7 +4728,7 @@ function renderVoiceRoster(roster) {
         badge.className = 'tag role-tag';
         li.querySelector('.member-name').after(badge);
       }
-      badge.textContent = role;
+      badge.textContent = roleLabel(role);
     } else if (badge) {
       badge.remove();
     }
@@ -4335,14 +4806,14 @@ function renderSpeaking() {
 // ---------------------------------------------------------------------------
 
 const THEMES = [
-  { id: 'midnight', name: 'Midnight', bands: ['#0f1116', '#1f232c', '#5b8cff'] },
-  { id: 'dark', name: 'Dark', bands: ['#1e1f22', '#313338', '#5865f2'] },
-  { id: 'onyx', name: 'Onyx', bands: ['#000000', '#141418', '#7c6cff'] },
-  { id: 'ocean', name: 'Ocean', bands: ['#0b141c', '#172836', '#38bdf8'] },
-  { id: 'forest', name: 'Forest', bands: ['#0e1512', '#1c2a23', '#3fb984'] },
-  { id: 'ember', name: 'Ember', bands: ['#17100e', '#2c1f1a', '#ff7a4d'] },
-  { id: 'lavender', name: 'Lavender', bands: ['#14111d', '#252036', '#a78bfa'] },
-  { id: 'daylight', name: 'Daylight', bands: ['#f2f3f5', '#ebedef', '#3a6df0'] },
+  { id: 'midnight', get name() { return t('theme.midnight'); }, bands: ['#0f1116', '#1f232c', '#5b8cff'] },
+  { id: 'dark', get name() { return t('theme.dark'); }, bands: ['#1e1f22', '#313338', '#5865f2'] },
+  { id: 'onyx', get name() { return t('theme.onyx'); }, bands: ['#000000', '#141418', '#7c6cff'] },
+  { id: 'ocean', get name() { return t('theme.ocean'); }, bands: ['#0b141c', '#172836', '#38bdf8'] },
+  { id: 'forest', get name() { return t('theme.forest'); }, bands: ['#0e1512', '#1c2a23', '#3fb984'] },
+  { id: 'ember', get name() { return t('theme.ember'); }, bands: ['#17100e', '#2c1f1a', '#ff7a4d'] },
+  { id: 'lavender', get name() { return t('theme.lavender'); }, bands: ['#14111d', '#252036', '#a78bfa'] },
+  { id: 'daylight', get name() { return t('theme.daylight'); }, bands: ['#f2f3f5', '#ebedef', '#3a6df0'] },
 ];
 
 const DEFAULT_THEME = 'midnight';
@@ -4358,10 +4829,10 @@ const DEFAULT_THEME = 'midnight';
  * text, muted text partway back to the background.
  */
 const CUSTOM_FIELDS = [
-  { key: 'bg', label: 'Background', variable: '--bg' },
-  { key: 'surface', label: 'Panels', variable: '--surface' },
-  { key: 'text', label: 'Text', variable: '--text' },
-  { key: 'accent', label: 'Accent', variable: '--accent' },
+  { key: 'bg', get label() { return t('theme.background'); }, variable: '--bg' },
+  { key: 'surface', get label() { return t('theme.panels'); }, variable: '--surface' },
+  { key: 'text', get label() { return t('theme.text'); }, variable: '--text' },
+  { key: 'accent', get label() { return t('theme.accent'); }, variable: '--accent' },
 ];
 
 /** Every property a custom palette writes, so switching away can remove them all. */
@@ -4506,7 +4977,7 @@ function renderCustomEditor(current) {
     const reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'ghost small theme-custom-reset';
-    reset.textContent = 'Start again from Midnight';
+    reset.textContent = t('app.start_again_from_midnight');
     reset.addEventListener('click', async () => {
       applyTheme(DEFAULT_THEME);
       const fresh = currentColours();
@@ -4584,17 +5055,17 @@ function renderThemes() {
 // ---------------------------------------------------------------------------
 
 const HOTKEY_ACTIONS = [
-  { id: 'mute', label: 'Mute / unmute microphone' },
-  { id: 'deafen', label: 'Deafen / undeafen' },
+  { id: 'mute', get label() { return t('hotkeys.mute'); } },
+  { id: 'deafen', get label() { return t('hotkeys.deafen'); } },
 ];
 
 /** What the main process said about each binding at the last sync. */
 let hotkeyStatus = new Map();
 
 const HOTKEY_ERRORS = {
-  in_use: 'Another program already uses this combination. Pick another.',
-  duplicate: 'Bound to something else as well.',
-  invalid: 'Not a combination Windows can register.',
+  get in_use() { return t('hotkeys.err_in_use'); },
+  get duplicate() { return t('hotkeys.err_duplicate'); },
+  get invalid() { return t('hotkeys.err_invalid'); },
 };
 
 const MODIFIER_CODES = new Set([
@@ -4668,13 +5139,13 @@ function acceleratorFrom(event) {
 
   if (MODIFIER_CODES.has(event.code)) return { partial: true, display };
   const key = codeToKey(event.code);
-  if (!key) return { error: 'That key cannot be used as a hotkey.', display };
+  if (!key) return { error: t('hotkeys.bad_key'), display };
 
   const accelerator = [...mods, key].join('+');
   const strong = event.ctrlKey || event.altKey || event.metaKey;
   if (!strong && !STANDALONE_KEY.test(key)) {
     return {
-      error: 'Add Ctrl or Alt. On its own this key would stop working in every other program while Harmony is open.',
+      error: t('hotkeys.needs_modifier'),
       display: formatAccelerator(accelerator),
     };
   }
@@ -4754,7 +5225,7 @@ async function saveHotkey(id, accelerator) {
 
   const result = hotkeyStatus.get(id);
   if (accelerator && result && !result.ok) {
-    toast(`${formatAccelerator(accelerator)}: ${HOTKEY_ERRORS[result.error] ?? 'could not be registered.'}`);
+    toast(`${formatAccelerator(accelerator)}: ${HOTKEY_ERRORS[result.error] ?? t('hotkeys.not_registered')}`);
   }
 }
 
@@ -4767,7 +5238,7 @@ async function saveHotkey(id, accelerator) {
 function recordHotkey(title) {
   return new Promise((resolve) => {
     el.hotkeyRecorderTitle.textContent = title;
-    el.hotkeyCapture.textContent = 'Waiting for keys…';
+    el.hotkeyCapture.textContent = t('app.waiting_for_keys');
     el.hotkeyRecorderError.hidden = true;
     // Every global hotkey released while recording. Windows delivers a
     // registered combination to us INSTEAD of to the focused window, so
@@ -4801,7 +5272,7 @@ function recordHotkey(title) {
         el.hotkeyCapture.textContent = `${result.display} + …`;
         return;
       }
-      el.hotkeyCapture.textContent = result.display || 'Waiting for keys…';
+      el.hotkeyCapture.textContent = result.display || t('app.waiting_for_keys');
       if (result.error) {
         el.hotkeyRecorderError.textContent = result.error;
         el.hotkeyRecorderError.hidden = false;
@@ -4833,36 +5304,87 @@ async function editHotkey(id, label) {
   return saveHotkey(id, value);
 }
 
-/** The mute and deafen rows in the settings dialog. */
+/**
+ * One row: what it does, the combination it is bound to, and a way to clear it.
+ *
+ * @param {string} id     'mute', 'deafen' or 'clip:<id>'
+ * @param {string} label  what to call it in the recording prompt
+ * @param {Node} [mark]   drawn before the name -- a clip's emoji
+ */
+function hotkeyRow(id, label, mark = null) {
+  const row = document.createElement('div');
+  row.className = 'hotkey-row';
+
+  const name = document.createElement('span');
+  name.className = 'hotkey-name';
+  if (mark) name.append(mark);
+  name.append(document.createTextNode(label));
+  name.title = label;
+
+  const bound = hotkeyFor(id);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'ghost small hotkey-key';
+  button.textContent = bound ? formatAccelerator(bound) : t('app.not_set');
+  button.toggleAttribute('data-empty', !bound);
+  button.title = bound ? t('app.click_to_change') : t('app.click_then_press_a_combination');
+  button.addEventListener('click', () => editHotkey(id, label));
+
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'ghost small hotkey-clear';
+  clear.textContent = t('app.clear');
+  clear.title = t('app.stop_this_combination_doing_it');
+  clear.hidden = !bound;
+  clear.addEventListener('click', () => saveHotkey(id, ''));
+
+  row.append(name, button, clear);
+
+  const status = hotkeyStatus.get(id);
+  if (bound && status && !status.ok) {
+    const problem = document.createElement('small');
+    problem.className = 'hotkey-problem';
+    problem.textContent = HOTKEY_ERRORS[status.error] ?? t('app.could_not_be_registered');
+    row.append(problem);
+  }
+  return row;
+}
+
+/**
+ * The Hotkeys page: mute and deafen, then every soundpad clip on this server.
+ *
+ * The clips are the server's, in the order the pad shows them, and the
+ * bindings are this computer's own (clipHotkey): two people on one server give
+ * the same clip different keys. Redrawn whenever the pad changes (syncHotkeys),
+ * so a clip somebody adds while Settings is open appears here.
+ */
 function renderHotkeyList() {
-  el.hotkeyList.replaceChildren(...HOTKEY_ACTIONS.map(({ id, label }) => {
-    const row = document.createElement('div');
-    row.className = 'hotkey-row';
+  const nodes = HOTKEY_ACTIONS.map(({ id, label }) => hotkeyRow(id, label));
 
-    const name = document.createElement('span');
-    name.className = 'hotkey-name';
-    name.textContent = label;
+  const clips = state.soundpad?.clips ?? [];
+  const heading = document.createElement('h4');
+  heading.className = 'hotkey-heading';
+  heading.textContent = t('app.soundpad_clips');
+  nodes.push(heading);
 
-    const bound = hotkeyFor(id);
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'ghost small hotkey-key';
-    button.textContent = bound ? formatAccelerator(bound) : 'Not set';
-    button.toggleAttribute('data-empty', !bound);
-    button.title = bound ? 'Click to change' : 'Click, then press a combination';
-    button.addEventListener('click', () => editHotkey(id, label));
-
-    row.append(name, button);
-
-    const status = hotkeyStatus.get(id);
-    if (bound && status && !status.ok) {
-      const problem = document.createElement('small');
-      problem.className = 'hotkey-problem';
-      problem.textContent = HOTKEY_ERRORS[status.error] ?? 'Could not be registered.';
-      row.append(problem);
+  if (!clips.length) {
+    const none = document.createElement('p');
+    none.className = 'setting-note';
+    none.textContent = state.server
+      ? t('app.this_server_has_no_soundpad')
+      : t('app.sign_in_to_a_server');
+    nodes.push(none);
+  }
+  for (const clip of clips) {
+    let mark = null;
+    if (clip.emoji) {
+      mark = document.createElement('span');
+      mark.className = 'clip-emoji hotkey-emoji';
+      mark.textContent = clip.emoji;
     }
-    return row;
-  }));
+    nodes.push(hotkeyRow(`clip:${clip.id}`, clip.name, mark));
+  }
+  el.hotkeyList.replaceChildren(...nodes);
 }
 
 /**
@@ -4945,7 +5467,7 @@ async function refreshVoiceDevices({ apply = true } = {}) {
   try {
     devices = await navigator.mediaDevices.enumerateDevices();
   } catch (err) {
-    deviceNote(`Could not list audio devices: ${err.message}`);
+    deviceNote(t('app.could_not_list_audio_devices', { message: err.message }));
     return;
   }
 
@@ -4979,8 +5501,11 @@ async function refreshVoiceDevices({ apply = true } = {}) {
   if (wantedOut && chosenOut !== wantedOut) missing.push('output');
   if (wantedCam && chosenCam !== wantedCam) missing.push('camera');
   deviceNote(missing.length
-    ? `Your chosen ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} unplugged. `
-      + 'Using the system default until it is back.'
+    ? t('devices.unplugged', {
+      count: missing.length,
+      what: new Intl.ListFormat(currentLanguage(), { type: 'conjunction' })
+        .format(missing.map((name) => t(`devices.${name}`))),
+    })
     : '');
 
   if (!apply) return;
@@ -5018,7 +5543,7 @@ function applyMicTuning() {
 
   el.micGate.value = String(sensitivity);
   paintRange(el.micGate);
-  el.micGateLabel.textContent = sensitivity === 0 ? 'Off' : String(sensitivity);
+  el.micGateLabel.textContent = sensitivity === 0 ? t('app.off') : String(sensitivity);
 
   const threshold = gateThreshold(sensitivity);
   el.micMeterMark.hidden = sensitivity === 0;
@@ -5026,6 +5551,22 @@ function applyMicTuning() {
 
   state.voice.setMicGain(gain / 100);
   state.voice.setMicThreshold(threshold);
+
+  el.micEchoCancellation.checked = state.settings.micEchoCancellation === true;
+  el.micNoiseSuppression.checked = state.settings.micNoiseSuppression === true;
+}
+
+/**
+ * Hand the microphone processing choice to the voice session. Not part of
+ * applyMicTuning: that runs on every slider tick, and changing these reopens
+ * the capture.
+ */
+async function applyMicProcessing() {
+  const ok = await state.voice.setMicProcessing({
+    echoCancellation: state.settings.micEchoCancellation === true,
+    noiseSuppression: state.settings.micNoiseSuppression === true,
+  });
+  if (!ok) deviceNote(t('app.that_microphone_could_not_be'));
 }
 
 /**
@@ -5058,13 +5599,13 @@ async function applyVoiceInput(deviceId) {
   if (!deviceId && !state.settings.voiceInputId) return;
 
   const ok = await state.voice.switchMic(deviceId);
-  if (!ok) deviceNote('That microphone could not be opened. Still using the previous one.');
+  if (!ok) deviceNote(t('app.that_microphone_could_not_be'));
 }
 
 async function applyVoiceOutput(deviceId) {
   const ok = await setOutputDevice(deviceId);
   if (!ok && deviceId) {
-    deviceNote('This build cannot choose an output device; using the system default.');
+    deviceNote(t('app.this_build_cannot_choose_an'));
   }
 }
 
@@ -5083,12 +5624,12 @@ async function applyVoiceCamera(deviceId) {
   const raw = await openCamera(deviceId).catch(() => null);
   const stream = raw && await withBackground(raw);
   if (!stream) {
-    deviceNote('That camera could not be opened. Still using the previous one.');
+    deviceNote(t('app.that_camera_could_not_be'));
     return;
   }
   if (!await state.voice.switchCam(stream)) {
     stream.getTracks().forEach((t) => t.stop());
-    deviceNote('That camera could not be opened. Still using the previous one.');
+    deviceNote(t('app.that_camera_could_not_be'));
     return;
   }
   renderChannelVideo();
@@ -5280,7 +5821,7 @@ function renderChannelVideo() {
       eye.type = 'button';
       eye.dataset.role = 'preview';
       setIcon(eye, 'eye');
-      eye.title = 'Show a preview of what you are sharing';
+      eye.title = t('app.show_a_preview_of_what');
       eye.addEventListener('click', (event) => {
         event.stopPropagation();
         if (video.srcObject) {
@@ -5288,7 +5829,7 @@ function renderChannelVideo() {
           video.hidden = true;
           figure.setAttribute('data-preview-off', '');
           eye.removeAttribute('data-on');
-          eye.title = 'Show a preview of what you are sharing';
+          eye.title = t('app.show_a_preview_of_what');
         } else {
           // Read now rather than captured at build time: the tile outlives
           // a change of source, and the stream with it.
@@ -5297,7 +5838,7 @@ function renderChannelVideo() {
           video.play().catch(() => {});
           figure.removeAttribute('data-preview-off');
           eye.setAttribute('data-on', '');
-          eye.title = 'Hide the preview';
+          eye.title = t('app.hide_the_preview');
         }
       });
 
@@ -5328,7 +5869,7 @@ function renderChannelVideo() {
       listen.type = 'button';
       listen.dataset.role = 'monitor';
       setIcon(listen, 'headphones');
-      listen.title = 'Hear your own stream';
+      listen.title = t('app.hear_your_own_stream');
       /*
        * Back into the composition's editor. On your own share's tile
        * because that is where you look at what you are sending; hidden for
@@ -5339,7 +5880,7 @@ function renderChannelVideo() {
       compose.type = 'button';
       compose.dataset.role = 'compose';
       setIcon(compose, 'squares-four');
-      compose.title = 'Edit the layout';
+      compose.title = t('app.edit_the_layout');
       compose.hidden = !state.live.compositor;
       compose.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -5356,7 +5897,7 @@ function renderChannelVideo() {
           ownMonitor = monitorStream(stream, 1);
         }
         listen.toggleAttribute('data-on', Boolean(ownMonitor));
-        listen.title = ownMonitor ? 'Stop hearing your own stream' : 'Hear your own stream';
+        listen.title = ownMonitor ? t('app.stop_hearing_your_own_stream') : t('app.hear_your_own_stream');
       });
       corner.append(listen);
       if (!corner.isConnected) figure.append(corner);
@@ -5385,7 +5926,7 @@ function renderChannelVideo() {
       muteBtn.type = 'button';
       muteBtn.dataset.role = 'mute';
       setIcon(muteBtn, 'speaker-high');
-      muteBtn.title = 'Mute this share';
+      muteBtn.title = t('app.mute_this_share');
 
       const volume = document.createElement('input');
       volume.type = 'range';
@@ -5393,7 +5934,7 @@ function renderChannelVideo() {
       volume.min = '0';
       volume.max = String(asPercent(MAX_GAIN));
       volume.value = String(asPercent(state.voice.tileGain(key)));
-      volume.title = 'Volume for this share';
+      volume.title = t('app.volume_for_this_share');
       const level = document.createElement('span');
       level.className = 'tile-volume-label volume-value';
 
@@ -5424,7 +5965,7 @@ function renderChannelVideo() {
     fsBtn.type = 'button';
     fsBtn.dataset.role = 'fullscreen';
     setIcon(fsBtn, 'corners-out');
-    fsBtn.title = 'Fullscreen';
+    fsBtn.title = t('app.fullscreen');
 
     /*
      * Close, which is not the same thing as minimize.
@@ -5442,7 +5983,7 @@ function renderChannelVideo() {
       closeBtn.type = 'button';
       closeBtn.dataset.role = 'close';
       setIcon(closeBtn, 'x');
-      closeBtn.title = 'Stop watching this, and stop downloading it';
+      closeBtn.title = t('app.stop_watching_this_and_stop');
       closeBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         state.voice.closeVideo(key);
@@ -5491,7 +6032,7 @@ function renderChannelVideo() {
   for (const figure of figures) {
     const on = figure === focused;
     figure.toggleAttribute('data-focus', on);
-    figure.title = on ? '' : 'Show this one big';
+    figure.title = on ? '' : t('app.show_this_one_big');
   }
   areas.focus.replaceChildren(...(focused ? [focused] : []));
   areas.strip.replaceChildren(...figures.filter((f) => f !== focused));
@@ -5508,7 +6049,7 @@ function renderChannelVideo() {
     const node = document.createElement('figure');
     node.className = 'channel-tile ghost-tile';
     node.dataset.key = `closed:${key}`;
-    node.title = 'Watch this again';
+    node.title = t('app.watch_this_again');
 
     const name = document.createElement('span');
     name.className = 'ghost-name';
@@ -5516,9 +6057,10 @@ function renderChannelVideo() {
 
     const hint = document.createElement('span');
     hint.className = 'ghost-hint';
-    hint.textContent = 'Closed \u00B7 click to watch again';
+    hint.textContent = t('app.closed_click_to_watch_again');
 
     node.append(name, hint);
+    ghostBackground(node, knownUser(state.channels.roster.find((m) => m.mid === mid)?.userId));
     node.addEventListener('click', () => {
       state.voice.reopenVideo(key);
       renderChannelVideo();
@@ -5819,7 +6361,7 @@ function renderMentionList() {
       all.textContent = '@everyone';
       const note = document.createElement('span');
       note.className = 'mention-nick';
-      note.textContent = 'notifies the whole server';
+      note.textContent = t('app.notifies_the_whole_server');
       li.append(all, note);
     } else {
       li.append(avatarEl(faceOf(match.user.id, match.nickname), 'tiny'));
@@ -6284,7 +6826,7 @@ function fitsUploadLimit(file) {
   const limit = serverInfo.maxFileBytes;
   if (!limit || file.size <= limit) return true;
   showChannelsError(
-    `${file.name} is ${formatBytes(file.size)}. Files on this server are limited to ${formatBytes(limit)}.`,
+    t('app.is_files_on_this_server', { name: file.name, size: formatBytes(file.size), limit: formatBytes(limit) }),
   );
   return false;
 }
@@ -6296,8 +6838,9 @@ function showUploadProgress(sent, total) {
   const fraction = total ? Math.min(1, sent / total) : 1;
   el.chatUploadFill.style.width = `${(fraction * 100).toFixed(1)}%`;
   el.chatUploadBar.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
-  el.chatUploadAmount.textContent = `${Math.floor(fraction * 100)}% \u00B7 `
-    + `${formatBytes(sent)} of ${formatBytes(total)}`;
+  el.chatUploadAmount.textContent = t('upload.progress', {
+    percent: Math.floor(fraction * 100), sent: formatBytes(sent), total: formatBytes(total),
+  });
 }
 
 /**
@@ -6311,11 +6854,11 @@ function showUploadProgress(sent, total) {
  * @returns {Promise<{hash: string, contentType: string, bytes: number}>}
  */
 async function uploadAttachment(file) {
-  if (activeUpload) throw new Error('Wait for the file already uploading to finish.');
+  if (activeUpload) throw new Error(t('app.wait_for_the_file_already'));
   const upload = { cancelled: false, id: null };
   activeUpload = upload;
   const type = file.type || 'application/octet-stream';
-  const cancelled = () => Object.assign(new Error('Upload cancelled.'), { code: 'cancelled' });
+  const cancelled = () => Object.assign(new Error(t('app.upload_cancelled')), { code: 'cancelled' });
 
   el.chatUploadName.textContent = file.name;
   showUploadProgress(0, file.size);
@@ -6371,7 +6914,7 @@ async function uploadAttachment(file) {
 
 el.chatUploadCancel.addEventListener('click', () => {
   if (activeUpload) activeUpload.cancelled = true;
-  el.chatUploadAmount.textContent = 'Cancelling\u2026';
+  el.chatUploadAmount.textContent = t('app.cancelling');
 });
 
 /**
@@ -6387,9 +6930,10 @@ async function saveAttachment(message, button = null) {
   const stop = harmony.media.onProgress(({ hash, received, total }) => {
     if (hash !== message.attachmentHash) return;
     el.chatNote.textContent = total
-      ? `Downloading ${name}\u2026 ${Math.floor((received / total) * 100)}% `
-        + `(${formatBytes(received)} of ${formatBytes(total)})`
-      : `Downloading ${name}\u2026 ${formatBytes(received)}`;
+      ? t('download.progress', {
+        name, percent: Math.floor((received / total) * 100), received: formatBytes(received), total: formatBytes(total),
+      })
+      : t('app.downloading', { name, received: formatBytes(received) });
   });
   try {
     const result = await harmony.media.save(
@@ -6398,8 +6942,8 @@ async function saveAttachment(message, button = null) {
     // Cancelling a save dialog is an answer, not a failure.
     if (!result.saved) return;
     el.chatNote.textContent = result.handedOff
-      ? `Downloading ${result.name} in the background.`
-      : `Saved ${result.name}.`;
+      ? t('app.downloading_in_the_background', { name: result.name })
+      : t('app.saved_2', { name: result.name });
     // Only where there is a folder to show it in: the browser and Android
     // hand the file to their own downloads instead.
     if (!result.path || !harmony.capabilities.reveal) return;
@@ -6407,7 +6951,7 @@ async function saveAttachment(message, button = null) {
     const show = document.createElement('button');
     show.type = 'button';
     show.className = 'ghost tiny';
-    show.textContent = 'Show';
+    show.textContent = t('app.show');
     show.addEventListener('click', () => harmony.media.reveal(result.path));
     el.chatNote.append(' ', show);
   } catch (err) {
@@ -6746,7 +7290,7 @@ function emojiItemNode(item) {
   remove.type = 'button';
   remove.className = 'emoji-remove';
   remove.textContent = '\u00d7';
-  remove.title = `Remove :${item.custom.name}:`;
+  remove.title = t('app.remove', { name: item.custom.name });
   // Handled by the grid's one click listener, like the cells.
   remove.dataset.emojiId = String(item.custom.id);
   wrap.append(cell, remove);
@@ -6806,15 +7350,15 @@ function renderEmojiPicker() {
         if (label.includes(filter)) items.push({ value, label });
       }
     }
-    if (items.length) sections.push({ label: `Matching "${el.emojiSearch.value}"`, items });
+    if (items.length) sections.push({ label: t('app.matching', { value: el.emojiSearch.value }), items });
     el.emojiEmpty.hidden = items.length > 0;
-    el.emojiEmpty.textContent = `Nothing called "${el.emojiSearch.value}".`;
+    el.emojiEmpty.textContent = t('app.nothing_called', { value: el.emojiSearch.value });
   } else {
     el.emojiEmpty.hidden = true;
 
     if (state.emojis.list.length) {
       sections.push({
-        label: 'This server',
+        label: t('app.this_server'),
         items: state.emojis.list.map((emoji) => ({
           value: `:${emoji.name}:`,
           label: emoji.name,
@@ -6829,7 +7373,7 @@ function renderEmojiPicker() {
     const recent = (state.settings.recentEmoji ?? []).slice(0, RECENT_EMOJI);
     if (recent.length) {
       sections.push({
-        label: 'Recent',
+        label: t('app.recent'),
         items: recent.map((value) => {
           const match = /^:([a-z0-9_]{2,32}):$/i.exec(value);
           // A custom emoji that has since been removed still sits in the
@@ -7001,19 +7545,18 @@ async function uploadCustomEmoji(file) {
     bitmap.close();
 
     const blob = await new Promise((done) => canvas.toBlob(done, 'image/png'));
-    if (!blob) throw new Error('Could not read that image.');
+    if (!blob) throw new Error(t('app.could_not_read_that_image'));
     if (blob.size > EMOJI_MAX_BYTES) {
-      throw new Error('That picture is too detailed to shrink into an emoji.');
+      throw new Error(t('app.that_picture_is_too_detailed_2'));
     }
 
     const answer = await ask({
-      title: 'Name this emoji',
-      text: 'The name is the trigger: typing it between colons puts the picture '
-        + 'in a message. Letters, numbers and underscores.',
-      okLabel: 'Add',
+      title: t('app.name_this_emoji'),
+      text: t('emoji.name_hint'),
+      okLabel: t('app.add'),
       fields: [{
         name: 'name',
-        label: 'Name',
+        label: t('app.name'),
         value: file.name.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9_]+/g, '_')
           .slice(0, 32),
         required: true,
@@ -7065,7 +7608,7 @@ function attachmentNode(message) {
     // Only images. A video has controls of its own and a click on it means
     // play, which is not something to take away for a bigger picture.
     img.className = 'expandable';
-    img.title = 'Click to expand';
+    img.title = t('app.click_to_expand');
     img.addEventListener('click', () => openLightbox(message));
     wrap.append(img);
   } else if (message.mediaType === 'video') {
@@ -7088,7 +7631,7 @@ function attachmentNode(message) {
   // Messages posted before the server stored names have none, and saying
   // so is better than inventing one -- the save dialog will suggest
   // something derived from the content type.
-  name.textContent = message.attachmentName ?? 'attachment';
+  name.textContent = message.attachmentName ?? t('app.attachment');
   name.title = name.textContent;
   bar.append(name);
   if (message.attachmentBytes) {
@@ -7124,8 +7667,8 @@ function attachmentNode(message) {
     save.type = 'button';
     save.className = 'msg-tool';
     save.dataset.icon = 'download-simple';
-    save.textContent = 'Download';
-    save.title = 'Download';
+    save.textContent = t('app.download');
+    save.title = t('app.download');
     save.addEventListener('click', (event) => {
       event.stopPropagation();
       saveAttachment(message, save);
@@ -7141,8 +7684,8 @@ function attachmentNode(message) {
     swap.type = 'button';
     swap.className = 'msg-tool';
     swap.dataset.icon = 'pencil-simple';
-    swap.textContent = 'Replace';
-    swap.title = 'Replace this file';
+    swap.textContent = t('app.replace');
+    swap.title = t('app.replace_this_file');
     swap.addEventListener('click', (event) => {
       event.stopPropagation();
       replaceAttachment(message);
@@ -7202,7 +7745,7 @@ function openLightbox(message) {
   lightboxOf = message;
   el.lightboxImg.src = harmony.mediaUrl(message.attachmentHash);
   el.lightboxImg.alt = message.attachmentName ?? 'attachment';
-  el.lightboxName.textContent = message.attachmentName ?? 'attachment';
+  el.lightboxName.textContent = message.attachmentName ?? t('app.attachment');
   el.lightbox.hidden = false;
 }
 
@@ -7230,7 +7773,7 @@ function replyLine(reply) {
   if (reply.deleted) {
     const gone = document.createElement('span');
     gone.className = 'msg-reply-text msg-reply-gone';
-    gone.textContent = 'The original message was deleted.';
+    gone.textContent = t('app.the_original_message_was_deleted');
     line.append(gone);
     return line;
   }
@@ -7254,11 +7797,11 @@ function replyLine(reply) {
     renderBody(text, body.replace(/\s+/g, ' '));
   } else {
     text.classList.add('msg-reply-gone');
-    text.textContent = attachment ? 'Click to see the attachment' : '';
+    text.textContent = attachment ? t('app.click_to_see_the_attachment') : '';
   }
 
   line.append(avatarEl(faceOf(userId, nickname), 'reply-avatar'), who, text);
-  line.title = 'Go to the message this answers';
+  line.title = t('app.go_to_the_message_this');
   line.addEventListener('click', () => jumpToMessage(reply.id));
   return line;
 }
@@ -7369,15 +7912,15 @@ function messageRow(message, previous) {
   const reply = document.createElement('button');
   reply.className = 'msg-tool';
   reply.dataset.icon = 'arrow-bend-up-left';
-  reply.textContent = 'Reply';
-  reply.title = 'Reply';
+  reply.textContent = t('app.reply');
+  reply.title = t('app.reply');
   reply.addEventListener('click', () => setReply(message));
 
   const react = document.createElement('button');
   react.className = 'msg-tool react-btn';
   react.dataset.icon = 'smiley';
-  react.textContent = 'React';
-  react.title = 'Add a reaction';
+  react.textContent = t('app.react');
+  react.title = t('app.add_a_reaction');
   react.addEventListener('click', () => openEmojiPicker(react, (value) => {
     closeEmojiPicker();
     toggleReaction(message.id, value);
@@ -7386,7 +7929,7 @@ function messageRow(message, previous) {
   const pin = document.createElement('button');
   pin.className = 'msg-tool';
   pin.dataset.icon = 'push-pin';
-  pin.textContent = message.pinned ? 'Unpin' : 'Pin';
+  pin.textContent = message.pinned ? t('app.unpin') : t('app.pin');
   pin.title = pin.textContent;
   if (message.pinned) pin.setAttribute('data-on', '');
   pin.addEventListener('click', async () => {
@@ -7402,10 +7945,10 @@ function messageRow(message, previous) {
     const download = document.createElement('button');
     download.className = 'msg-tool';
     download.dataset.icon = 'download-simple';
-    download.textContent = 'Download';
+    download.textContent = t('app.download');
     download.title = message.attachmentBytes
-      ? `Download (${formatBytes(message.attachmentBytes)})`
-      : 'Download';
+      ? t('app.download_2', { attachmentBytes: formatBytes(message.attachmentBytes) })
+      : t('app.download');
     download.addEventListener('click', () => saveAttachment(message, download));
     tools.append(download);
   }
@@ -7432,6 +7975,7 @@ function messageRow(message, previous) {
     const who = document.createElement('span');
     who.className = 'who';
     who.textContent = displayOf(message.userId, message.nickname);
+    nameFont(who, message.userId);
     head.append(who, when);
     main.append(head);
   }
@@ -7456,15 +8000,15 @@ function messageRow(message, previous) {
     const change = document.createElement('button');
     change.className = 'msg-tool';
     change.dataset.icon = 'pencil-simple';
-    change.textContent = 'Edit';
-    change.title = 'Edit';
+    change.textContent = t('app.edit_2');
+    change.title = t('app.edit_2');
     change.addEventListener('click', async () => {
       const answer = await ask({
-        title: 'Edit message',
-        okLabel: 'Save',
+        title: t('app.edit_message'),
+        okLabel: t('app.save'),
         fields: [{
           name: 'body',
-          label: 'Message',
+          label: t('app.message'),
           value: message.body,
           multiline: true,
           maxlength: 4000,
@@ -7493,10 +8037,10 @@ function messageRow(message, previous) {
     const remove = document.createElement('button');
     remove.className = 'msg-tool msg-tool-danger';
     remove.dataset.icon = 'trash';
-    remove.textContent = 'Delete';
-    remove.title = 'Delete';
+    remove.textContent = t('app.delete_2');
+    remove.title = t('app.delete_2');
     remove.addEventListener('click', async () => {
-      if (!await askConfirm('Delete this message?', { okLabel: 'Delete' })) return;
+      if (!await askConfirm(t('app.delete_this_message'), { okLabel: t('app.delete_2') })) return;
       try {
         await harmony.api.deleteMessage(state.server, message.id);
         // The server pushes message:deleted to everyone, including us.
@@ -7540,12 +8084,12 @@ function renderChat({ scrollToBottom = false, restore = null } = {}) {
         const line = document.createElement('button');
         line.type = 'button';
         line.className = 'pinned-line';
-        line.title = 'Jump to this message';
+        line.title = t('app.jump_to_this_message');
 
         const who = document.createElement('strong');
         who.textContent = displayOf(m.userId, m.nickname);
         const what = document.createElement('span');
-        what.textContent = m.body || '(attachment)';
+        what.textContent = m.body || t('app.attachment_2');
 
         line.append(who, what);
         line.addEventListener('click', () => jumpToMessage(m.id));
@@ -7612,7 +8156,7 @@ async function jumpToMessage(id) {
   }
 
   if (!row) {
-    el.chatNote.textContent = 'That message is no longer in this channel.';
+    el.chatNote.textContent = t('app.that_message_is_no_longer');
     return;
   }
 
@@ -7629,7 +8173,7 @@ async function sendMessage() {
   const file = state.chat.pendingFile;
   if (!body && !file) return;
   if (file && activeUpload) {
-    el.chatNote.textContent = 'Wait for the file already uploading to finish.';
+    el.chatNote.textContent = t('app.wait_for_the_file_already');
     return;
   }
   const replying = state.chat.replyTo;
@@ -7692,8 +8236,8 @@ async function runSearch() {
       // Worth saying: a 1-2 character query silently cannot use the trigram
       // index, so it falls back to a plain substring scan. Showing which ran
       // makes "why did that find nothing" answerable.
-      ? `${results.length} result${results.length === 1 ? '' : 's'} (${mode})`
-      : `No matches (${mode}).`;
+      ? t('chat.results', { count: results.length, mode })
+      : t('app.no_matches', { mode });
   } catch (err) {
     el.chatNote.textContent = err.message;
   }
@@ -7746,7 +8290,7 @@ function applySoundpadVolume() {
   // as a person is, and it is the same slider doing the same thing.
   showVolume(el.soundpadVolume, el.soundpadVolumeLabel, percent, false);
   setIcon(el.soundpadMute, percent === 0 ? 'speaker-x' : 'speaker-high');
-  el.soundpadMute.title = percent === 0 ? 'Unmute the soundpad' : 'Mute the soundpad';
+  el.soundpadMute.title = percent === 0 ? t('app.unmute_the_soundpad') : t('app.mute_the_soundpad');
   el.soundpadMute.toggleAttribute('data-on', percent === 0);
 }
 
@@ -7820,7 +8364,7 @@ function closeSoundpad() {
  */
 function playSoundpadClip(clip, button = null) {
   if (!state.voice.channelId) {
-    showChannelsError('Join a voice channel first.');
+    showChannelsError(t('app.join_a_voice_channel_first'));
     return undefined;
   }
   // Acknowledged on the button rather than by closing the panel: people
@@ -7847,8 +8391,8 @@ function renderSoundpad() {
 
   el.soundpadEmpty.hidden = shown.length > 0;
   el.soundpadEmpty.textContent = clips.length === 0
-    ? (isAdmin() ? 'No clips yet. Add one.' : 'Nobody has added any clips.')
-    : `Nothing matching "${el.soundpadSearch.value}".`;
+    ? (isAdmin() ? t('app.no_clips_yet_add_one') : t('app.nobody_has_added_any_clips'))
+    : t('app.nothing_matching', { value: el.soundpadSearch.value });
 
   el.soundpadGrid.replaceChildren(...shown.map((clip) => {
     const cell = document.createElement('span');
@@ -7889,13 +8433,13 @@ function renderSoundpad() {
       const current = clipHotkey(clip.id);
       openRowMenu(clip.name, [
         {
-          label: current ? `Change hotkey (${formatAccelerator(current)})` : 'Set hotkey',
-          title: 'Play this clip from anywhere, even inside a game',
+          label: current ? t('app.change_hotkey', { current: formatAccelerator(current) }) : t('app.set_hotkey'),
+          title: t('app.play_this_clip_from_anywhere'),
           run: () => editHotkey(`clip:${clip.id}`, clip.name),
         },
         ...(current ? [{
-          label: 'Remove hotkey',
-          title: 'Stop this combination playing the clip',
+          label: t('app.remove_hotkey'),
+          title: t('app.stop_this_combination_playing_the'),
           run: () => saveHotkey(`clip:${clip.id}`, ''),
         }] : []),
       ], event);
@@ -7935,7 +8479,7 @@ function renderSoundpad() {
       tool('\u25B6', 'Move right', () => nudgeClip(clip.id, 1), index === clips.length - 1),
       tool('\u270E', 'Rename', () => editClip(clip)),
       tool('\u2715', 'Delete', async () => {
-        if (!await askConfirm(`Delete the clip "${clip.name}"?`, { okLabel: 'Delete' })) return;
+        if (!await askConfirm(t('app.delete_the_clip', { name: clip.name }), { okLabel: t('app.delete_2') })) return;
         try {
           await harmony.api.deleteClip(state.server, clip.id);
         } catch (err) {
@@ -7951,13 +8495,12 @@ function renderSoundpad() {
 /** Change a clip's label. The audio behind it is untouched. */
 async function editClip(clip) {
   const answer = await ask({
-    title: `Rename "${clip.name}"`,
-    text: 'The emoji is optional, and is what makes a clip findable in a grid '
-      + 'of twenty identical buttons.',
-    okLabel: 'Save',
+    title: t('app.rename', { name: clip.name }),
+    text: t('soundpad.emoji_hint'),
+    okLabel: t('app.save'),
     fields: [
-      { name: 'emoji', label: 'Emoji', value: clip.emoji ?? '', placeholder: '\u{1F4EF}' },
-      { name: 'name', label: 'Name', value: clip.name, required: true, maxlength: 32 },
+      { name: 'emoji', label: t('app.emoji'), value: clip.emoji ?? '', placeholder: '\u{1F4EF}' },
+      { name: 'name', label: t('app.name'), value: clip.name, required: true, maxlength: 32 },
     ],
   });
   if (!answer?.name) return;
@@ -8007,22 +8550,22 @@ async function addSoundpadClip(file) {
     el.channelsError.hidden = true;
     if (file.size > MAX_CLIP_BYTES) {
       throw new Error(
-        `"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB. Clips are limited to `
-        + `${MAX_CLIP_BYTES / 1024 / 1024} MB -- every client downloads every clip.`,
+        t('soundpad.too_big', {
+          name: file.name, size: (file.size / 1024 / 1024).toFixed(1), limit: MAX_CLIP_BYTES / 1024 / 1024,
+        }),
       );
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const upload = await harmony.media.upload(state.server, bytes, file.type);
     const answer = await ask({
-      title: 'Name this clip',
-      text: 'The emoji is optional, and is what makes a clip findable in a grid '
-        + 'of twenty identical buttons.',
-      okLabel: 'Add',
+      title: t('app.name_this_clip'),
+      text: t('soundpad.emoji_hint'),
+      okLabel: t('app.add'),
       fields: [
-        { name: 'emoji', label: 'Emoji', value: '', placeholder: '\u{1F4EF}' },
+        { name: 'emoji', label: t('app.emoji'), value: '', placeholder: '\u{1F4EF}' },
         {
           name: 'name',
-          label: 'Name',
+          label: t('app.name'),
           value: file.name.replace(/\.[^.]+$/, '').slice(0, 32),
           required: true,
           maxlength: 32,
@@ -8051,7 +8594,58 @@ async function addSoundpadClip(file) {
 // ordering is preserved here by construction rather than by copying it.
 // ---------------------------------------------------------------------------
 
-const CAMERA = { width: 640, height: 360, frameRate: 24, bitrate: 400_000 };
+/*
+ * What the webcam is captured and sent at, chosen in Voice & video.
+ *
+ * "Native" asks for the most the camera offers rather than a number: an ideal
+ * far above anything a webcam does, which getUserMedia resolves to the best
+ * format it has. The frame rate works the same way. What was actually granted
+ * is read back from the track afterwards (cameraSend), because a camera that
+ * cannot do 1080p60 hands back what it can, and the bitrate has to follow that
+ * rather than the request.
+ */
+const CAMERA_SIZES = {
+  360: { width: 640, height: 360, label: '360p' },
+  480: { width: 854, height: 480, label: '480p' },
+  720: { width: 1280, height: 720, label: '720p' },
+  1080: { width: 1920, height: 1080, label: '1080p' },
+  native: { width: 4096, height: 2160, get label() { return t('quality.native'); } },
+};
+/** 0 is native. */
+const CAMERA_RATES = [24, 30, 60, 0];
+const NATIVE_RATE = 120;
+/** Bits per pixel per frame: 640x360 at 24 fps has always been 400 kbps. */
+const CAMERA_BITS_PER_PIXEL = 0.075;
+const CAMERA_MIN_BITRATE = 300_000;
+const CAMERA_MAX_BITRATE = 8_000_000;
+const CAMERA_FALLBACK = { width: 640, height: 360, frameRate: 24, bitrate: 400_000 };
+
+/** The chosen size and rate, with anything unrecognised read as the default. */
+function cameraQuality() {
+  const size = state.settings?.cameraResolution in CAMERA_SIZES ? state.settings.cameraResolution : '360';
+  const rate = CAMERA_RATES.includes(Number(state.settings?.cameraFramerate))
+    ? Number(state.settings.cameraFramerate)
+    : 24;
+  return { size, rate };
+}
+
+/**
+ * What to tell the encoder about a camera that is open: a bitrate in line with
+ * the picture it was actually given, and a frame-rate ceiling when one was
+ * chosen (none for native, so the camera's own rate goes out).
+ */
+function cameraSend(stream) {
+  const { rate } = cameraQuality();
+  const settings = stream?.getVideoTracks()[0]?.getSettings?.() ?? {};
+  const width = settings.width || CAMERA_FALLBACK.width;
+  const height = settings.height || CAMERA_FALLBACK.height;
+  const fps = rate || settings.frameRate || 30;
+  const bitrate = Math.round(Math.min(
+    CAMERA_MAX_BITRATE,
+    Math.max(CAMERA_MIN_BITRATE, width * height * fps * CAMERA_BITS_PER_PIXEL),
+  ));
+  return { bitrate, framerate: rate || 0 };
+}
 
 /**
  * Open a camera, preferring the chosen one.
@@ -8061,18 +8655,22 @@ const CAMERA = { width: 640, height: 360, frameRate: 24, bitrate: 400_000 };
  * default itself, and says so. The preference is never rewritten, which is
  * what lets a camera that is plugged back in be picked up again.
  */
-const openCamera = (deviceId, facing) => navigator.mediaDevices.getUserMedia({
-  video: {
-    width: { ideal: CAMERA.width },
-    height: { ideal: CAMERA.height },
-    frameRate: { ideal: CAMERA.frameRate },
-    // A device, or else a direction: facingMode is how a phone's front and
-    // back cameras are asked for, and a desktop webcam simply ignores it.
-    ...(deviceId
-      ? { deviceId: { exact: deviceId } }
-      : facing ? { facingMode: { ideal: facing } } : {}),
-  },
-});
+const openCamera = (deviceId, facing) => {
+  const { size, rate } = cameraQuality();
+  const wanted = CAMERA_SIZES[size];
+  return navigator.mediaDevices.getUserMedia({
+    video: {
+      width: { ideal: wanted.width },
+      height: { ideal: wanted.height },
+      frameRate: { ideal: rate || NATIVE_RATE },
+      // A device, or else a direction: facingMode is how a phone's front and
+      // back cameras are asked for, and a desktop webcam simply ignores it.
+      ...(deviceId
+        ? { deviceId: { exact: deviceId } }
+        : facing ? { facingMode: { ideal: facing } } : {}),
+    },
+  });
+};
 
 /** Whether there is more than one camera to switch between. */
 async function countCameras() {
@@ -8082,6 +8680,71 @@ async function countCameras() {
   } catch {
     state.camera.several = false;
   }
+}
+
+/**
+ * Fill the two pickers from the settings, and say what the choice costs.
+ * Idempotent: called each time the settings open.
+ */
+function renderCameraQuality() {
+  const { size, rate } = cameraQuality();
+  const fill = (select, entries, value) => {
+    select.replaceChildren(...entries.map(([key, label]) => {
+      const option = document.createElement('option');
+      option.value = String(key);
+      option.textContent = label;
+      return option;
+    }));
+    select.value = String(value);
+  };
+  fill(el.camResolution, Object.entries(CAMERA_SIZES).map(([key, v]) => [key, v.label]), size);
+  fill(el.camFramerate, CAMERA_RATES.map((fps) => [fps, fps ? t('quality.fps', { fps }) : t('quality.native')]), rate);
+
+  const heavy = size === 'native' || size === '1080' || rate === 60 || rate === 0;
+  el.camQualityNote.textContent = (size === 'native' || rate === 0
+    ? `${t('quality.note_native')} `
+    : '')
+    + (heavy
+      ? t('quality.note_heavy')
+      : t('quality.note_live'));
+}
+
+/**
+ * A running camera moves to the new size or rate.
+ *
+ * The camera is closed before it is opened again: a webcam that is already open
+ * at one size hands the next request the same size, so opening beside the old
+ * one would change nothing. The sender stays up (replaceTrack), so nobody
+ * watching has to resubscribe; they see the picture hold for a moment.
+ * Serialised with the background changes, which also reopen the camera.
+ */
+function applyCameraQuality(previous) {
+  backgroundWork = backgroundWork.then(async () => {
+    if (!state.voice.camLive) return;
+    const device = state.voice.camDeviceId || '';
+    state.voice.camStream?.getTracks().forEach((track) => track.stop());
+
+    const open = async () => {
+      const raw = await openCamera(device).catch(() => null);
+      return raw && withBackground(raw);
+    };
+    let stream = await open();
+    if (!stream && previous) {
+      // The camera would not do what was asked: go back to what it was doing.
+      state.settings = await harmony.settings.set(previous);
+      renderCameraQuality();
+      deviceNote(t('app.that_camera_cannot_do_that'));
+      stream = await open();
+    }
+    if (!stream || !await state.voice.switchCam(stream)) {
+      stream?.getTracks().forEach((track) => track.stop());
+      deviceNote(t('app.the_camera_could_not_be'));
+      return;
+    }
+    await state.voice.retuneCam(cameraSend(stream)).catch(() => {});
+    renderChannelVideo();
+  }).catch((err) => console.warn('[camera] could not change quality:', err));
+  return backgroundWork;
 }
 
 // ---------------------------------------------------------------------------
@@ -8169,7 +8832,7 @@ async function withBackground(raw) {
     return effect.stream;
   } catch (err) {
     console.warn('[background] could not start:', err);
-    deviceNote(`Could not apply the camera background (${err.message}). Using the plain camera.`);
+    deviceNote(t('app.could_not_apply_the_camera', { message: err.message }));
     return raw;
   }
 }
@@ -8197,7 +8860,7 @@ function applyBackgroundLive() {
     // changing webcam is -- nobody watching has to resubscribe.
     const raw = await openCamera(state.voice.camDeviceId || '').catch(() => null);
     if (!raw) {
-      deviceNote('The camera could not be opened again to change the background.');
+      deviceNote(t('app.the_camera_could_not_be_2'));
       return;
     }
     const stream = await withBackground(raw);
@@ -8251,15 +8914,15 @@ async function renderBackgroundSettings() {
   }
 
   const has = Boolean(options.imageName);
-  el.bgImageName.textContent = has ? options.imageName : 'No picture chosen';
+  el.bgImageName.textContent = has ? options.imageName : t('app.no_picture_chosen');
   el.bgRemove.hidden = !has;
-  el.bgChoose.textContent = has ? 'Change…' : 'Choose…';
+  el.bgChoose.textContent = has ? t('app.change') : t('app.choose');
   if (!has) el.bgThumb.hidden = true;
 
   const live = Boolean(state.camera.effect);
   el.bgPreviewWrap.hidden = !live;
   el.bgNote.textContent = options.mode !== 'off' && !state.voice.camLive
-    ? 'Turn your camera on in a voice channel to see it here.'
+    ? t('app.turn_your_camera_on_in')
     : '';
 }
 
@@ -8270,7 +8933,7 @@ function buildBackgroundChoices() {
     button.type = 'button';
     button.className = 'bg-swatch';
     button.title = colour;
-    button.setAttribute('aria-label', `Colour ${colour}`);
+    button.setAttribute('aria-label', t('app.colour', { colour }));
     button.dataset.color = colour;
     button.style.background = colour;
     button.addEventListener('click', () => setBackground({ color: colour }));
@@ -8281,7 +8944,7 @@ function buildBackgroundChoices() {
     button.type = 'button';
     button.className = 'bg-preset';
     button.title = preset.name;
-    button.setAttribute('aria-label', `${preset.name} gradient`);
+    button.setAttribute('aria-label', t('app.gradient', { name: preset.name }));
     button.dataset.from = preset.from;
     button.dataset.to = preset.to;
     button.dataset.angle = String(preset.angle);
@@ -8374,7 +9037,7 @@ el.bgFile.addEventListener('change', async () => {
     showBackgroundThumbnail();
   } catch (err) {
     el.bgNote.textContent = err?.name === 'EncodingError' || err?.name === 'InvalidStateError'
-      ? 'That file could not be read as a picture.'
+      ? t('app.that_file_could_not_be')
       : err.message;
   }
 });
@@ -8424,14 +9087,14 @@ async function flipCamera() {
     let stream = await open(facing).catch(() => null);
     if (!stream) {
       // The other one would not open: put the one we had back.
-      showChannelsError('Could not switch camera.');
+      showChannelsError(t('app.could_not_switch_camera'));
       stream = await openCamera(settings.deviceId ?? '').catch(() => null);
       facing = state.camera.facing;
     }
     if (stream) stream = await withBackground(stream);
     if (!stream || !await state.voice.switchCam(stream)) {
       stream?.getTracks().forEach((t) => t.stop());
-      showChannelsError('The camera stopped. Turn it off and on again.');
+      showChannelsError(t('app.the_camera_stopped_turn_it'));
       return;
     }
     state.camera.facing = facing;
@@ -8444,13 +9107,13 @@ async function flipCamera() {
 async function startCamera() {
   if (state.camera.publication || state.voice.camLive) return;
   const nickname = state.auth.user?.nickname;
-  if (!nickname) return showChannelsError('Sign in first.');
+  if (!nickname) return showChannelsError(t('app.sign_in_first'));
 
   try {
     const wanted = state.settings.voiceCameraId ?? '';
     let stream = wanted ? await openCamera(wanted).catch(() => null) : null;
     if (!stream) {
-      if (wanted) deviceNote('Your chosen camera is unplugged. Using the default one.');
+      if (wanted) deviceNote(t('app.your_chosen_camera_is_unplugged'));
       // Whichever way it pointed last time: flipping to the back camera and
       // turning the camera off and on again should not flip it back.
       stream = await openCamera('', state.camera.facing);
@@ -8479,10 +9142,7 @@ async function startCamera() {
       // A camera is usually started well into a call, which is exactly when
       // the join-time token has gone stale.
       await refreshVoiceTokens();
-      await state.voice.startCam(stream, {
-        bitrate: CAMERA.bitrate,
-        framerate: CAMERA.frameRate,
-      });
+      await state.voice.startCam(stream, cameraSend(stream));
       await harmony.realtime.request('voice:publishing', {
         channelId: state.voice.channelId, kind: 'c', on: true,
       });
@@ -8498,15 +9158,15 @@ async function startCamera() {
     // nickname, so nobody else can ever hold this one.
     const session = await harmony.api.session(state.server, null, undefined, 'camera');
     if (session.role !== 'broadcaster') {
-      throw new Error('Your camera path is already in use.');
+      throw new Error(t('app.your_camera_path_is_already'));
     }
 
     state.camera.publication = await publish({
       url: session.whipUrl,
       stream: state.camera.stream,
       iceServers: session.iceServers,
-      maxBitrate: CAMERA.bitrate,
-      maxFramerate: CAMERA.frameRate,
+      maxBitrate: cameraSend(state.camera.stream).bitrate,
+      maxFramerate: cameraSend(state.camera.stream).framerate,
       contentHint: 'motion',
     });
 
@@ -8520,7 +9180,7 @@ async function startCamera() {
       'camera',
     );
     state.camera.session = session;
-    el.voiceCam.textContent = 'Stop camera';
+    el.voiceCam.textContent = t('app.stop_camera');
   } catch (err) {
     showChannelsError(err.message);
     await stopCamera();
@@ -8547,7 +9207,7 @@ async function stopCamera() {
   state.camera.publication = null;
   state.camera.stream?.getTracks().forEach((t) => t.stop());
   state.camera.stream = null;
-  setButtonLabel(el.voiceCam, 'Start camera');
+  setButtonLabel(el.voiceCam, t('app.start_camera'));
 
   if (publication) {
     publication.pc.close();
@@ -8612,7 +9272,7 @@ function onRealtimeEvent(msg) {
       // nine seconds after the server kills their session, so connection state
       // cannot be what drives this -- the push has to.
       if (msg.roster.some((m) => m.mid === state.voice.mid && m.forceMuted)) {
-        showChannelsError('An admin muted your microphone.');
+        showChannelsError(t('app.an_admin_muted_your_microphone'));
       }
       break;
 
@@ -8677,8 +9337,8 @@ function onRealtimeEvent(msg) {
       state.auth.user = null;
       showView('view-connect');
       showError(msg.reason === 'account removed'
-        ? 'Your account was removed from this server.'
-        : `Disconnected: ${msg.reason}`);
+        ? t('session.account_removed')
+        : t('session.disconnected', { reason: msg.reason }));
       break;
 
     case 'soundpad':
@@ -8710,6 +9370,7 @@ function onRealtimeEvent(msg) {
         state.auth.user = msg.user;
         renderOwnAvatar();
         el.channelsWho.textContent = msg.user.displayName || msg.user.nickname;
+        nameFont(el.channelsWho, msg.user.id, msg.user);
         el.channelsRole.textContent = msg.user.role === 'member' ? '' : msg.user.role;
         // Being made an admin has to reach the controls, not just the badge.
         el.channelAdd.hidden = !isAdmin();
@@ -8733,17 +9394,17 @@ function onRealtimeEvent(msg) {
       if (state.voice.deafened) break;
       // Into the PLAYBACK context, never the outgoing mix. See playSample().
       playSample(harmony.mediaUrl(msg.hash), { gain: soundpadGain() }).catch((err) =>
-        showChannelsError(`Could not play "${msg.name}": ${err.message}`));
+        showChannelsError(t('app.could_not_play', { name: msg.name, message: err.message })));
       break;
 
     case 'voice:moved':
       if (msg.channelId == null) {
         leaveVoice();
-        showChannelsError(`${msg.by} disconnected you.`);
+        showChannelsError(t('app.disconnected_you', { by: msg.by }));
       } else {
         const target = state.channels.list.find((c) => c.id === msg.channelId);
         if (target) {
-          showChannelsError(`${msg.by} moved you to ${target.name}.`);
+          showChannelsError(t('app.moved_you_to', { by: msg.by, name: target.name }));
           joinVoice(target);
         }
       }
@@ -8759,7 +9420,7 @@ function onRealtimeEvent(msg) {
       break;
 
     case 'realtime:down':
-      showChannelsError('Reconnecting\u2026');
+      showChannelsError(t('app.reconnecting'));
       applyVoiceConnection(false);
       break;
 
@@ -8791,7 +9452,7 @@ function onRealtimeEvent(msg) {
       break;
 
     case 'realtime:rejected':
-      showChannelsError('This session expired. Sign in again.');
+      showChannelsError(t('app.this_session_expired_sign_in'));
       break;
 
     default:
@@ -8810,8 +9471,8 @@ async function enterPicker() {
   state.selectedSource = null;
   state.changingSource = false;
   el.startStream.disabled = true;
-  el.startStream.textContent = 'Start streaming';
-  el.pickerBack.textContent = 'Cancel';
+  el.startStream.textContent = t('app.start_streaming');
+  el.pickerBack.textContent = t('app.cancel');
   openPicker();
   await loadSources();
   updateAudioNote();
@@ -8853,13 +9514,13 @@ async function shareScreenHere() {
   if (state.share.target) {
     openRowMenu('Your stream', [
       {
-        label: 'Change source',
-        title: 'Show a different screen or window without ending the stream',
+        label: t('app.change_source'),
+        title: t('app.show_a_different_screen_or'),
         run: () => openChangeSource(),
       },
       {
-        label: 'Stop streaming',
-        title: 'End the stream for everybody watching',
+        label: t('app.stop_streaming'),
+        title: t('app.end_the_stream_for_everybody'),
         danger: true,
         run: () => stopBroadcast(),
       },
@@ -8867,11 +9528,11 @@ async function shareScreenHere() {
     return undefined;
   }
   if (!state.voice.channelId) {
-    showChannelsError('Join a voice channel first.');
+    showChannelsError(t('app.join_a_voice_channel_first'));
     return undefined;
   }
   if (!state.voice.publishUrls.screen) {
-    showChannelsError('This channel did not give out a screen path. Rejoin it.');
+    showChannelsError(t('app.this_channel_did_not_give'));
     return undefined;
   }
   // Before reading publishUrls, not after: the picker is where somebody
@@ -8901,22 +9562,22 @@ async function shareScreenHere() {
 async function shareScreenNative() {
   if (state.nativeShare) {
     openRowMenu('Your screen', [{
-      label: 'Stop sharing',
-      title: 'End the share for everybody watching',
+      label: t('app.stop_sharing'),
+      title: t('app.end_the_share_for_everybody'),
       danger: true,
       run: () => stopNativeShare(),
     }], { clientX: 0, clientY: 0 }, { above: el.voiceScreen });
     return undefined;
   }
   if (!state.voice.channelId) {
-    showChannelsError('Join a voice channel first.');
+    showChannelsError(t('app.join_a_voice_channel_first'));
     return undefined;
   }
   await refreshVoiceTokens();
   const channelId = state.voice.channelId;
   const url = state.voice.publishUrls.screen;
   if (!url) {
-    showChannelsError('This channel did not give out a screen path. Rejoin it.');
+    showChannelsError(t('app.this_channel_did_not_give'));
     return undefined;
   }
 
@@ -8930,7 +9591,7 @@ async function shareScreenNative() {
     });
   } catch (err) {
     // Refusing Android's prompt is an answer, not an error.
-    if (err.code !== 'cancelled') showChannelsError(`Could not share your screen: ${err.message}`);
+    if (err.code !== 'cancelled') showChannelsError(t('app.could_not_share_your_screen', { message: err.message }));
     return undefined;
   } finally {
     el.voiceScreen.disabled = false;
@@ -8965,12 +9626,12 @@ async function stopNativeShare({ alreadyStopped = false } = {}) {
 // Stopped from outside the app: the system's "stop sharing", or the
 // connection failed. The share is already gone; tell the channel.
 harmony.screenShare?.onEnded((reason) => {
-  if (reason === 'failed') showChannelsError('Your screen share lost its connection.');
+  if (reason === 'failed') showChannelsError(t('app.your_screen_share_lost_its'));
   stopNativeShare({ alreadyStopped: true });
 });
 
 async function loadSources() {
-  el.sourceGrid.replaceChildren(message('Loading…'));
+  el.sourceGrid.replaceChildren(message(t('picker.loading')));
   try {
     state.sources = await harmony.sources.list();
   } catch (err) {
@@ -9013,7 +9674,7 @@ async function loadDevices() {
 
     state.audioInputs = devices
       .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications')
-      .map((d, i) => ({ id: d.deviceId, name: d.label || `Audio input ${i + 1}` }));
+      .map((d, i) => ({ id: d.deviceId, name: d.label || t('audio.input_n', { n: i + 1 }) }));
 
     el.audioInput.replaceChildren();
     for (const input of state.audioInputs) {
@@ -9024,7 +9685,7 @@ async function loadDevices() {
     }
     const none = document.createElement('option');
     none.value = '';
-    none.textContent = 'No audio';
+    none.textContent = t('app.no_audio');
     el.audioInput.append(none);
     if (state.settings.audioInputId) el.audioInput.value = state.settings.audioInputId;
   } catch (err) {
@@ -9044,7 +9705,7 @@ async function loadProcesses() {
   el.excludeApp.replaceChildren();
   const none = document.createElement('option');
   none.value = '';
-  none.textContent = 'Nothing — share all system audio';
+  none.textContent = t('app.nothing_share_all_system_audio');
   el.excludeApp.append(none);
 
   /*
@@ -9060,7 +9721,7 @@ async function loadProcesses() {
   if (self) {
     const option = document.createElement('option');
     option.value = String(self.pid);
-    option.textContent = 'Harmony — voices, soundpad and sounds (recommended)';
+    option.textContent = t('app.harmony_voices_soundpad_and_sounds');
     el.excludeApp.append(option);
   }
   for (const proc of others) {
@@ -9110,8 +9771,7 @@ function renderCompositeSources() {
   el.startStream.disabled = false;
 
   el.sourceGrid.replaceChildren(message(
-    'Pick any number to start with, or none. Once you are live you can add, '
-    + 'move, resize and crop them: right-click the preview.',
+    t('picker.compose_hint'),
   ));
   for (const source of all) {
     const button = document.createElement('button');
@@ -9164,8 +9824,8 @@ function renderSources() {
     el.sourceGrid.append(
       message(
         state.activeKind === 'camera'
-          ? 'No cameras or capture cards found.'
-          : `No ${state.activeKind}s found.`,
+          ? t('picker.none_cameras')
+          : t(`picker.none_${state.activeKind}`),
       ),
     );
     return;
@@ -9230,14 +9890,14 @@ function audioPlan(forSource) {
   // makes.
   if (kind === 'composite') {
     if (!state.audioExclusion) {
-      return { via: 'none', note: 'A composition is shared without sound on this machine.', warn: true };
+      return { via: 'none', note: t('app.a_composition_is_shared_without'), warn: true };
     }
     const excluded = state.processes.find((p) => String(p.pid) === el.excludeApp.value);
     return {
       via: 'native',
       note: excluded
-        ? `Viewers will hear system audio, except ${excluded.name}.`
-        : 'Viewers will hear all system audio.',
+        ? t('app.viewers_will_hear_system_audio', { name: excluded.name })
+        : t('app.viewers_will_hear_all_system'),
       warn: false,
     };
   }
@@ -9246,14 +9906,14 @@ function audioPlan(forSource) {
   // from whichever input the user picked.
   if (kind === 'camera') {
     if (!el.audioInput.value) {
-      return { via: 'none', note: 'Sharing without audio.', warn: false };
+      return { via: 'none', note: t('app.sharing_without_audio'), warn: false };
     }
-    const label = state.audioInputs.find((d) => d.id === el.audioInput.value)?.name ?? 'the selected input';
-    return { via: 'device', note: `Viewers will hear ${label}.`, warn: false };
+    const label = state.audioInputs.find((d) => d.id === el.audioInput.value)?.name ?? t('audio.selected_input');
+    return { via: 'device', note: t('app.viewers_will_hear', { label }), warn: false };
   }
 
   if (state.audioAvailable && kind === 'window') {
-    return { via: 'native', note: 'Viewers will hear only this application.', warn: false };
+    return { via: 'native', note: t('app.viewers_will_hear_only_this'), warn: false };
   }
 
   if (kind === 'screen') {
@@ -9265,25 +9925,25 @@ function audioPlan(forSource) {
       return {
         via: 'native',
         note: excluded
-          ? `Viewers will hear system audio, except ${excluded.name}.`
-          : 'Viewers will hear all system audio.',
+          ? t('app.viewers_will_hear_system_audio', { name: excluded.name })
+          : t('app.viewers_will_hear_all_system'),
         warn: false,
       };
     }
-    return { via: 'chromium', note: 'Viewers will hear all system audio.', warn: false };
+    return { via: 'chromium', note: t('app.viewers_will_hear_all_system'), warn: false };
   }
 
   if (el.fallback.value === 'system') {
     return {
       via: 'chromium',
-      note: `Per-app audio unavailable — ALL system audio will be shared. ${state.audioUnavailableReason ?? ''}`,
+      note: t('audio.unavailable_all', { reason: state.audioUnavailableReason ?? '' }),
       warn: true,
     };
   }
 
   return {
     via: 'none',
-    note: `Per-app audio unavailable — sharing without sound. ${state.audioUnavailableReason ?? ''}`,
+    note: t('audio.unavailable_none', { reason: state.audioUnavailableReason ?? '' }),
     warn: true,
   };
 }
@@ -9324,7 +9984,7 @@ async function confirmLive({ timeoutMs = 15_000 } = {}) {
     await new Promise((resolve) => setTimeout(resolve, 600));
   }
   throw new Error(
-    'The server never saw this stream go live. Someone else may already be publishing under this name.',
+    t('app.the_server_never_saw_this'),
   );
 }
 
@@ -9396,7 +10056,7 @@ async function openCapture(source, preset, plan) {
     // One at a time, in the order they were ticked: that order is the
     // stacking order, first at the bottom.
     for (const initial of source.initial ?? []) {
-      await compositor.addLayer(initial).catch((err) => toast(`Could not add ${initial.name}: ${err.message}`));
+      await compositor.addLayer(initial).catch((err) => toast(t('app.could_not_add', { name: initial.name, message: err.message })));
     }
     return { track: compositor.track, rawStream: compositor.stream, compositor };
   }
@@ -9440,9 +10100,9 @@ async function routeAudio(source, plan) {
   if (plan.via === 'device') {
     try {
       const label = await state.bridge.attachDevice(el.audioInput.value || undefined);
-      return { mode: 'device', note: `Viewers will hear ${label}.` };
+      return { mode: 'device', note: t('app.viewers_will_hear', { label }) };
     } catch (err) {
-      return { mode: 'none', note: `Could not open that audio input: ${err.message}` };
+      return { mode: 'none', note: t('app.could_not_open_that_audio', { message: err.message }) };
     }
   }
 
@@ -9479,7 +10139,7 @@ async function startBroadcast() {
   const plan = audioPlan();
 
   el.startStream.disabled = true;
-  el.startStream.textContent = 'Going live…';
+  el.startStream.textContent = t('app.going_live');
   // Backing out halfway through going live would tear down a publish that
   // is still being set up. Escape is routed through this button too.
   el.pickerBack.disabled = true;
@@ -9569,13 +10229,13 @@ async function startBroadcast() {
 
     applyPreviewVisibility();
     el.broadcastTitle.textContent = state.share.target
-      ? `Sharing in ${state.share.target.name}`
-      : `Live as ${state.session.username}`;
+      ? t('app.sharing_in', { name: state.share.target.name })
+      : t('app.live_as', { username: state.session.username });
     if (state.share.target) el.viewerCount.textContent = '';
     applyVoiceButtons();
     renderChannelVideo();
     el.broadcastAudioNote.textContent = audioNote;
-    el.broadcastStats.textContent = 'Connecting…';
+    el.broadcastStats.textContent = t('app.connecting');
     voiceCue('streamStart');
     el.liveResolution.value = resolution;
     el.liveFramerate.value = String(framerate);
@@ -9608,7 +10268,7 @@ async function startBroadcast() {
   } catch (err) {
     const wasChannel = Boolean(state.share.target);
     await teardown();
-    const text = err.name === 'NotAllowedError' ? 'Screen capture was blocked.' : err.message;
+    const text = err.name === 'NotAllowedError' ? t('share.capture_blocked') : err.message;
     if (wasChannel) {
       showChannelsError(text);
       showView('view-channels');
@@ -9618,7 +10278,7 @@ async function startBroadcast() {
     }
   } finally {
     el.startStream.disabled = false;
-    el.startStream.textContent = 'Start streaming';
+    el.startStream.textContent = t('app.start_streaming');
     el.pickerBack.disabled = false;
   }
 }
@@ -9657,18 +10317,16 @@ function applyPreviewVisibility() {
 
   el.previewOff.hidden = !reason;
   if (reason === 'minimised') {
-    el.previewOffTitle.textContent = 'Preview paused';
+    el.previewOffTitle.textContent = t('app.preview_paused');
     el.previewOffText.textContent =
-      'You are still live. Harmony is not drawing the preview while the window is minimised, ' +
-      'because nothing would see it — that work would be pure waste.';
+      t('preview.paused_text');
   } else {
-    el.previewOffTitle.textContent = 'Preview hidden';
+    el.previewOffTitle.textContent = t('app.preview_hidden');
     el.previewOffText.textContent =
-      'You are still live. Drawing the preview costs GPU work on top of the game you are sharing, ' +
-      'so hiding it is free performance.';
+      t('preview.hidden_text');
   }
 
-  el.togglePreview.textContent = state.preview.hiddenByUser ? 'Show preview' : 'Hide preview';
+  el.togglePreview.textContent = state.preview.hiddenByUser ? t('app.show_preview') : t('app.hide_preview');
   el.togglePreview.classList.toggle('active', state.preview.hiddenByUser);
 }
 
@@ -9681,9 +10339,9 @@ function previewPauseReason() {
 
 /** Plain-language version of WebRTC's qualityLimitationReason. */
 const LIMIT_TEXT = {
-  bandwidth: 'limited by your upload speed',
-  cpu: 'limited by this computer',
-  other: 'limited',
+  get bandwidth() { return t('limit.bandwidth'); },
+  get cpu() { return t('limit.cpu'); },
+  get other() { return t('limit.other'); },
 };
 
 async function updateBroadcastStats() {
@@ -9695,11 +10353,11 @@ async function updateBroadcastStats() {
     s.kbps ? `${(s.kbps / 1000).toFixed(1)} Mbps` : null,
     s.codec,
     s.rtt != null ? `${s.rtt} ms` : null,
-    s.availableKbps ? `link ${(s.availableKbps / 1000).toFixed(1)} Mbps` : null,
-    s.encodeMs != null ? `encode ${s.encodeMs.toFixed(1)} ms` : null,
+    s.availableKbps ? t('stats.link', { mbps: (s.availableKbps / 1000).toFixed(1) }) : null,
+    s.encodeMs != null ? t('stats.encode', { ms: s.encodeMs.toFixed(1) }) : null,
     encoderLabel(s),
   ].filter(Boolean);
-  el.broadcastStats.textContent = bits.join('  ·  ') || 'Connecting…';
+  el.broadcastStats.textContent = bits.join('  ·  ') || t('app.connecting');
 
   // Say why the picture is worse than requested, rather than leaving the
   // broadcaster to guess whether it is them, their connection, or the server.
@@ -9712,14 +10370,14 @@ async function updateBroadcastStats() {
   // roster is the count that means anything there.
   if (state.share.target) {
     const n = state.channels.roster.length;
-    el.viewerCount.textContent = `${Math.max(0, n - 1)} in the channel`;
+    el.viewerCount.textContent = t('app.in_the_channel', { n: Math.max(0, n - 1) });
     return;
   }
 
   try {
     const { streams } = await harmony.api.streams(state.session.server);
     const mine = streams.find((x) => x.username === state.session.username);
-    el.viewerCount.textContent = `${mine?.viewers ?? 0} watching`;
+    el.viewerCount.textContent = t('app.watching', { viewers: mine?.viewers ?? 0 });
   } catch {
     /* transient */
   }
@@ -9757,14 +10415,14 @@ async function saveClip(buffer, label, button) {
   const original = button?.textContent;
   if (button) {
     button.disabled = true;
-    button.textContent = 'Saving…';
+    button.textContent = t('app.saving');
   }
   try {
     const { data, seconds } = buffer.build();
     const { path } = await harmony.clips.save(data, label);
-    toast(`Clip saved — ${seconds.toFixed(0)}s, ${(data.byteLength / 1e6).toFixed(1)} MB`, path);
+    toast(t('app.clip_saved_s_mb', { seconds: seconds.toFixed(0), size: (data.byteLength / 1e6).toFixed(1) }), path);
   } catch (err) {
-    toast(`Could not save the clip: ${err.message}`);
+    toast(t('app.could_not_save_the_clip', { message: err.message }));
   } finally {
     if (button) {
       button.disabled = false;
@@ -9782,7 +10440,7 @@ function toast(message, filePath) {
     node.className = 'toast';
     document.body.append(node);
   }
-  node.textContent = message + (filePath ? '  (click to show)' : '');
+  node.textContent = message + (filePath ? `  ${t('toast.click_to_show')}` : '');
   node.onclick = filePath ? () => harmony.clips.reveal(filePath).catch(() => {}) : null;
   node.classList.toggle('clickable', Boolean(filePath));
   node.hidden = false;
@@ -9798,7 +10456,7 @@ async function applySourceChange() {
   if (!source) return;
 
   el.startStream.disabled = true;
-  el.startStream.textContent = 'Switching…';
+  el.startStream.textContent = t('app.switching');
   el.pickerBack.disabled = true;
   // The live bar is what changeLiveSource reads, so the picker's rows are
   // carried over to it first.
@@ -9813,11 +10471,11 @@ async function applySourceChange() {
     if (state.share.target) renderChannelVideo();
   } catch (err) {
     el.audioNote.textContent =
-      err.name === 'NotAllowedError' ? 'That source was not allowed.' : err.message;
+      err.name === 'NotAllowedError' ? t('app.that_source_was_not_allowed') : err.message;
     el.audioNote.toggleAttribute('data-warn', true);
   } finally {
     el.startStream.disabled = false;
-    el.startStream.textContent = state.changingSource ? 'Use this source' : 'Start streaming';
+    el.startStream.textContent = state.changingSource ? t('app.use_this_source') : t('app.start_streaming');
     el.pickerBack.disabled = false;
   }
 }
@@ -9930,13 +10588,13 @@ function updateMonitorButton() {
     el.monitorToggle.classList.remove('active');
     el.monitorToggle.title =
       state.live.audioMode === 'none'
-        ? 'Nothing to monitor: this source has no audio'
-        : 'You already hear this audio through your speakers';
+        ? t('app.nothing_to_monitor_this_source')
+        : t('app.you_already_hear_this_audio');
     return;
   }
   const on = state.bridge.monitoring;
   el.monitorToggle.classList.toggle('active', on);
-  el.monitorToggle.title = on ? 'Stop hearing my own audio' : 'Hear my own audio';
+  el.monitorToggle.title = on ? t('app.stop_hearing_my_own_audio') : t('app.hear_my_own_audio');
 }
 
 async function stopBroadcast(reason) {
@@ -9960,11 +10618,11 @@ async function stopBroadcast(reason) {
 // ---------------------------------------------------------------------------
 
 async function enterWatch() {
-  el.watchTitle.textContent = `Watching ${state.session.username}`;
+  el.watchTitle.textContent = t('app.watching_2', { username: state.session.username });
   el.watchWaiting.hidden = false;
   el.watchWaitingText.textContent = state.session.pending
-    ? `Waiting for ${state.session.username} to start sharing…`
-    : 'Connecting…';
+    ? t('app.waiting_for_to_start_sharing', { username: state.session.username })
+    : t('app.connecting');
   el.watchDot.classList.remove('live');
   el.watchStats.textContent = '';
   showView('view-watch');
@@ -10005,7 +10663,7 @@ async function connectWatch() {
         // The broadcaster stopped or the network dropped. Go back to polling
         // instead of erroring out -- they may well come straight back.
         el.watchWaiting.hidden = false;
-        el.watchWaitingText.textContent = `Stream ended. Waiting for ${state.session.username}…`;
+        el.watchWaitingText.textContent = t('app.stream_ended_waiting_for', { username: state.session.username });
         el.watchDot.classList.remove('live');
         retryWatch();
       }
@@ -10014,7 +10672,7 @@ async function connectWatch() {
     addTimer(setInterval(updateWatchStats, 1000), 'watch');
   } catch (err) {
     if (err.code === 'not_live' || err.code === 'media_error') {
-      el.watchWaitingText.textContent = `Waiting for ${state.session.username} to start sharing…`;
+      el.watchWaitingText.textContent = t('app.waiting_for_to_start_sharing', { username: state.session.username });
       retryWatch();
     } else {
       await teardown();
@@ -10143,14 +10801,14 @@ const isBroadcasting = () => Boolean(state.live.videoSender && state.pc);
 
 async function enterMosaic(usernames = null) {
   const server = el.serverUrl.value.trim() || state.server;
-  if (!server) return showError('Enter the address of your Harmony server.');
+  if (!server) return showError(t('connect.enter_address'));
 
   state.server = server;
   state.mosaic = freshMosaic();
   state.mosaic.selection = usernames ? new Set(usernames) : null;
   el.mosaicLeave.textContent = (() => {
-    if (isBroadcasting() && !state.share.target) return 'Back to my stream';
-    return state.auth.user ? 'Back to channels' : 'Leave';
+    if (isBroadcasting() && !state.share.target) return t('nav.back_to_stream');
+    return state.auth.user ? t('nav.back_to_channels') : t('nav.leave');
   })();
   el.mosaicGrid.replaceChildren();
   showVolume(el.mosaicVolume, el.mosaicVolumeLabel, 100);
@@ -10266,10 +10924,10 @@ async function syncMosaic({ streams: pushed } = {}) {
     el.mosaicGrid.replaceChildren(
       message(
         closed.size
-          ? 'No streams open. Use + Add stream to bring one back.'
+          ? t('mosaic.none_open')
           : selection
-            ? 'None of the chosen streams are live.'
-            : 'Nobody is streaming right now.',
+            ? t('mosaic.none_live')
+            : t('mosaic.nobody'),
       ),
     );
   } else if (count && empty) {
@@ -10317,7 +10975,7 @@ function openTile({ username, whepUrl }) {
   const spinner = document.createElement('div');
   spinner.className = 'spinner';
   const statusText = document.createElement('span');
-  statusText.textContent = `Connecting to ${username}…`;
+  statusText.textContent = t('app.connecting_to', { username });
   status.append(spinner, statusText);
 
   const bar = document.createElement('div');
@@ -10338,14 +10996,14 @@ function openTile({ username, whepUrl }) {
   muteBtn.type = 'button';
   muteBtn.dataset.role = 'mute';
   setIcon(muteBtn, 'speaker-high');
-  muteBtn.title = `Mute ${username}`;
+  muteBtn.title = t('app.mute', { username });
 
   const volume = document.createElement('input');
   volume.type = 'range';
   volume.className = 'tile-volume';
   volume.min = '0';
   volume.max = String(asPercent(MAX_GAIN));
-  volume.title = `Volume for ${username}`;
+  volume.title = t('app.volume_for', { username });
   const level = document.createElement('span');
   level.className = 'tile-volume-label volume-value';
   showVolume(volume, level, 100);
@@ -10358,28 +11016,28 @@ function openTile({ username, whepUrl }) {
   maxBtn.type = 'button';
   maxBtn.dataset.role = 'maximize';
   setIcon(maxBtn, 'arrows-out');
-  maxBtn.title = `Maximize ${username}`;
+  maxBtn.title = t('app.maximize', { username });
 
   const fsBtn = document.createElement('button');
   fsBtn.className = 'tile-btn';
   fsBtn.type = 'button';
   fsBtn.dataset.role = 'fullscreen';
   setIcon(fsBtn, 'corners-out');
-  fsBtn.title = 'Fullscreen';
+  fsBtn.title = t('app.fullscreen');
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'tile-btn';
   closeBtn.type = 'button';
   closeBtn.dataset.role = 'close';
   setIcon(closeBtn, 'x');
-  closeBtn.title = `Close ${username}`;
+  closeBtn.title = t('app.close', { username });
 
   const clipBtn = document.createElement('button');
   clipBtn.className = 'tile-btn';
   clipBtn.type = 'button';
   clipBtn.dataset.role = 'clip';
   setIcon(clipBtn, 'scissors');
-  clipBtn.title = `Save the last ${CLIP_SECONDS} seconds`;
+  clipBtn.title = t('app.save_the_last_seconds', { CLIP_SECONDS });
   clipBtn.hidden = true;
 
   controls.append(muteBtn, volume, level, clipBtn, maxBtn, fsBtn, closeBtn);
@@ -10477,7 +11135,7 @@ function openTile({ username, whepUrl }) {
     .catch((err) => {
       if (state.mosaic.tiles.get(username) !== entry) return;
       spinner.remove();
-      entry.statusText.textContent = err.code === 'not_live' ? 'Stream ended' : err.message;
+      entry.statusText.textContent = err.code === 'not_live' ? t('app.stream_ended') : err.message;
     });
 }
 
@@ -10490,7 +11148,7 @@ function ghostTile(username) {
   // this exists to prevent.
   node.className = 'tile ghost-tile';
   node.dataset.username = username;
-  node.title = `Reopen ${username}`;
+  node.title = t('app.reopen', { username });
 
   const name = document.createElement('span');
   name.className = 'ghost-name';
@@ -10498,9 +11156,10 @@ function ghostTile(username) {
 
   const hint = document.createElement('span');
   hint.className = 'ghost-hint';
-  hint.textContent = 'Closed \u00B7 click to watch again';
+  hint.textContent = t('app.closed_click_to_watch_again');
 
   node.append(name, hint);
+  ghostBackground(node, [...state.users.values()].find((u) => u.nickname === username));
   node.addEventListener('click', () => reopenTile(username));
   return node;
 }
@@ -10556,7 +11215,7 @@ function toggleMaximized(username) {
   for (const [name, entry] of mosaic.tiles) {
     const on = mosaic.maximized === name;
     setIcon(entry.maxBtn, on ? 'arrows-in' : 'arrows-out');
-    entry.maxBtn.title = on ? 'Back to the grid' : `Maximize ${name}`;
+    entry.maxBtn.title = on ? t('app.back_to_the_grid') : t('app.maximize_2', { name });
   }
   layoutMosaic();
 }
@@ -10587,7 +11246,7 @@ function applyWatchAudio() {
 
   showVolume(el.volume, el.volumeLabel, asPercent(volume), muted);
   setIcon(el.toggleMute, muted ? 'speaker-x' : 'speaker-high');
-  el.toggleMute.title = muted ? 'Unmute' : 'Mute';
+  el.toggleMute.title = muted ? t('app.unmute') : t('app.mute_2');
 }
 
 /**
@@ -10614,7 +11273,7 @@ async function updateMosaicMeta() {
   for (const entry of state.mosaic.tiles.values()) {
     if (!entry.stats) continue;
     const s = await entry.stats();
-    entry.meta.textContent = s.width ? `${s.height}p · ${s.fps} fps` : '';
+    entry.meta.textContent = s.width ? t('app.p_fps', { height: s.height, fps: s.fps }) : '';
   }
 }
 
@@ -10677,11 +11336,11 @@ document.addEventListener('fullscreenchange', () => {
   for (const entry of state.mosaic.tiles.values()) {
     const on = entry.el === active;
     setIcon(entry.fsBtn, on ? 'x' : 'corners-out');
-    entry.fsBtn.title = on ? 'Exit fullscreen (Esc)' : 'Fullscreen';
+    entry.fsBtn.title = on ? t('app.exit_fullscreen_esc') : t('app.fullscreen');
   }
   const watching = el.watchView === active;
   setIcon(el.watchFullscreen, watching ? 'x' : 'corners-out');
-  el.watchFullscreen.title = watching ? 'Exit fullscreen (Esc)' : 'Fullscreen';
+  el.watchFullscreen.title = watching ? t('app.exit_fullscreen_esc') : t('app.fullscreen');
 
   // Start every fullscreen session with the chrome out of the way; the pointer
   // reaching for the bottom of the screen is what brings it back.
@@ -10744,7 +11403,7 @@ async function openAddStream() {
     who.textContent = stream.username;
     const count = document.createElement('span');
     count.className = 'pill';
-    count.textContent = `${stream.viewers} watching`;
+    count.textContent = t('app.watching', { viewers: stream.viewers });
     li.append(dot, who, count);
     li.addEventListener('click', () => addStreamToMosaic(stream.username));
     el.addStreamItems.append(li);
@@ -10985,7 +11644,7 @@ function applyPrivacy(on, { render = true } = {}) {
   setIcon(el.privacyToggle, on ? 'eye-slash' : 'eye');
   el.privacyToggle.toggleAttribute('data-on', on);
   el.privacyToggle.setAttribute('aria-pressed', String(on));
-  const label = on ? 'Show your details' : 'Hide your details';
+  const label = on ? t('privacy.show') : t('privacy.hide');
   el.privacyToggle.title = label;
   el.privacyToggle.setAttribute('aria-label', label);
   if (!render) return;
@@ -11156,7 +11815,7 @@ el.askForm.addEventListener('submit', (event) => {
   const missing = [...el.askFields.querySelectorAll('[required]')]
     .find((input) => !input.value.trim());
   if (missing) {
-    el.askError.textContent = 'That one cannot be empty.';
+    el.askError.textContent = t('app.that_one_cannot_be_empty');
     el.askError.hidden = false;
     missing.focus();
     return;
@@ -11176,26 +11835,20 @@ el.ask.addEventListener('cancel', (event) => {
   closeAsk(null);
 });
 
-/**
- * Your display name.
- *
- * Server-side only, and deliberately nothing like the nickname. The
- * nickname is an identity -- folded, unique, what you log in with, and what
- * a MediaMTX path is built from. This is a label: any character, capitals
- * included, and two people may pick the same one. Clearing it puts the
- * nickname back, which is why the field is not required.
+/*
+ * The name in the bar opens a small dialog for it. The Profile page in Settings
+ * does the same thing with room to explain it (see saveDisplayName).
  */
 el.selfName.addEventListener('click', async () => {
   const me = state.auth.user;
   if (!me) return;
   const answer = await ask({
-    title: 'Your display name',
-    text: `Shown to everybody on this server. Leave it empty to go back to "${me.nickname}". `
-      + 'Capitals, spaces and accents are all fine.',
-    okLabel: 'Save',
+    title: t('app.your_display_name'),
+    text: t('profile.name_dialog_text', { nickname: me.nickname }),
+    okLabel: t('app.save'),
     fields: [{
       name: 'displayName',
-      label: 'Display name',
+      label: t('app.display_name'),
       value: me.customName ? me.displayName : '',
       placeholder: me.nickname,
       maxlength: 32,
@@ -11203,17 +11856,63 @@ el.selfName.addEventListener('click', async () => {
   });
   if (answer === null) return;
   try {
-    const { user } = await harmony.api.setDisplayName(state.server, answer.displayName ?? '');
-    state.auth.user = { ...state.auth.user, ...user };
-    state.users.set(user.id, user);
-    // The broadcast repaints everybody else; this repaints us without
-    // waiting for our own message to come back round.
-    el.channelsWho.textContent = user.displayName || user.nickname;
-    renderVoiceRoster(state.channels.roster);
-    renderChannels();
-    renderChat();
+    await saveDisplayName(answer.displayName ?? '');
   } catch (err) {
     showChannelsError(err.message);
+  }
+});
+
+/** The Profile page's own controls. */
+el.profileChoose.addEventListener('click', () => el.avatarFile.click());
+el.profileRemove.addEventListener('click', () => clearOwnAvatar());
+el.profileBannerChoose.addEventListener('click', () => el.profileBannerFile.click());
+el.profileBannerRemove.addEventListener('click', () => clearOwnBanner());
+el.profileBannerFile.addEventListener('change', () => {
+  const file = el.profileBannerFile.files?.[0];
+  el.profileBannerFile.value = '';
+  if (file) setOwnBanner(file);
+});
+el.profileSoundChoose.addEventListener('click', () => el.profileSoundFile.click());
+el.profileSoundRemove.addEventListener('click', () => clearOwnJoinSound());
+el.profileSoundPlay.addEventListener('click', () => previewJoinSound());
+el.profileSoundFile.addEventListener('change', () => {
+  const file = el.profileSoundFile.files?.[0];
+  el.profileSoundFile.value = '';
+  if (file) setOwnJoinSound(file);
+});
+el.customJoinSounds.addEventListener('change', async () => {
+  await harmony.settings.set({ customJoinSounds: el.customJoinSounds.checked });
+  state.settings = await harmony.settings.get();
+});
+el.profileName.addEventListener('input', () => {
+  const me = state.auth.user;
+  const current = me?.customName ? me.displayName : '';
+  el.profileNameSave.disabled = el.profileName.value.trim() === current;
+  profileNote(el.profileNameNote, '');
+});
+const saveProfileName = async () => {
+  if (el.profileNameSave.disabled) return;
+  try {
+    await saveDisplayName(el.profileName.value.trim());
+    profileNote(el.profileNameNote, t('profile.saved'));
+  } catch (err) {
+    profileNote(el.profileNameNote, err.message, true);
+  }
+};
+el.profileNameSave.addEventListener('click', saveProfileName);
+el.profileName.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  // Enter in a field inside this dialog's <form method="dialog"> would close
+  // Settings; it saves the name instead.
+  event.preventDefault();
+  saveProfileName();
+});
+el.profileNameReset.addEventListener('click', async () => {
+  try {
+    await saveDisplayName('');
+    profileNote(el.profileNameNote, t('profile.back_to_username'));
+  } catch (err) {
+    profileNote(el.profileNameNote, err.message, true);
   }
 });
 
@@ -11305,6 +12004,7 @@ el.voiceConfig.addEventListener('click', () => {
   renderThemes();
   el.voiceSounds.checked = state.settings?.voiceSounds !== false;
   el.mentionSound.checked = state.settings?.mentionSound !== false;
+  el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
   showVolume(el.soundVolume, el.soundVolumeLabel, state.settings?.soundVolume ?? 100);
   renderHotkeyList();
   // No save: this is drawing the dialog from what is already stored, and
@@ -11312,6 +12012,14 @@ el.voiceConfig.addEventListener('click', () => {
   applyScale(state.settings?.uiScale ?? SCALE_DEFAULT, { save: false });
   applyMicTuning();
   startMicMeter();
+  renderLanguageSettings();
+  renderCameraQuality();
+  renderProfile();
+  profileNote(el.profilePictureNote, '');
+  profileNote(el.profileNameNote, '');
+  profileNote(el.profileBannerNote, '');
+  profileNote(el.profileFontNote, '');
+  profileNote(el.profileSoundNote, '');
   openBackgroundSettings();
   showSettingsTab(
     el.devicesDialog.querySelector('.settings-tab[aria-selected="true"]')?.dataset.tab ?? 'appearance',
@@ -11385,6 +12093,17 @@ el.micGate.addEventListener('input', micTuningInput);
 el.micGain.addEventListener('change', micTuningSave);
 el.micGate.addEventListener('change', micTuningSave);
 
+for (const [input, key] of [
+  [el.micEchoCancellation, 'micEchoCancellation'],
+  [el.micNoiseSuppression, 'micNoiseSuppression'],
+]) {
+  input.addEventListener('change', async () => {
+    await harmony.settings.set({ [key]: input.checked });
+    state.settings = await harmony.settings.get();
+    await applyMicProcessing();
+  });
+}
+
 el.voiceSoundboard.addEventListener('click', () => {
   if (el.soundpad.hidden) openSoundpad();
   else closeSoundpad();
@@ -11416,6 +12135,19 @@ document.addEventListener('pointerdown', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !el.soundpad.hidden) closeSoundpad();
 });
+
+async function changeCameraQuality(patch) {
+  const previous = {
+    cameraResolution: cameraQuality().size,
+    cameraFramerate: cameraQuality().rate,
+  };
+  state.settings = await harmony.settings.set(patch);
+  renderCameraQuality();
+  deviceNote('');
+  await applyCameraQuality(previous);
+}
+el.camResolution.addEventListener('change', () => changeCameraQuality({ cameraResolution: el.camResolution.value }));
+el.camFramerate.addEventListener('change', () => changeCameraQuality({ cameraFramerate: Number(el.camFramerate.value) }));
 
 el.voiceCamera.addEventListener('change', async () => {
   await harmony.settings.set({ voiceCameraId: el.voiceCamera.value });
@@ -11583,9 +12315,9 @@ el.emojiGrid.addEventListener('click', async (event) => {
     event.stopPropagation();
     const emoji = state.emojis.list.find((e) => String(e.id) === remove.dataset.emojiId);
     if (!emoji) return;
-    if (!await askConfirm(`Remove :${emoji.name}:?`, {
-      text: 'Reactions that used it keep their count and fall back to the text.',
-      okLabel: 'Remove',
+    if (!await askConfirm(t('app.remove_2', { name: emoji.name }), {
+      text: t('app.reactions_that_used_it_keep'),
+      okLabel: t('app.remove_3'),
     })) return;
     try {
       await harmony.api.deleteEmoji(state.server, emoji.id);
@@ -11700,7 +12432,9 @@ for (const type of ['dragenter', 'dragover']) {
     if (!accepts) return;
     if (el.chatDrop.hidden) {
       const channel = state.channels.list.find((c) => c.id === state.chat.channelId);
-      el.chatDropTitle.textContent = `Drop to send in #${channel?.name ?? 'this channel'}`;
+      el.chatDropTitle.textContent = t('chat.drop_title', {
+        name: channel?.name ?? t('chat.this_channel'),
+      });
       el.chatDrop.hidden = false;
     }
   });
@@ -11722,7 +12456,7 @@ document.addEventListener('drop', (event) => {
   // entry is the only thing that can tell them apart, and only now.
   const items = [...(event.dataTransfer.items ?? [])].filter((item) => item.kind === 'file');
   if (items.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) {
-    showChannelsError('Folders cannot be sent. Zip it first, or drop the files inside it.');
+    showChannelsError(t('app.folders_cannot_be_sent_zip'));
     return;
   }
   const files = [...event.dataTransfer.files];
@@ -11731,7 +12465,7 @@ document.addEventListener('drop', (event) => {
   if (!fitsUploadLimit(file)) return;
   setPendingFile(file);
   el.chatNote.textContent = files.length > 1
-    ? `One file per message: ${file.name} is attached. Send it, then drop the next.`
+    ? t('app.one_file_per_message_is', { name: file.name })
     : '';
   el.chatInput.focus();
 });
@@ -11742,26 +12476,35 @@ el.chatPendingClear.addEventListener('click', () => {
 });
 
 /*
- * Paste a picture straight into the box.
+ * Paste a file straight into the box -- a screenshot, or a file copied in the
+ * file manager.
  *
  * clipboardData.files rather than walking .items: a screenshot arrives as
  * one entry in both, and files is already a FileList of exactly the things
  * that are files. The text half of a paste is left alone -- copying a
  * picture out of a web page puts BOTH an image and its HTML on the
- * clipboard, and preventDefault is called only when an image was actually
+ * clipboard, and preventDefault is called only when a file was actually
  * taken, so pasting ordinary text still pastes ordinary text.
  *
- * A pasted image has no name of its own ("image.png", every time), so it
+ * A pasted picture has no name of its own ("image.png", every time), so it
  * gets a dated one here. Three screenshots in a row would otherwise all be
  * called the same thing in the folder somebody downloads them to.
  */
 el.chatInput.addEventListener('paste', (event) => {
-  const file = [...(event.clipboardData?.files ?? [])]
-    .find((f) => f.type.startsWith('image/'));
+  // Any file: one copied in the file manager arrives here too, with its own
+  // name and whatever type it is. Text on the clipboard is left alone.
+  const file = [...(event.clipboardData?.files ?? [])][0];
   if (!file) return;
 
   event.preventDefault();
   if (!fitsUploadLimit(file)) return;
+  // Only the nameless picture a screenshot or "copy image" produces is renamed;
+  // a file that has a name keeps it.
+  const generic = file.type.startsWith('image/') && (!file.name || /^image\.[a-z0-9]+$/i.test(file.name));
+  if (!generic) {
+    setPendingFile(file);
+    return;
+  }
   const extension = file.type.split('/')[1]?.split('+')[0] ?? 'png';
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
   setPendingFile(new File([file], `pasted-${stamp}.${extension}`, { type: file.type }));
@@ -11791,9 +12534,10 @@ el.chatSearchClear.addEventListener('click', () => {
 /*
  * The empty space under the list.
  *
- * For a channel it means "out of every group", which is the only way back
- * out of one. For a group it means last, which is the only way to reach the
- * bottom -- there is no heading below the last heading to drop above.
+ * For a channel it means "out of every group", at the bottom, which is the
+ * only way back out of one without a row to land above. For a group it means
+ * last, the only way to reach the bottom -- there is no heading below the last
+ * heading to drop above.
  */
 el.channelItems.addEventListener('dragover', (event) => {
   // A person dropped anywhere but a voice channel goes nowhere, and the
@@ -11811,6 +12555,10 @@ el.channelItems.addEventListener('drop', (event) => {
   const { kind, id } = dragging;
   dragging = null;
   clearDropMarks();
+  // Only the empty space is "the end". A drop that reached the list from a row
+  // that did not take it -- a group onto itself, say -- is a drop on that row,
+  // and sending the thing to the bottom because of it is the wrong answer.
+  if (event.target !== el.channelItems) return;
   if (kind === 'channel') moveChannel(id, { groupId: null });
   else if (kind === 'group') moveGroup(id, null);
 });
@@ -11819,24 +12567,24 @@ el.channelAdd.addEventListener('click', async () => {
   // One dialog with three fields, rather than three questions in a row and
   // a confirm box asking somebody to remember that "OK means voice".
   const answer = await ask({
-    title: 'New channel',
-    okLabel: 'Create',
+    title: t('app.new_channel'),
+    okLabel: t('app.create'),
     fields: [
-      { name: 'name', label: 'Name', placeholder: 'Game Night', required: true },
+      { name: 'name', label: t('app.name'), placeholder: t('app.game_night'), required: true },
       {
         name: 'kind',
-        label: 'Kind',
+        label: t('app.kind'),
         // A group is in the same menu rather than behind its own button:
         // it is the same question -- what are you adding to the sidebar --
         // and two buttons beside each other reading "+ New" and "+ Group"
         // is a thing people have to read twice.
         options: [
-          { value: 'voice', label: 'Voice channel' },
-          { value: 'text', label: 'Text channel' },
-          { value: 'group', label: 'Group (a folder)' },
+          { value: 'voice', label: t('app.voice_channel') },
+          { value: 'text', label: t('app.text_channel') },
+          { value: 'group', label: t('app.group_a_folder') },
         ],
       },
-      { name: 'password', label: 'Password', type: 'password', placeholder: 'Open to everyone' },
+      { name: 'password', label: t('app.password'), type: 'password', placeholder: t('app.open_to_everyone') },
     ],
   });
   if (!answer?.name) return;
@@ -11941,7 +12689,8 @@ el.rememberAccount.addEventListener('change', async () => {
 el.serverUrl.addEventListener('input', () => {
   el.passwordField.hidden = true;
   el.passwordField.classList.remove('bad');
-  el.serverHint.textContent = 'The address you were given for your Harmony server.';
+  el.serverHint.dataset.i18n = 'app.the_address_you_were_given';
+  el.serverHint.textContent = t('app.the_address_you_were_given');
 });
 // Typing a new password is a reason to retry the list that just failed.
 el.password.addEventListener('change', async () => {
@@ -12010,8 +12759,8 @@ async function openChangeSource() {
   state.changingSource = true;
   state.selectedSource = null;
   el.startStream.disabled = true;
-  el.startStream.textContent = 'Use this source';
-  el.pickerBack.textContent = 'Back to stream';
+  el.startStream.textContent = t('app.use_this_source');
+  el.pickerBack.textContent = t('app.back_to_stream');
   el.pickerUsername.textContent = state.share.target
     ? `#${state.share.target.name}`
     : state.session.username;
@@ -12051,8 +12800,8 @@ async function setGpuPreference(value) {
   // this setting cannot change.
   toast(
     isBroadcasting()
-      ? 'Saved. It applies next time Harmony starts — restarting now would end your stream.'
-      : 'Saved. Restart Harmony to apply it — click here to restart now.',
+      ? t('app.saved_it_applies_next_time')
+      : t('app.saved_restart_harmony_to_apply'),
   );
   const node = document.getElementById('toast');
   if (node && !isBroadcasting()) {
@@ -12067,7 +12816,7 @@ el.togglePreview.addEventListener('click', () => {
   state.preview.hiddenByUser = !state.preview.hiddenByUser;
   applyPreviewVisibility();
   if (state.preview.hiddenByUser) {
-    toast('Preview hidden. You are still live — this only stops Harmony drawing it.');
+    toast(t('app.preview_hidden_you_are_still'));
   }
 });
 
@@ -12141,8 +12890,8 @@ el.clipsEnabled.addEventListener('change', () => {
   }
   toast(
     state.clips.enabled
-      ? `Clips on — the last ${CLIP_SECONDS}s of each stream will be kept in memory.`
-      : 'Clips off.',
+      ? t('app.clips_on_the_last_s', { CLIP_SECONDS })
+      : t('app.clips_off'),
   );
 });
 
@@ -12159,14 +12908,14 @@ el.hwEncoding.addEventListener('change', async () => {
 
   el.hwEncodingNote.textContent =
     preference === 'off'
-      ? 'Will encode on the CPU after a restart.'
-      : 'Will use the GPU again after a restart.';
+      ? t('app.will_encode_on_the_cpu')
+      : t('app.will_use_the_gpu_again');
 
   if (isBroadcasting()) {
-    toast('Saved. It applies next time Harmony starts — restarting now would end your stream.');
+    toast(t('app.saved_it_applies_next_time'));
     return;
   }
-  toast('Saved. Restart Harmony to apply it — click here to restart now.');
+  toast(t('app.saved_restart_harmony_to_apply'));
   const node = document.getElementById('toast');
   if (node) {
     node.classList.add('clickable');
@@ -12186,7 +12935,7 @@ el.testConnection.addEventListener('click', async () => {
   if (!server) return showError('Enter the address of your Harmony server first.');
 
   el.diagSteps.replaceChildren();
-  el.diagVerdict.textContent = 'Testing…';
+  el.diagVerdict.textContent = t('app.testing');
   el.diag.hidden = false;
   el.testConnection.disabled = true;
 
@@ -12227,7 +12976,7 @@ el.mosaicMute.addEventListener('click', () => {
   const { master } = state.mosaic;
   master.muted = !master.muted;
   setIcon(el.mosaicMute, master.muted ? 'speaker-x' : 'speaker-high');
-  el.mosaicMute.title = master.muted ? 'Unmute everything' : 'Mute everything';
+  el.mosaicMute.title = master.muted ? t('app.unmute_everything') : t('app.mute_everything');
   applyTileAudio();
 });
 
@@ -12262,11 +13011,11 @@ el.togglePlay.addEventListener('click', () => {
   if (el.remote.paused) {
     el.remote.play();
     setIcon(el.togglePlay, 'pause');
-    el.togglePlay.title = 'Pause';
+    el.togglePlay.title = t('app.pause');
   } else {
     el.remote.pause();
     setIcon(el.togglePlay, 'play');
-    el.togglePlay.title = 'Resume';
+    el.togglePlay.title = t('app.resume');
   }
 });
 
@@ -12289,6 +13038,62 @@ window.addEventListener('resize', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Language
+// ---------------------------------------------------------------------------
+//
+// The choice is a setting like any other. Everything the markup names with
+// data-i18n is translated by i18n.js itself; what JavaScript draws -- the
+// sidebar, the chat, button labels that follow a state -- is drawn by
+// functions that call t(), so after a switch they are called again here.
+
+/**
+ * The language pickers -- the one in Settings and the one on the login screen,
+ * which are the same choice -- "Automatic" first, then every language by its
+ * own name.
+ */
+function renderLanguageSettings() {
+  const own = languages().find((l) => l.code === resolveLanguage('auto'))?.name ?? '';
+  for (const select of [el.languageSelect, el.loginLanguage]) {
+    select.replaceChildren(
+      new Option(t('settings.language.auto', { language: own }), 'auto'),
+      ...languages().map(({ code, name }) => new Option(name, code)),
+    );
+    select.value = state.settings?.language ?? 'auto';
+  }
+}
+
+/** Draw again whatever JavaScript wrote text into. Each is guarded: one that is not ready yet must not stop the rest. */
+function redrawTexts() {
+  // Before settings have loaded there is nothing to draw from yet.
+  if (!state.settings) return;
+  // The main process's own words: the tray menu, thumbnail tooltips, save dialog.
+  harmony.strings.set(texts('main.')).catch(() => {});
+  const again = [
+    applyVoiceButtons, renderChannels, renderMembers, () => renderVoiceRoster(state.channels.roster),
+    renderChat, renderSoundpad, renderHotkeyList, renderCameraQuality, renderProfile,
+    renderBackgroundSettings, renderUpdates, renderLanguageSettings, applyServerInfo, updateAudioNote,
+    applyAuthMode,
+  ];
+  for (const redraw of again) {
+    try {
+      redraw?.();
+    } catch (err) {
+      console.warn('[i18n] could not redraw:', err.message);
+    }
+  }
+}
+
+onLanguageChange(redrawTexts);
+
+for (const select of [el.languageSelect, el.loginLanguage]) {
+  select.addEventListener('change', async () => {
+    const preference = select.value;
+    state.settings = await harmony.settings.set({ language: preference });
+    await setLanguage(preference);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Updates
 // ---------------------------------------------------------------------------
 //
@@ -12305,37 +13110,37 @@ let updateBannerHidden = '';
 function updateLine(status) {
   switch (status.state) {
     case 'checking':
-      return 'Checking for updates…';
+      return t('updates.checking');
     case 'latest':
-      return 'Up to date.';
+      return t('updates.latest');
     case 'available':
-      return `Version ${status.version} is available.`;
+      return t('updates.available', { version: status.version });
     case 'downloading':
-      return `Downloading ${status.version}… ${status.percent ?? 0}%`;
+      return t('updates.downloading', { version: status.version, percent: status.percent ?? 0 });
     case 'ready':
-      return `Version ${status.version} is ready. It installs when you restart or quit.`;
+      return t('updates.ready', { version: status.version });
     case 'error':
-      return `Could not update: ${status.error}`;
+      return t('updates.error', { message: status.error });
     case 'unsupported':
-      return status.error;
+      return status.reason ? t(`updates.unsupported_${status.reason}`) : status.error;
     default:
-      return 'Not checked yet.';
+      return t('updates.idle');
   }
 }
 
 /** The one thing there is to do next, or null. */
 function updateActionLabel(status) {
-  if (status.state === 'ready') return 'Restart now';
+  if (status.state === 'ready') return t('updates.restart_now');
   // A download that failed can be tried again.
   if (status.state === 'available' || (status.state === 'error' && status.version)) {
-    return status.manual ? 'Open download page' : 'Download';
+    return status.manual ? t('updates.open_page') : t('app.download');
   }
   return null;
 }
 
 function renderUpdates() {
   const status = updateStatus;
-  el.updateVersion.textContent = status.current ? `Harmony ${status.current}` : 'Harmony';
+  el.updateVersion.textContent = status.current ? t('app.harmony', { current: status.current }) : 'Harmony';
   el.updateStatus.textContent = updateLine(status);
   el.updateCheck.disabled = ['checking', 'downloading', 'unsupported'].includes(status.state);
   const label = updateActionLabel(status);
@@ -12354,15 +13159,17 @@ function renderUpdates() {
   if (el.updateBanner.hidden) return;
 
   if (status.state === 'available') {
-    el.updateBannerText.textContent = `Harmony ${status.version} is available.`;
+    el.updateBannerText.textContent = t('app.harmony_is_available', { version: status.version });
   } else if (status.state === 'downloading') {
-    el.updateBannerText.textContent = `Downloading Harmony ${status.version}… ${status.percent ?? 0}%`;
+    el.updateBannerText.textContent = t('updates.downloading_banner', {
+      version: status.version, percent: status.percent ?? 0,
+    });
   } else {
-    el.updateBannerText.textContent = `Harmony ${status.version} is ready to install.`;
+    el.updateBannerText.textContent = t('app.harmony_is_ready_to_install', { version: status.version });
   }
   el.updateBannerAction.hidden = !label;
   if (label) el.updateBannerAction.textContent = label;
-  el.updateBannerLater.textContent = status.state === 'downloading' ? 'Hide' : 'Later';
+  el.updateBannerLater.textContent = status.state === 'downloading' ? t('app.hide') : t('app.later');
 }
 
 async function runUpdateAction() {
@@ -12371,9 +13178,9 @@ async function runUpdateAction() {
     if (status.state === 'ready') {
       if (
         isBroadcasting() &&
-        !(await askConfirm('Restart to update?', {
-          text: 'You are live. Restarting now ends your stream; the update also installs whenever you quit.',
-          okLabel: 'Restart',
+        !(await askConfirm(t('app.restart_to_update'), {
+          text: t('app.you_are_live_restarting_now'),
+          okLabel: t('app.restart'),
         }))
       ) {
         return;
@@ -12385,7 +13192,7 @@ async function runUpdateAction() {
       await harmony.updates.download();
     }
   } catch (err) {
-    toast(`Could not update: ${err.message}`);
+    toast(t('app.could_not_update', { message: err.message }));
   }
 }
 

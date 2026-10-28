@@ -264,6 +264,42 @@ describe('soundpad clips', () => {
       assert.equal(res.status, 201);
       assert.equal(res.body.clip.emoji, null);
     });
+
+    // One emoji is one GRAPHEME, not one code point: each of these was cut to
+    // its first code point -- half a flag, a face without its tone, a heart as
+    // a text glyph -- or, with a zero-width joiner in it, refused as invisible
+    // and drawn as nothing at all.
+    for (const [what, emoji] of [
+      ['a flag', '\u{1F1E7}\u{1F1F7}'],
+      ['a skin tone', '\u{1F44D}\u{1F3FD}'],
+      ['a heart with its variation selector', '\u2764\uFE0F'],
+      ['a joined family', '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'],
+      ['a keycap', '1\uFE0F\u20E3'],
+    ]) {
+      it(`keeps ${what} whole`, async () => {
+        const res = await api('/api/soundpad', {
+          method: 'POST', body: { name: 'whole', emoji, hash: audioHash }, token: ownerToken,
+        });
+        assert.equal(res.status, 201);
+        assert.equal(res.body.clip.emoji, emoji);
+      });
+    }
+
+    it('still keeps only the first of several, whole', async () => {
+      const res = await api('/api/soundpad', {
+        method: 'POST',
+        body: { name: 'first', emoji: '\u{1F1E7}\u{1F1F7}\u{1F44D}\u{1F3FD}', hash: audioHash },
+        token: ownerToken,
+      });
+      assert.equal(res.body.clip.emoji, '\u{1F1E7}\u{1F1F7}');
+    });
+
+    it('refuses a pile of combining marks pretending to be one', async () => {
+      const res = await api('/api/soundpad', {
+        method: 'POST', body: { name: 'zalgo', emoji: `e${'\u0301'.repeat(20)}`, hash: audioHash }, token: ownerToken,
+      });
+      assert.equal(res.body.clip.emoji, null);
+    });
   });
 
   describe('renaming a clip', () => {

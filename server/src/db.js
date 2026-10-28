@@ -308,6 +308,53 @@ const MIGRATIONS = [
   (db) => {
     db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER');
   },
+
+  /*
+   * v-next -- groups and ungrouped channels share one order.
+   *
+   * A group's position used to count groups (0, 1, 2) and a channel's counted
+   * channels, two separate sequences, with every ungrouped channel drawn above
+   * every group. That is why a group could never be put above a channel that
+   * belongs to none.
+   *
+   * Now one sequence numbers everything in the order the sidebar draws it: a
+   * group's heading, then its channels, and ungrouped channels wherever they
+   * sit among the headings. This rewrites what is stored into that sequence
+   * without changing what anybody sees today: ungrouped channels first, then
+   * each group with its own channels under it.
+   */
+  (db) => {
+    const channels = db.prepare('SELECT id, group_id FROM channels ORDER BY position, id').all();
+    const groups = db.prepare('SELECT id FROM channel_groups ORDER BY position, id').all();
+    const setChannel = db.prepare('UPDATE channels SET position = ? WHERE id = ?');
+    const setGroup = db.prepare('UPDATE channel_groups SET position = ? WHERE id = ?');
+    const grouped = new Set(groups.map((g) => g.id));
+
+    let next = 0;
+    for (const c of channels) {
+      if (c.group_id == null || !grouped.has(c.group_id)) setChannel.run(next++, c.id);
+    }
+    for (const g of groups) {
+      setGroup.run(next++, g.id);
+      for (const c of channels) if (c.group_id === g.id) setChannel.run(next++, c.id);
+    }
+  },
+
+  /*
+   * v13 -- profile customisation: a font, a banner and a join sound.
+   *
+   * All three nullable, and NULL means "none": the default font, no banner
+   * and the ordinary join tone, which is what every existing account keeps.
+   * The banner and the sound are uploads referenced by hash, exactly like
+   * avatar_hash, and are retained and released the same way. The font is the
+   * id of one of a fixed list (accounts.js NAME_FONTS), not a font name or a
+   * URL: the client ships the fonts, and nobody can point this at a file.
+   */
+  (db) => {
+    db.exec('ALTER TABLE users ADD COLUMN name_font TEXT');
+    db.exec('ALTER TABLE users ADD COLUMN banner_hash TEXT');
+    db.exec('ALTER TABLE users ADD COLUMN join_sound_hash TEXT');
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

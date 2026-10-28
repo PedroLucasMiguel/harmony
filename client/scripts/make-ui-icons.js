@@ -24,7 +24,7 @@ const ICONS = [
   'phone-disconnect', 'phone-x', 'video-camera', 'video-camera-slash', 'camera-rotate',
   'screencast', 'music-notes',
   // channels and the bar
-  'hash', 'speaker-high', 'speaker-x', 'plus', 'users', 'sign-out', 'monitor', 'list',
+  'hash', 'speaker-high', 'speaker-x', 'plus', 'users', 'user-circle', 'globe', 'sign-out', 'monitor', 'list',
   // the composer and messages
   'plus-circle', 'smiley', 'paper-plane-right', 'x', 'download-simple',
   'pencil-simple', 'push-pin', 'trash', 'arrow-bend-up-left',

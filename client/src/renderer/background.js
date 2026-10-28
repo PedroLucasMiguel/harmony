@@ -20,6 +20,7 @@
 // call code already does when a camera ends or is switched.
 
 import { FilesetResolver, ImageSegmenter } from './vendor/@mediapipe/tasks-vision/vision_bundle.mjs';
+import { t } from './i18n.js';
 
 // Relative, so the same code finds them under harmony://app/ on the desktop and
 // beside index.html in the web and Android builds.
@@ -88,7 +89,7 @@ async function withStore(mode, run) {
 /** Keep one picture (or GIF) as the background. Replaces whatever was there. */
 export async function saveBackgroundImage(file) {
   if (file.size > MAX_IMAGE_BYTES) {
-    throw new Error(`That file is ${(file.size / 1048576).toFixed(0)} MB. The limit is ${MAX_IMAGE_BYTES / 1048576} MB.`);
+    throw new Error(t('background.file_too_big', { size: (file.size / 1048576).toFixed(0), limit: MAX_IMAGE_BYTES / 1048576 }));
   }
   // Proves it decodes before it replaces a picture that did.
   const probe = await BackgroundImage.open(file);
@@ -422,7 +423,7 @@ export class BackgroundEffect {
   constructor(raw) {
     this.#raw = raw;
     this.#track = raw.getVideoTracks()[0];
-    if (!this.#track) throw new Error('The camera has no video to work on.');
+    if (!this.#track) throw new Error(t('background.the_camera_has_no_video'));
   }
 
   /** The processed camera: hand it to whatever would have taken the raw one. */
@@ -448,7 +449,7 @@ export class BackgroundEffect {
       // captureStream snapshots the canvas after the draw call returns.
       preserveDrawingBuffer: true,
     });
-    if (!gl) throw new Error('WebGL2 is not available.');
+    if (!gl) throw new Error(t('background.webgl2_is_not_available'));
     this.#gl = gl;
     this.#programs = {
       blur: program(gl, BLUR),

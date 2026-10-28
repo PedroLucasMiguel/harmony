@@ -65,7 +65,8 @@ export class UploadSessions {
   }
 
   async open({ userId, size, contentType }) {
-    if (!Number.isSafeInteger(size) || size <= 0) return { ok: false, error: 'empty_file' };
+    // Zero is a size: an empty file is a file. Not a number is not.
+    if (!Number.isSafeInteger(size) || size < 0) return { ok: false, error: 'empty_file' };
     if (size > this.#chat.maxFileBytes) return { ok: false, error: 'file_too_large' };
     const mine = [...this.#sessions.values()].filter((s) => s.userId === userId).length;
     if (mine >= PER_USER) return { ok: false, error: 'too_many_uploads' };

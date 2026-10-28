@@ -68,6 +68,12 @@ const DEFAULTS = {
   // requirement, so unplugging it falls back to the default and plugging it
   // back in restores it.
   voiceCameraId: '',
+  // How the webcam is captured and sent. Resolution is a key of CAMERA_SIZES in
+  // the renderer ('360', '480', '720', '1080') or 'native' for the most the
+  // camera offers; the framerate is 24, 30, 60, or 0 for native. The default is
+  // what the camera always sent: small and light for a call.
+  cameraResolution: '360',
+  cameraFramerate: 24,
   /*
    * Input volume as a percentage, and the noise gate as a 0-100
    * sensitivity where 0 is off.
@@ -80,9 +86,21 @@ const DEFAULTS = {
    */
   micGain: 100,
   micSensitivity: 0,
+  /*
+   * The browser's own processing of the microphone. Off by default: both
+   * change the sound of a voice (echo cancellation ducks it whenever
+   * anything is playing, noise suppression can clip the ends of words),
+   * and are only worth it on speakers or in a noisy room.
+   */
+  micEchoCancellation: false,
+  micNoiseSuppression: false,
   // The join / leave / went-live tones. On, because the whole point of
   // them is to tell you about something you were not looking at.
   voiceSounds: true,
+  // Play other members' own join sounds, where they picked one, instead of the
+  // ordinary tone. On: the sound is theirs to choose and the room's to hear;
+  // this is the switch for the person who would rather not.
+  customJoinSounds: true,
   /*
    * The colour palette, by name. Purely local: it is never sent anywhere
    * and is not per server, so two people in the same channel can be
@@ -132,6 +150,9 @@ const DEFAULTS = {
    * settings.json cannot leave somebody with a window they cannot read
    * well enough to fix.
    */
+  // The language of the interface: 'auto' follows the system's, or a code from
+  // renderer/locales/index.js ('en', 'pt-BR', 'es', ...).
+  language: 'auto',
   uiScale: 115,
   /*
    * A sound when somebody writes your name.

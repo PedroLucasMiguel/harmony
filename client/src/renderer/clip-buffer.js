@@ -13,6 +13,7 @@
 // what this file does.
 
 import { Muxer, ArrayBufferTarget } from './vendor/mp4-muxer/build/mp4-muxer.mjs';
+import { t } from './i18n.js';
 
 export const CLIP_SECONDS = 30;
 
@@ -251,11 +252,11 @@ export class ClipBuffer {
     // A clip can only begin at a keyframe -- everything before the first one is
     // undecodable on its own.
     const firstKey = video.findIndex((f) => f.type === 'key');
-    if (firstKey < 0) throw new Error('No keyframe buffered yet; give it a few seconds.');
+    if (firstKey < 0) throw new Error(t('clip.no_keyframe_buffered_yet_give'));
 
     const frames = video.slice(firstKey);
     const params = frames.map((f) => findParameterSets(f.data)).find(Boolean);
-    if (!params) throw new Error('Could not read the video parameters from this stream.');
+    if (!params) throw new Error(t('clip.could_not_read_the_video'));
 
     const width = this.#size.width || 1280;
     const height = this.#size.height || 720;

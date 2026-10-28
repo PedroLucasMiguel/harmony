@@ -14,7 +14,8 @@ import { MediaMtxMonitor } from './mediamtx-api.js';
 import { Rooms, normalizeUsername, normalizePath } from './rooms.js';
 import { ensureDataDir, openDatabase, meta } from './db.js';
 import { ServerSettings } from './server-settings.js';
-import { Accounts, claimOwner, ensureOwnerToken, publicUser } from './accounts.js';
+import { Accounts, NAME_FONTS, claimOwner, ensureOwnerToken, publicUser } from './accounts.js';
+import { wavSeconds } from './wav.js';
 import {
   Channels,
   VoiceRooms,
@@ -32,7 +33,8 @@ import { mintMediaKey, verifyMediaKey } from './media-keys.js';
 import {
   Chat, Soundpad, Emojis,
   publicMessage, publicClip, publicEmoji, mediaTypeOf, mentionsIn,
-  MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_CLIP_BYTES, MAX_EMOJI_BYTES, MAX_EMOJIS,
+  MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MAX_JOIN_SOUND_BYTES,
+  MAX_JOIN_SOUND_SECONDS, MAX_CLIP_BYTES, MAX_EMOJI_BYTES, MAX_EMOJIS,
   MAX_FILE_LIMIT, DEFAULT_FILE_BYTES,
 } from './chat.js';
 import { UploadSessions } from './upload-sessions.js';
@@ -51,7 +53,10 @@ app.disable('x-powered-by');
  * proxies it actually trusts, landing on the address Caddy observed.
  */
 app.set('trust proxy', 'loopback');
-app.use(express.json({ limit: '16kb' }));
+const jsonBody = express.json({ limit: '16kb' });
+// Not for an upload: a file that happens to be JSON is a file, and the parser
+// would read it as a request body (and refuse anything past 16 kb of it).
+app.use((req, res, next) => (req.path === '/api/uploads' ? next() : jsonBody(req, res, next)));
 
 const db = openDatabase({ dataDir: ensureDataDir(config.dataDir) });
 const metaStore = meta(db);
@@ -452,6 +457,103 @@ app.post('/api/accounts/avatar', requireLogin, (req, res) => {
 
   const user = publicUser(result.user);
   // Everyone draws everyone else's picture, so everyone needs to know.
+  realtime?.broadcast({ type: 'user:updated', user });
+  return res.json({ user });
+});
+
+/**
+ * Set or clear one of the files on your profile: the banner or the join sound.
+ *
+ * The same two steps and the same reference juggling as the avatar (see
+ * above): uploaded first, retained BEFORE the old one is released. `check`
+ * returns an error body for a file that does not qualify, or null.
+ */
+function setProfileFile(req, res, { set, check }) {
+  const hash = req.body?.hash == null ? null : String(req.body.hash);
+
+  if (hash !== null) {
+    if (!/^[0-9a-f]{64}$/.test(hash)) {
+      return res.status(400).json({ error: 'bad_hash', message: 'That is not an uploaded file.' });
+    }
+    const upload = chat.fileInfo(hash);
+    if (!upload) {
+      return res.status(400).json({ error: 'no_such_upload', message: 'Upload the file first.' });
+    }
+    const refusal = check(upload);
+    if (refusal) return res.status(400).json(refusal);
+    chat.retain(hash);
+  }
+
+  const result = set(req.user.id, hash);
+  if (!result.ok) return res.status(404).json({ error: result.error });
+  if (result.previous && result.previous !== hash) chat.release(result.previous);
+
+  const user = publicUser(result.user);
+  realtime?.broadcast({ type: 'user:updated', user });
+  return res.json({ user });
+}
+
+/** Your profile banner: any picture or GIF, up to MAX_BANNER_BYTES. */
+app.post('/api/accounts/banner', requireLogin, (req, res) => setProfileFile(req, res, {
+  set: (id, hash) => accounts.setBanner(id, hash),
+  check: (upload) => {
+    if (mediaTypeOf(upload.content_type) !== 'image') {
+      return { error: 'not_an_image', message: 'A banner has to be an image or a GIF.' };
+    }
+    if (upload.bytes > MAX_BANNER_BYTES) {
+      return {
+        error: 'banner_too_large',
+        message: `Banners are limited to ${Math.round(MAX_BANNER_BYTES / 1024 / 1024)} MB.`,
+      };
+    }
+    return null;
+  },
+}));
+
+/**
+ * The sound played to the room when you join it.
+ *
+ * WAV only, because it is the one format whose length the server can read
+ * without a decoder -- see wav.js. The client converts what was picked.
+ */
+app.post('/api/accounts/join-sound', requireLogin, (req, res) => setProfileFile(req, res, {
+  set: (id, hash) => accounts.setJoinSound(id, hash),
+  check: (upload) => {
+    if (upload.content_type !== 'audio/wav') {
+      return { error: 'not_wav', message: 'A join sound has to be a WAV file.' };
+    }
+    if (upload.bytes > MAX_JOIN_SOUND_BYTES) {
+      return {
+        error: 'join_sound_too_large',
+        message: `Join sounds are limited to ${Math.round(MAX_JOIN_SOUND_BYTES / 1024)} KB.`,
+      };
+    }
+    const seconds = wavSeconds(upload.path);
+    if (seconds === null) {
+      return { error: 'bad_audio', message: 'That is not a WAV file the server can read.' };
+    }
+    // A little slack for a header-and-rounding hair over the limit.
+    if (seconds > MAX_JOIN_SOUND_SECONDS + 0.1) {
+      return {
+        error: 'join_sound_too_long',
+        message: `Join sounds are limited to ${MAX_JOIN_SOUND_SECONDS} seconds.`,
+      };
+    }
+    return null;
+  },
+}));
+
+/** Your display name's font: one of a fixed list, or null for the default. */
+app.post('/api/accounts/name-font', requireLogin, (req, res) => {
+  const result = accounts.setNameFont(req.user.id, req.body?.font);
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.error,
+      message: result.error === 'unknown_font'
+        ? `Pick one of: ${NAME_FONTS.join(', ')}.` : 'No such user.',
+    });
+  }
+  const user = publicUser(result.user);
   realtime?.broadcast({ type: 'user:updated', user });
   return res.json({ user });
 });
@@ -975,6 +1077,7 @@ app.post('/api/channels/arrange', requireAdmin, (req, res) => {
   const result = channels.arrange({
     groups: req.body?.groups,
     channels: req.body?.channels,
+    order: req.body?.order,
   });
   if (!result.ok) {
     const messages = {
@@ -1283,14 +1386,19 @@ app.post(
   // matches, so the match has to be everything.
   express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES }),
   (req, res) => {
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    // express.raw leaves {} where there was no body, so an empty FILE is told
+    // from no file by the length the client declared.
+    const body = Buffer.isBuffer(req.body)
+      ? req.body
+      : req.get('content-length') === '0' ? Buffer.alloc(0) : null;
+    if (!body) {
       return res.status(400).json({
         error: 'empty_file',
         message: 'Send the file as the raw request body.',
       });
     }
 
-    const result = chat.store(req.body, req.get('content-type'));
+    const result = chat.store(body, req.get('content-type'));
     if (!result.ok) {
       const messages = {
         file_too_large: `Files are limited to ${formatBytes(Math.min(MAX_UPLOAD_BYTES, chat.maxFileBytes))} `

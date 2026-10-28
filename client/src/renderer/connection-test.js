@@ -9,6 +9,7 @@
 // a real WHIP session proves the media path.
 
 import { harmony } from './bridge.js';
+import { t } from './i18n.js';
 
 const TEST_TIMEOUT_MS = 20_000;
 
@@ -47,29 +48,28 @@ export async function runConnectionTest(server, onStep) {
     try {
       health = await harmony.api.health(server);
     } catch (err) {
-      step('Reach the Harmony server', false, err.message);
+      step(t('diag.step_reach'), false, err.message);
       return {
         ok: false,
-        verdict:
-          'The server could not be reached at all. Check the address, and that your network allows this port.',
+        verdict: t('diag.verdict_unreachable'),
       };
     }
-    step('Reach the Harmony server', true, `signaling on ${health.signalingBase}`);
+    step(t('diag.step_reach'), true, t('diag.signaling_on', { address: health.signalingBase }));
 
     if (!health.ok) {
-      step('Media server is running', false, `mediamtx: ${health.mediamtx}`);
-      return { ok: false, verdict: 'The server is up but its media server is not. This is a server-side problem.' };
+      step(t('diag.step_media'), false, `mediamtx: ${health.mediamtx}`);
+      return { ok: false, verdict: t('diag.verdict_media_down') };
     }
-    step('Media server is running', true);
+    step(t('diag.step_media'), true);
 
     // --- 2. a session --------------------------------------------------------
     const session = await harmony.api.session(server, username);
     if (session.role !== 'broadcaster') {
-      step('Reserve a test name', false, `got ${session.role}`);
-      return { ok: false, verdict: 'Could not reserve a scratch name; try again in a moment.' };
+      step(t('diag.step_reserve'), false, t('diag.got_role', { role: session.role }));
+      return { ok: false, verdict: t('diag.verdict_reserve') };
     }
     token = session.token;
-    step('Reserve a test name', true, username);
+    step(t('diag.step_reserve'), true, username);
 
     // --- 3. gather candidates ------------------------------------------------
     tiny = tinyStream();
@@ -104,17 +104,19 @@ export async function runConnectionTest(server, onStep) {
       (s) => [].concat(s?.urls ?? []).some((u) => /^stuns?:/i.test(String(u))),
     );
     step(
-      'Discover your public address (STUN)',
+      t('diag.step_stun'),
       hasSrflx || !stunOffered,
       !stunOffered
-        ? 'not needed: this server offers no STUN'
-        : hasSrflx ? [...types].join(', ') : `only ${[...types].join(', ') || 'none'} — UDP may be blocked`,
+        ? t('diag.stun_not_needed')
+        : hasSrflx
+          ? [...types].join(', ')
+          : t('diag.stun_only', { types: [...types].join(', ') || t('diag.none') }),
     );
 
     // --- 4. the media path ---------------------------------------------------
     const exchange = await harmony.api.sdp(session.whipUrl, pc.localDescription.sdp);
     resourceUrl = exchange.resourceUrl;
-    step('Exchange connection details', true);
+    step(t('diag.step_exchange'), true);
 
     await pc.setRemoteDescription({ type: 'answer', sdp: exchange.answer });
 
@@ -134,12 +136,12 @@ export async function runConnectionTest(server, onStep) {
     });
 
     if (!connected) {
-      step('Send video to the server', false, 'no working network path was found');
+      step(t('diag.step_send'), false, t('diag.no_path'));
       return {
         ok: false,
         verdict: hasSrflx
-          ? 'Signalling works but media cannot get through. Your network is blocking the media ports. A TURN relay would be needed.'
-          : 'UDP appears to be blocked on your network. The server also offers a TCP path; if this still fails, a TURN relay would be needed.',
+          ? t('diag.verdict_blocked_ports')
+          : t('diag.verdict_udp_blocked'),
       };
     }
 
@@ -157,19 +159,19 @@ export async function runConnectionTest(server, onStep) {
       }
     });
 
-    const via = local && remote ? `${describeCandidate(local)} → ${describeCandidate(remote)}` : 'connected';
-    step('Send video to the server', true, `${via}${rtt != null ? `, ${Math.round(rtt * 1000)} ms` : ''}`);
+    const via = local && remote ? `${describeCandidate(local)} → ${describeCandidate(remote)}` : t('diag.connected');
+    step(t('diag.step_send'), true, `${via}${rtt != null ? `, ${Math.round(rtt * 1000)} ms` : ''}`);
 
     const overTcp = remote?.protocol === 'tcp' || local?.protocol === 'tcp';
     return {
       ok: true,
       verdict: overTcp
-        ? 'Working, over the TCP fallback. Expect higher delay than usual, but it will stream.'
-        : 'Everything works. Streaming and watching should both be fine from this network.',
+        ? t('diag.verdict_tcp')
+        : t('diag.verdict_ok'),
     };
   } catch (err) {
-    step('Connection test', false, err.message);
-    return { ok: false, verdict: `The test stopped early: ${err.message}` };
+    step(t('diag.step_test'), false, err.message);
+    return { ok: false, verdict: t('diag.verdict_stopped', { message: err.message }) };
   } finally {
     tiny?.stop();
     tiny?.stream.getTracks().forEach((t) => t.stop());

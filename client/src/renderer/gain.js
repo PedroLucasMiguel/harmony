@@ -604,6 +604,62 @@ export async function playSample(url, { gain = 1 } = {}) {
   return source;
 }
 
+/** Join sounds still playing, so leaving the room can end them. */
+const activeJoinSounds = new Set();
+
+/**
+ * Another member's join sound: a recording they chose, played instead of the
+ * ordinary join tone.
+ *
+ * Through the same limiter and the same "sound effects volume" as the tones,
+ * since it replaces one, and into the playback context so that the output
+ * device is respected. Cut off at `maxSeconds` whatever the file says, because
+ * what the server checked is somebody else's promise and this is our ears.
+ * Rejects if the file cannot be fetched or decoded, so the caller can fall
+ * back to the tone rather than play nothing.
+ *
+ * @param {string} url
+ * @param {{maxSeconds?: number}} options
+ */
+export async function playJoinSound(url, { maxSeconds = 10 } = {}) {
+  let buffer = samples.get(url);
+  if (!buffer) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`could not load the sound (${response.status})`);
+    buffer = await context().decodeAudioData(await response.arrayBuffer());
+    samples.set(url, buffer);
+  }
+  const level = cueVolume * CUE_PEAK * 2.2;
+  if (level <= 0) return null;
+
+  const ctx = context();
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  const node = ctx.createGain();
+  node.gain.value = level;
+  source.connect(node);
+  node.connect(bus(ctx));
+  const duration = Math.min(buffer.duration, maxSeconds);
+  source.start(0, 0, duration);
+  activeJoinSounds.add(source);
+  source.addEventListener('ended', () => {
+    activeJoinSounds.delete(source);
+    try {
+      source.disconnect();
+      node.disconnect();
+    } catch { /* already torn down */ }
+  });
+  return source;
+}
+
+/** Silence any join sound still playing: leaving the room ends them. */
+export function stopJoinSounds() {
+  for (const source of activeJoinSounds) {
+    try { source.stop(); } catch { /* already ended */ }
+  }
+  activeJoinSounds.clear();
+}
+
 /**
  * Send everything we play to a particular output device.
  *

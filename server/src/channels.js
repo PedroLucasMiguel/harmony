@@ -183,8 +183,10 @@ export class Channels {
       insertGroup: db.prepare(
         'INSERT INTO channel_groups (name, position, created_at) VALUES (?, ?, ?)',
       ),
+      // One sequence for groups and channels alike: see arrange().
       nextGroupPosition: db.prepare(
-        'SELECT COALESCE(MAX(position), -1) + 1 AS p FROM channel_groups',
+        'SELECT MAX(COALESCE((SELECT MAX(position) FROM channels), -1),'
+        + ' COALESCE((SELECT MAX(position) FROM channel_groups), -1)) + 1 AS p',
       ),
       renameGroup: db.prepare('UPDATE channel_groups SET name = ? WHERE id = ?'),
       setGroupPosition: db.prepare('UPDATE channel_groups SET position = ? WHERE id = ?'),
@@ -194,7 +196,10 @@ export class Channels {
         'INSERT INTO channels (kind, name, position, password_hash, created_at) '
         + 'VALUES (?, ?, ?, ?, ?)',
       ),
-      nextPosition: db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS p FROM channels'),
+      nextPosition: db.prepare(
+        'SELECT MAX(COALESCE((SELECT MAX(position) FROM channels), -1),'
+        + ' COALESCE((SELECT MAX(position) FROM channel_groups), -1)) + 1 AS p',
+      ),
       rename: db.prepare('UPDATE channels SET name = ? WHERE id = ?'),
       setPassword: db.prepare('UPDATE channels SET password_hash = ? WHERE id = ?'),
       setPosition: db.prepare('UPDATE channels SET position = ? WHERE id = ?'),
@@ -293,44 +298,96 @@ export class Channels {
 
   /**
    * Write the whole sidebar at once: which group each channel is in, where
-   * it sits inside it, and the order of the groups themselves.
+   * everything sits, and where each group is among the ungrouped channels.
    *
    * The WHOLE tree, not "move channel X into group Y at index N". Drag and
    * drop produces a new arrangement, not a diff, and sending the
    * arrangement means two admins dragging at the same time cannot
-   * interleave into a layout neither of them chose: one transaction, last
-   * writer wins, and what lands is always something somebody asked for.
+   * interleave into an order neither of them chose.
    *
-   * Anything the caller leaves out keeps what it had. A client that has
-   * not refreshed since a channel was created would otherwise silently
-   * move that channel to the top of the ungrouped list every time anybody
-   * dragged anything.
+   * `order` is that arrangement as one list, in the order the sidebar draws
+   * it: `{ group: id }` for a heading and `{ id, groupId }` for a channel,
+   * ungrouped channels and headings in any mixture. Its index IS the
+   * position, for groups and channels alike -- one sequence, which is what
+   * lets a group sit above a channel that belongs to none.
+   *
+   * Older clients send `groups` (the heading order) and `channels` instead,
+   * and cannot say more than "ungrouped channels first": that is read as the
+   * list it describes, so they keep working. Whatever a list leaves out stays
+   * where it was, after what it names.
    */
-  arrange({ groups, channels }) {
-    const knownGroups = new Set(this.groups().map((g) => g.id));
-    const knownChannels = new Map(this.list().map((c) => [c.id, c]));
+  arrange({ groups, channels, order }) {
+    const currentGroups = this.groups();
+    const currentChannels = this.list();
+    const knownGroups = new Set(currentGroups.map((g) => g.id));
+    const knownChannels = new Map(currentChannels.map((c) => [c.id, c]));
 
-    const groupOrder = Array.isArray(groups)
-      ? [...new Set(groups.map(Number))].filter((id) => knownGroups.has(id))
-      : null;
-    const moves = Array.isArray(channels) ? channels : [];
-    for (const move of moves) {
-      if (!knownChannels.has(Number(move?.id))) return { ok: false, error: 'no_such_channel' };
-      const groupId = move.groupId == null ? null : Number(move.groupId);
-      if (groupId !== null && !knownGroups.has(groupId)) {
+    const toGroupId = (value) => (value == null ? null : Number(value));
+    let flat = [];
+
+    if (Array.isArray(order)) {
+      flat = order.map((entry) => (entry && entry.group != null
+        ? { group: Number(entry.group) }
+        : { id: Number(entry?.id), groupId: toGroupId(entry?.groupId) }));
+    } else {
+      const moves = Array.isArray(channels) ? channels : [];
+      const submitted = moves.map((m) => ({ id: Number(m?.id), groupId: toGroupId(m?.groupId) }));
+      const named = new Set(submitted.map((m) => m.id));
+      const sequence = [
+        ...submitted,
+        ...currentChannels
+          .filter((c) => !named.has(c.id))
+          .map((c) => ({ id: c.id, groupId: c.group_id ?? null })),
+      ];
+      const headings = Array.isArray(groups)
+        ? [...new Set(groups.map(Number))].filter((id) => knownGroups.has(id))
+        : [];
+      const groupOrder = [
+        ...headings,
+        ...currentGroups.map((g) => g.id).filter((id) => !headings.includes(id)),
+      ];
+      flat = sequence.filter((m) => m.groupId === null || !knownGroups.has(m.groupId));
+      for (const id of groupOrder) {
+        flat.push({ group: id }, ...sequence.filter((m) => m.groupId === id));
+      }
+    }
+
+    // Everything named has to exist, and nothing may be named twice.
+    const seenChannels = new Set();
+    const seenGroups = new Set();
+    for (const entry of flat) {
+      if ('group' in entry) {
+        if (!knownGroups.has(entry.group)) return { ok: false, error: 'no_such_group' };
+        seenGroups.add(entry.group);
+        continue;
+      }
+      if (!knownChannels.has(entry.id)) return { ok: false, error: 'no_such_channel' };
+      if (entry.groupId !== null && !knownGroups.has(entry.groupId)) {
         return { ok: false, error: 'no_such_group' };
       }
+      seenChannels.add(entry.id);
+    }
+    // What the list does not mention goes after what it does, as it was.
+    const dropRepeats = new Set();
+    flat = flat.filter((entry) => {
+      const key = 'group' in entry ? `g${entry.group}` : `c${entry.id}`;
+      if (dropRepeats.has(key)) return false;
+      dropRepeats.add(key);
+      return true;
+    });
+    for (const g of currentGroups) if (!seenGroups.has(g.id)) flat.push({ group: g.id });
+    for (const c of currentChannels) {
+      if (!seenChannels.has(c.id)) flat.push({ id: c.id, groupId: c.group_id ?? null });
     }
 
     this.#db.exec('BEGIN');
     try {
-      if (groupOrder) groupOrder.forEach((id, i) => this.#q.setGroupPosition.run(i, id));
-      moves.forEach((move, i) => {
-        const groupId = move.groupId == null ? null : Number(move.groupId);
-        // The index in the submitted list IS the position. The client sends
-        // them in the order they are drawn, so there is nothing to compute
-        // and no way for the two to disagree.
-        this.#q.setGroup.run(groupId, i, Number(move.id));
+      // The index in the submitted list IS the position. The client sends
+      // everything in the order it is drawn, so there is nothing to compute
+      // and no way for the two to disagree.
+      flat.forEach((entry, i) => {
+        if ('group' in entry) this.#q.setGroupPosition.run(i, entry.group);
+        else this.#q.setGroup.run(entry.groupId, i, entry.id);
       });
       this.#db.exec('COMMIT');
     } catch (err) {
@@ -354,9 +411,12 @@ export class Channels {
     if (wanted.length !== existing.length || wanted.some((id) => !existing.includes(id))) {
       return { ok: false, error: 'bad_order' };
     }
+    // The positions already in use are handed out again, in the new order, so
+    // that the channels still sit where the groups are among them (see arrange).
+    const slots = this.list().map((c) => c.position);
     this.#db.exec('BEGIN');
     try {
-      wanted.forEach((id, index) => this.#q.setPosition.run(index, id));
+      wanted.forEach((id, index) => this.#q.setPosition.run(slots[index], id));
       this.#db.exec('COMMIT');
     } catch (err) {
       this.#db.exec('ROLLBACK');

@@ -16,6 +16,8 @@
 [data-icon='speaker-x'] { --icon: url('icons/speaker-x.svg'); }
 [data-icon='plus'] { --icon: url('icons/plus.svg'); }
 [data-icon='users'] { --icon: url('icons/users.svg'); }
+[data-icon='user-circle'] { --icon: url('icons/user-circle.svg'); }
+[data-icon='globe'] { --icon: url('icons/globe.svg'); }
 [data-icon='sign-out'] { --icon: url('icons/sign-out.svg'); }
 [data-icon='monitor'] { --icon: url('icons/monitor.svg'); }
 [data-icon='list'] { --icon: url('icons/list.svg'); }

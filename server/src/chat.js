@@ -63,6 +63,12 @@ export const storedType = (claimed) => {
  */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
+/** Splits text into what a person sees as one character each. */
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/** The longest file name kept, in characters. */
+const MAX_FILENAME = 120;
+
 /** The largest file the owner may allow, and what a server allows until they do. */
 export const MAX_FILE_LIMIT = 2 * 1024 * 1024 * 1024;
 export const DEFAULT_FILE_BYTES = MAX_UPLOAD_BYTES;
@@ -95,6 +101,21 @@ export const MAX_CLIP_BYTES = 2 * 1024 * 1024;
  * see the picture.
  */
 export const MAX_AVATAR_BYTES = 256 * 1024;
+
+/**
+ * Per-banner ceiling. Larger than an avatar, because a banner may be a GIF and
+ * a GIF cannot be shrunk on a canvas without losing its animation, and it is
+ * only downloaded by somebody who can see the person it belongs to.
+ */
+export const MAX_BANNER_BYTES = 2 * 1024 * 1024;
+
+/**
+ * A join sound: how long, and how big. The length is the rule; the size only
+ * makes it impossible to hide a long recording in a high sample rate. The
+ * client writes 32 kHz mono, which is 640 KB for the full ten seconds.
+ */
+export const MAX_JOIN_SOUND_SECONDS = 10;
+export const MAX_JOIN_SOUND_BYTES = 1024 * 1024;
 
 /**
  * Per-custom-emoji ceiling, and how many there may be.
@@ -355,7 +376,9 @@ export class Chat {
    */
   store(buffer, claimedType) {
     const contentType = storedType(claimedType);
-    if (!buffer?.length) return { ok: false, error: 'empty_file' };
+    // An empty file is a file: .gitkeep, a blank template, a lock file. What
+    // is not allowed is no body at all, which is the caller's to tell apart.
+    if (!Buffer.isBuffer(buffer)) return { ok: false, error: 'empty_file' };
     if (buffer.length > Math.min(MAX_UPLOAD_BYTES, this.#maxFileBytes)) {
       return { ok: false, error: 'file_too_large' };
     }
@@ -455,16 +478,28 @@ export class Chat {
    * "authorized_keys" -- the client picks where a download goes, but the
    * name must never be able to choose for it. Separators are stripped on
    * BOTH conventions, because the machine that uploads and the machine
-   * that downloads need not be the same kind.
+   * that downloads need not be the same kind. Anything else is the name the
+   * file was sent with.
    */
   static cleanFilename(raw) {
-    const value = String(raw ?? '').split(/[\\/]/).pop() ?? '';
-    const safe = value
+    const safe = (String(raw ?? '').split(/[\\/]/).pop() ?? '')
       .replace(/[\u0000-\u001f\u007f]/g, '')
-      .replace(/^\.+/, '')
-      .trim()
-      .slice(0, 120);
-    return safe || null;
+      .trim();
+    // Nothing but dots is no name ("." and ".." are directories); a dot at the
+    // start of a real one is the name -- .gitignore and .env are files people
+    // send, and saving them as "gitignore" would not be the file they sent.
+    if (/^\.*$/.test(safe)) return null;
+    return Chat.#shorten(safe, MAX_FILENAME);
+  }
+
+  /** Cut to `max` characters, keeping a short extension: "...long.tar.gz" stays a .gz. */
+  static #shorten(name, max) {
+    const chars = [...name];
+    if (chars.length <= max) return name;
+    const dot = name.lastIndexOf('.');
+    const extension = dot > 0 && name.length - dot <= 16 ? name.slice(dot) : '';
+    return [...name.slice(0, dot > 0 ? dot : name.length)]
+      .slice(0, max - [...extension].length).join('') + extension;
   }
 
   post({ channelId, user, body = '', attachmentHash = null, attachmentName = null, replyTo = null }) {
@@ -820,21 +855,33 @@ export class Soundpad {
   /**
    * One emoji, or nothing.
    *
-   * Taken as the FIRST grapheme rather than validated as "an emoji": there
-   * is no cheap, correct test for that, every approximation refuses
-   * something somebody wanted, and the worst case here is a clip labelled
-   * with a letter -- which is fine, and is what several of them will be
-   * anyway.
+   * The FIRST GRAPHEME, not the first code point. A flag is two regional
+   * indicators, a skin tone is a modifier after the face, a red heart is a
+   * heart plus a variation selector, and a family is three people joined by
+   * zero-width joiners: cut at the first code point and each of those is
+   * half of itself, or -- for the joined ones, whose joiner is a format
+   * character -- refused outright and drawn as nothing.
    *
-   * \p{C} is refused for the same reason it is on a display name: a
+   * Not validated as "an emoji": there is no cheap, correct test for that,
+   * every approximation refuses something somebody wanted, and the worst
+   * case here is a clip labelled with a letter -- which is fine, and is what
+   * several of them will be anyway.
+   *
+   * Invisible characters are refused, as they are in a display name: a
    * right-to-left override in a grid of buttons reverses the labels around
-   * it.
+   * it. The one exception is the zero-width joiner (U+200D), which is what
+   * holds a joined emoji together and is a format character like the rest.
+   * \p{C} would be the obvious one-line test and it takes the joiner with it.
+   * A "grapheme" a dozen code points long is a pile of combining marks
+   * rather than an emoji, and is refused too.
    */
   static emojiOf(raw) {
     const value = String(raw ?? '').trim();
     if (!value) return null;
-    if (/\p{C}/u.test(value)) return null;
-    return [...value][0] ?? null;
+    if (/[\p{C}]/u.test(value.replace(/\u200d/g, ''))) return null;
+    const first = GRAPHEMES.segment(value)[Symbol.iterator]().next().value?.segment ?? null;
+    if (!first || [...first].length > 12) return null;
+    return first;
   }
 
   add({ name, emoji, fileHash, userId }) {

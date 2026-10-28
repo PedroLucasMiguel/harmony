@@ -14,6 +14,7 @@ const gpu = require('./gpu');
 const hotkeys = require('./hotkeys');
 const updater = require('./updater');
 const voiceTray = require('./voice-tray');
+const strings = require('./strings');
 const { RealtimeClient } = require('./realtime');
 const { MediaCache, HASH_RE } = require('./media-cache');
 
@@ -510,6 +511,9 @@ handle('api:login', (_e, s, n, p, k) => api.login(s, n, p, k));
 handle('api:logout', (_e, s) => api.logout(s));
 handle('api:me', (_e, s) => api.me(s));
 handle('api:set-avatar', (_e, s, hash) => api.setAvatar(s, hash));
+handle('api:set-banner', (_e, s, hash) => api.setBanner(s, hash));
+handle('api:set-join-sound', (_e, s, hash) => api.setJoinSound(s, hash));
+handle('api:set-name-font', (_e, s, font) => api.setNameFont(s, font));
 handle('api:roster', (_e, s) => api.roster(s));
 handle('api:set-role', (_e, s, id, role) => api.setRole(s, id, role));
 handle('api:set-display-name', (_e, s, name) => api.setDisplayName(s, name));
@@ -578,6 +582,7 @@ handle('hotkeys:set', (_e, bindings) => hotkeys.set(bindings));
 
 handle('voice-tray:pictures', (_e, pictures) => voiceTray.setPictures(pictures));
 handle('voice-tray:state', (_e, voice) => voiceTray.setState(voice));
+handle('strings:set', (_e, table) => strings.set(table));
 
 /*
  * A remembered account password, sealed by the operating system.
@@ -669,7 +674,7 @@ handle('media:save', async (_e, hash, suggestedName) => {
    */
   if (named && !mediaCache.has(hash)) {
     const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
-      title: 'Save attachment',
+      title: strings.get('main.save_attachment'),
       defaultPath: path.join(app.getPath('downloads'), named),
       properties: ['createDirectory', 'showOverwriteConfirmation'],
     });
@@ -687,7 +692,7 @@ handle('media:save', async (_e, hash, suggestedName) => {
   const name = named || `${hash.slice(0, 12)}.${EXTENSIONS[contentType] ?? 'bin'}`;
 
   const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
-    title: 'Save attachment',
+    title: strings.get('main.save_attachment'),
     defaultPath: path.join(app.getPath('downloads'), name),
     properties: ['createDirectory', 'showOverwriteConfirmation'],
   });

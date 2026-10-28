@@ -114,6 +114,19 @@ export async function verifyPassword(password, stored) {
  */
 const tokenHash = (token) => createHash('sha256').update(String(token)).digest('hex');
 
+/**
+ * The fonts a display name may be drawn in, by id.
+ *
+ * The client ships the font files and knows how to draw each of these
+ * (renderer/fonts); the server only keeps the id, so that every client agrees
+ * on what a person's name looks like and nobody can name a font that is not
+ * there. A client that does not know an id draws the ordinary font.
+ */
+export const NAME_FONTS = [
+  'pacifico', 'press-start', 'orbitron', 'playfair', 'bebas',
+  'caveat', 'fredoka', 'cinzel', 'typewriter', 'marker',
+];
+
 export class Accounts {
   #db;
   #q;
@@ -131,8 +144,12 @@ export class Accounts {
       setRole: db.prepare('UPDATE users SET role = ? WHERE id = ?'),
       setDisplayName: db.prepare('UPDATE users SET display_name = ? WHERE id = ?'),
       setAvatar: db.prepare('UPDATE users SET avatar_hash = ? WHERE id = ?'),
+      setBanner: db.prepare('UPDATE users SET banner_hash = ? WHERE id = ?'),
+      setJoinSound: db.prepare('UPDATE users SET join_sound_hash = ? WHERE id = ?'),
+      setNameFont: db.prepare('UPDATE users SET name_font = ? WHERE id = ?'),
       list: db.prepare(
-        'SELECT id, nickname, display_name, role, avatar_hash, created_at '
+        'SELECT id, nickname, display_name, role, avatar_hash, name_font, banner_hash, '
+        + 'join_sound_hash, created_at '
         + 'FROM users ORDER BY nickname',
       ),
 
@@ -386,6 +403,8 @@ export class Accounts {
       this.#q.dropMessageFts.run(userId);
       this.#q.dropMessages.run(userId);
       if (user.avatar_hash) this.#q.releaseAvatar.run(user.avatar_hash);
+      if (user.banner_hash) this.#q.releaseAvatar.run(user.banner_hash);
+      if (user.join_sound_hash) this.#q.releaseAvatar.run(user.join_sound_hash);
       this.#q.disownClips.run(userId);
       this.#q.disownEmojis.run(userId);
       this.#q.dropUser.run(userId);
@@ -403,6 +422,32 @@ export class Accounts {
     this.#q.setAvatar.run(hash ?? null, userId);
     return { ok: true, previous: user.avatar_hash ?? null, user: this.#q.byId.get(userId) };
   }
+
+  /** The same as setAvatar, for the profile banner. */
+  setBanner(userId, hash) {
+    const user = this.#q.byId.get(userId);
+    if (!user) return { ok: false, error: 'no_such_user' };
+    this.#q.setBanner.run(hash ?? null, userId);
+    return { ok: true, previous: user.banner_hash ?? null, user: this.#q.byId.get(userId) };
+  }
+
+  /** The same as setAvatar, for the sound played when you join a room. */
+  setJoinSound(userId, hash) {
+    const user = this.#q.byId.get(userId);
+    if (!user) return { ok: false, error: 'no_such_user' };
+    this.#q.setJoinSound.run(hash ?? null, userId);
+    return { ok: true, previous: user.join_sound_hash ?? null, user: this.#q.byId.get(userId) };
+  }
+
+  /** One of NAME_FONTS, or null/'' for the default. Anything else is refused. */
+  setNameFont(userId, font) {
+    const user = this.#q.byId.get(userId);
+    if (!user) return { ok: false, error: 'no_such_user' };
+    const value = font == null || font === '' ? null : String(font);
+    if (value !== null && !NAME_FONTS.includes(value)) return { ok: false, error: 'unknown_font' };
+    this.#q.setNameFont.run(value, userId);
+    return { ok: true, user: this.#q.byId.get(userId) };
+  }
 }
 
 /** Shape a user row for the wire. Never leaks password_hash. */
@@ -415,6 +460,9 @@ export const publicUser = (u) => (u ? {
   customName: Boolean(u.display_name),
   role: u.role,
   avatarHash: u.avatar_hash ?? null,
+  nameFont: u.name_font ?? null,
+  bannerHash: u.banner_hash ?? null,
+  joinSoundHash: u.join_sound_hash ?? null,
   createdAt: u.created_at,
 } : null);
 

@@ -1519,23 +1519,12 @@ select:focus {
   opacity: 0.35;
   cursor: default;
 }
-/* A struck-through glyph, so "muted" is legible without colour alone --
-   which is the state people most need to read at a glance and the one that
-   costs most to misread. */
+/* "On" is red, and the icon itself carries the strike -- microphone-slash,
+   speaker-slash, set in the Icons section below -- so "muted" is legible
+   without colour alone. A line drawn across the glyph as well would cross it
+   twice, which is what the old emoji-era rule here did once the icons came. */
 .icon-btn[data-on] {
   color: var(--danger-soft);
-}
-.icon-btn[data-on]::after {
-  content: '';
-  position: absolute;
-  left: 15%;
-  right: 15%;
-  top: 50%;
-  border-top: 2px solid currentColor;
-  transform: rotate(-20deg);
-}
-.icon-btn[data-on] {
-  position: relative;
 }
 
 /* ---------- you, at the bottom of the sidebar ---------- */
@@ -2995,6 +2984,29 @@ button.danger {
   color: var(--muted);
   font-style: italic;
 }
+.hotkey-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hotkey-emoji {
+  font-size: 1.05rem;
+}
+.hotkey-heading {
+  margin: 0.9rem 0 0.1rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hotkey-row .hotkey-clear[hidden] {
+  display: none;
+}
 .hotkey-problem {
   flex: 1 0 100%;
   color: var(--warn);
@@ -3374,8 +3386,11 @@ button.danger {
 /* The settings dialog holds a swatch grid and three device rows, which do
    not fit the width a one-field question wants. */
 #devices {
-  width: min(48rem, 94vw);
-  height: min(36rem, 88vh);
+  /* Scales with the window: 48 x 36 rem is the least it is given, and it
+     grows with the window up to 78 x 60 rem, where a settings page stops
+     being easier to read for being wider. */
+  width: min(clamp(48rem, 70vw, 78rem), 94vw);
+  height: min(clamp(36rem, 85vh, 60rem), 92vh);
   max-width: 94vw;
   padding: 0;
   overflow: hidden;
@@ -3682,7 +3697,7 @@ button.danger {
   height: 100%;
 }
 .settings-nav {
-  flex: 0 0 12.5rem;
+  flex: 0 0 clamp(12.5rem, 20%, 15rem);
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -3740,6 +3755,54 @@ button.danger {
 .settings-page[hidden] {
   display: none;
 }
+/* --- Profile: a picture and a name ---------------------------------------- */
+.profile-picture {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+/* The same circle as everywhere else, drawn large: .avatar sizes itself in em. */
+.avatar.profile-avatar {
+  font-size: 2.6em;
+  margin: 0;
+}
+.profile-actions,
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.profile-picture,
+.profile-name-row {
+  margin-bottom: 10px;
+}
+.profile-name-row input {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+.profile-status:empty {
+  display: none;
+}
+.profile-status[data-error] {
+  color: var(--danger-soft);
+}
+.profile-account {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.profile-account dt {
+  color: var(--muted);
+}
+.profile-account dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .settings-page-title {
   margin: 0 0 0.9rem;
   font-size: 1.15rem;
@@ -4422,9 +4485,52 @@ button.tiny:disabled {
   align-items: center;
   gap: 12px;
 }
-.privacy-toggle {
+.brand-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
   align-self: flex-start;
+  min-width: 0;
+}
+/* The language: a globe and the name of the one in use, which is also the menu. */
+.language-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 4px 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.language-pick:hover,
+.language-pick:focus-within {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.language-pick-icon::before {
+  width: 1rem;
+  height: 1rem;
+}
+.language-pick select {
+  min-width: 0;
+  max-width: 14rem;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  outline: none;
+}
+.language-pick select option {
+  color: var(--text);
+  background: var(--surface);
 }
 
 /*
@@ -5909,7 +6015,8 @@ input[data-saved] {
 /* The state a toggle is in, shown by the icon itself as Discord does. */
 #voice-mute[data-on] { --icon: url('icons/microphone-slash.svg'); }
 #voice-deafen[data-on] { --icon: url('icons/speaker-slash.svg'); }
-#voice-cam[data-on] { --icon: url('icons/video-camera-slash.svg'); }
+/* No slash on the camera: it is on, and a struck-through camera reads as off.
+   The button's highlight (.voice-action[data-on]) says it is running. */
 #voice-mute[data-on],
 #voice-deafen[data-on] {
   color: var(--danger-soft);
@@ -6073,4 +6180,143 @@ input[data-saved] {
 :root[data-lacks~='scale'] [data-cap~='scale'],
 :root[data-lacks~='updates'] [data-cap~='updates'] {
   display: none !important;
+}
+
+/* --- Profile: a banner, a font and a join sound ---------------------------- */
+
+/*
+ * A banner behind a row: the member list, a voice channel's people, the voice
+ * pane and the preview in Settings all use this one rule.
+ *
+ * The picture is an <img> rather than a CSS background because the style-src
+ * policy has no 'unsafe-inline', and a hash cannot go in a stylesheet. It sits
+ * at z-index -1 inside an isolated row, so it is above the row's own
+ * background and below everything written on it.
+ *
+ *   dimmed   -- brightness and opacity both, so a bright GIF still sits back
+ *               and the name on it stays readable on every palette
+ *   fading   -- a mask that is transparent at the left edge and solid at the
+ *               right, so it melts into the list instead of ending in a cut
+ */
+.has-banner {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.profile-banner {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0.8;
+  filter: brightness(0.5);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, rgb(0 0 0 / 0.15) 18%, #000 100%);
+  mask-image: linear-gradient(to right, transparent 0%, rgb(0 0 0 / 0.15) 18%, #000 100%);
+  pointer-events: none;
+  user-select: none;
+}
+.has-banner .member-name,
+.has-banner .status {
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.65);
+}
+.profile-banner-preview {
+  /* The member list's row, which is styled by #member-items and so has to be
+     said again here, with room to see the picture: a row is only as tall as
+     its text, which shows a strip of a banner. */
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.6rem;
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  background: rgb(var(--tint-rgb) / 0.05);
+}
+.profile-banner-preview + .profile-actions {
+  margin-bottom: 10px;
+}
+
+.font-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.font-choice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.8rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgb(var(--tint-rgb) / 0.14);
+  border-radius: 8px;
+  background: rgb(var(--tint-rgb) / 0.04);
+  color: inherit;
+  font-size: 1.05rem;
+  cursor: pointer;
+  min-width: 0;
+}
+.font-choice:hover {
+  background: rgb(var(--tint-rgb) / 0.09);
+}
+.font-choice[aria-checked='true'] {
+  border-color: var(--accent);
+  background: rgb(var(--accent-rgb, var(--tint-rgb)) / 0.16);
+}
+.font-choice > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.profile-sound {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.profile-sound-state {
+  color: var(--muted);
+}
+
+/*
+ * A closed stream with a streamer's picture: the picture fills the square,
+ * dimmed and softened so it reads as a backdrop (and so a 256 px avatar
+ * stretched over a wide tile does not show its pixels), with the name and
+ * hint over it. Both kinds of closed square use this: the voice channel's
+ * and the broadcast mosaic's.
+ */
+.ghost-tile.has-picture {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.ghost-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(3px) brightness(0.45);
+  /* Scaled up a little so the blur's soft edge falls outside the tile. */
+  transform: scale(1.08);
+  pointer-events: none;
+  user-select: none;
+}
+.ghost-tile.has-picture:hover .ghost-bg {
+  filter: blur(3px) brightness(0.6);
+}
+.ghost-tile.has-picture .ghost-name,
+.ghost-tile.has-picture .ghost-hint {
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+}
+.ghost-tile.has-picture .ghost-hint {
+  opacity: 0.85;
 }

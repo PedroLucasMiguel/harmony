@@ -418,6 +418,137 @@ describe('channel groups', () => {
   });
 });
 
+/*
+ * Groups and ungrouped channels share one order, so a group can be put above a
+ * channel that belongs to none. The sidebar is submitted as one list in the
+ * order it is drawn -- `order`, with `{ group }` for a heading -- and its index
+ * is the position of everything in it.
+ */
+describe('groups among ungrouped channels', () => {
+  let a;
+  let b;
+  let c;
+  let g1;
+  let g2;
+  const made = async (name) => (await api('/api/channels', {
+    method: 'POST', body: { kind: 'text', name }, token: adminToken,
+  })).body.channel.id;
+  const group = async (name) => (await api('/api/channels/groups', {
+    method: 'POST', body: { name }, token: adminToken,
+  })).body.group.id;
+  const arrange = (body) => api('/api/channels/arrange', { method: 'POST', body, token: adminToken });
+  /** What the sidebar would draw: headings and ungrouped channels by position, a group's own under it. */
+  const layout = async () => {
+    const { body } = await api('/api/channels', { token: adminToken });
+    const mine = new Set([a, b, c]);
+    const tops = [
+      ...body.channels.filter((ch) => mine.has(ch.id) && ch.groupId == null)
+        .map((ch) => ({ key: `ch:${ch.name}`, position: ch.position })),
+      ...body.groups.filter((g) => [g1, g2].includes(g.id))
+        .map((g) => ({ key: `group:${g.name}`, position: g.position, id: g.id })),
+    ].sort((x, y) => x.position - y.position);
+    return tops.flatMap((t) => [
+      t.key,
+      ...(t.id ? body.channels.filter((ch) => ch.groupId === t.id)
+        .sort((x, y) => x.position - y.position).map((ch) => `  ${ch.name}`) : []),
+    ]);
+  };
+
+  before(async () => {
+    a = await made('ua');
+    b = await made('ub');
+    c = await made('uc');
+    g1 = await group('G1');
+    g2 = await group('G2');
+  });
+
+  it('puts a group above ungrouped channels', async () => {
+    const res = await arrange({
+      order: [
+        { group: g1 },
+        { id: c, groupId: g1 },
+        { id: a, groupId: null },
+        { id: b, groupId: null },
+        { group: g2 },
+      ],
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await layout(), ['group:G1', '  uc', 'ch:ua', 'ch:ub', 'group:G2']);
+  });
+
+  it('puts a group between two ungrouped channels', async () => {
+    await arrange({
+      order: [
+        { id: a, groupId: null },
+        { group: g1 },
+        { id: c, groupId: g1 },
+        { id: b, groupId: null },
+        { group: g2 },
+      ],
+    });
+    assert.deepEqual(await layout(), ['ch:ua', 'group:G1', '  uc', 'ch:ub', 'group:G2']);
+  });
+
+  it('still reads what an older client sends: ungrouped first, then the groups', async () => {
+    const res = await arrange({
+      groups: [g2, g1],
+      channels: [{ id: c, groupId: g1 }, { id: a, groupId: null }, { id: b, groupId: null }],
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await layout(), ['ch:ua', 'ch:ub', 'group:G2', 'group:G1', '  uc']);
+  });
+
+  it('leaves out of a list what it does not name, after what it does', async () => {
+    await arrange({ order: [{ id: b, groupId: null }] });
+    const lay = await layout();
+    assert.equal(lay[0], 'ch:ub', 'the one that was named comes first');
+    assert.equal(lay.length, 5, 'and nothing is lost');
+  });
+
+  it('refuses a list naming a group or a channel that is gone', async () => {
+    assert.equal((await arrange({ order: [{ group: 99999 }] })).body.error, 'no_such_group');
+    assert.equal((await arrange({ order: [{ id: 99999, groupId: null }] })).body.error, 'no_such_channel');
+    assert.equal((await arrange({ order: [{ id: a, groupId: 99999 }] })).body.error, 'no_such_group');
+  });
+
+  it('ignores a channel or a group named twice', async () => {
+    const res = await arrange({
+      order: [{ id: a, groupId: null }, { id: a, groupId: null }, { group: g1 }, { group: g1 }],
+    });
+    assert.equal(res.status, 200);
+    const positions = [...res.body.channels, ...res.body.groups].map((x) => x.position);
+    assert.equal(new Set(positions).size, positions.length, 'every position is used once');
+  });
+
+  it('puts a new channel, and a new group, at the end of everything', async () => {
+    const before = (await api('/api/channels', { token: adminToken })).body;
+    const top = Math.max(...before.channels.map((x) => x.position), ...before.groups.map((x) => x.position));
+    const fresh = await made('ufresh');
+    const freshGroup = await group('G3');
+    const after = (await api('/api/channels', { token: adminToken })).body;
+    const channelPosition = after.channels.find((x) => x.id === fresh).position;
+    const groupPosition = after.groups.find((x) => x.id === freshGroup).position;
+    assert.ok(channelPosition > top, 'a new channel is below every group and channel there was');
+    assert.ok(groupPosition > channelPosition, 'and a group made after it is below that');
+  });
+
+  it('a deleted group leaves its channels where the group was', async () => {
+    await arrange({
+      order: [
+        { id: a, groupId: null },
+        { group: g1 },
+        { id: c, groupId: g1 },
+        { id: b, groupId: null },
+      ],
+    });
+    await api(`/api/channels/groups/${g1}/delete`, { method: 'POST', token: adminToken });
+    const { body } = await api('/api/channels', { token: adminToken });
+    const order = body.channels.filter((x) => [a, b, c].includes(x.id)).map((x) => x.name);
+    assert.deepEqual(order, ['ua', 'uc', 'ub'], 'uc is ungrouped now, and still between the other two');
+    assert.equal(body.channels.find((x) => x.id === c).groupId, null);
+  });
+});
+
 describe('channel-scoped media tokens', () => {
   it('refuses a read on a channel path with no token', async () => {
     const res = await api('/mediamtx/auth', {

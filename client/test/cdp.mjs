@@ -35,6 +35,9 @@ export function launchApp({ port, userDataDir, onStderr, extraArgs = [] }) {
   const bin = packaged || electronBin;
   const args = packaged ? [] : [appDir];
   args.push(`--remote-debugging-port=${port}`);
+  // The tests read the interface in English whatever the machine's language is.
+  // A test of another language passes its own --lang in extraArgs, which wins.
+  args.push('--lang=en-US');
   if (userDataDir) args.push(`--user-data-dir=${userDataDir}`);
   // Chromium switches a particular test wants, e.g. forcing software encoding
   // so a run can be compared against the hardware one.

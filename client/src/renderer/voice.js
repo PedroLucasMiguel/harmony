@@ -12,21 +12,19 @@
 // bandwidth, not this file.
 
 import { harmony } from './bridge.js';
-import { publish, watch } from './webrtc.js';
+import { publish, watch, applySenderSettings } from './webrtc.js';
 import { createSink, createMeter, createMicChain, MAX_GAIN } from './gain.js';
 
 /**
- * Microphone constraints.
+ * Microphone constraints that do not depend on a setting.
  *
- * All three processors ON, which is the opposite of what AudioBridge does for
- * a capture card -- and correct for the opposite reason. A capture card is
- * already-mixed game audio where echo cancellation would duck the music and
- * noise suppression would eat it; a microphone in a room with speakers is the
- * textbook case for all three.
+ * Echo cancellation and noise suppression are the two the person chooses
+ * (see micConstraints), and both default to off: they are what makes a
+ * headset sound muffled or clipped to anybody who does not need them, and
+ * what somebody on speakers does. Automatic gain stays on, since the input
+ * volume slider sits after it and a quiet microphone is the commoner fault.
  */
 const MIC_CONSTRAINTS = {
-  echoCancellation: true,
-  noiseSuppression: true,
   autoGainControl: true,
   channelCount: 1,
 };
@@ -472,10 +470,41 @@ export class VoiceSession {
 
   // -------------------------------------------------------------- outgoing
 
+  /** Echo cancellation and noise suppression, both off until asked for. */
+  micEchoCancellation = false;
+  micNoiseSuppression = false;
+
+  #micConstraints(deviceId) {
+    return {
+      ...MIC_CONSTRAINTS,
+      echoCancellation: this.micEchoCancellation,
+      noiseSuppression: this.micNoiseSuppression,
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    };
+  }
+
+  /**
+   * Choose the browser's processing for the microphone, and apply it to the
+   * one that is live: the constraints only take effect on a new capture, so
+   * a running microphone is swapped for one opened with them, through the
+   * same replaceTrack as a device change.
+   *
+   * @returns {Promise<boolean>} false if the live microphone could not be
+   *   reopened, in which case the old one is still published.
+   */
+  async setMicProcessing({ echoCancellation, noiseSuppression }) {
+    const same = Boolean(echoCancellation) === this.micEchoCancellation
+      && Boolean(noiseSuppression) === this.micNoiseSuppression;
+    this.micEchoCancellation = Boolean(echoCancellation);
+    this.micNoiseSuppression = Boolean(noiseSuppression);
+    if (same || !this.#mic) return true;
+    return this.switchMic(this.micDeviceId);
+  }
+
   async startMic(publishUrl, deviceId) {
     if (this.#mic) return;
     this.#micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { ...MIC_CONSTRAINTS, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+      audio: this.#micConstraints(deviceId),
     });
     // Apply the current mute state immediately: joining already muted must not
     // broadcast a second of room noise before the toggle is read.
@@ -590,7 +619,7 @@ export class VoiceSession {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { ...MIC_CONSTRAINTS, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+        audio: this.#micConstraints(deviceId),
       });
     } catch {
       // Unplugged between listing it and asking for it, or in use elsewhere.
@@ -827,6 +856,26 @@ export class VoiceSession {
 
     this.#camStream?.getTracks().forEach((t) => t.stop());
     this.#camStream = stream;
+    return true;
+  }
+
+  /**
+   * Re-aim a running camera's encoder at a new size or rate.
+   *
+   * A different resolution comes in through switchCam; what the encoder is
+   * allowed to spend on it does not follow by itself, because the ceiling was
+   * set once, after the first answer.
+   *
+   * @returns {Promise<boolean>} false when there is no camera running.
+   */
+  async retuneCam({ bitrate, framerate }) {
+    const sender = this.#cam?.pc.getSenders().find((s) => s.track?.kind === 'video');
+    if (!sender) return false;
+    await applySenderSettings(sender, {
+      maxBitrate: bitrate,
+      maxFramerate: framerate,
+      degradationPreference: 'balanced',
+    });
     return true;
   }
 

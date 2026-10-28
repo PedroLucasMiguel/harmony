@@ -115,10 +115,14 @@ const dragChannel = (cdp, name, onto) => cdp.evaluate(`
     : rows.find((li) => li.querySelector('.channel-name').textContent === ${JSON.stringify(onto.before ?? '')});
   if (!from || !target) return { ok: false, from: Boolean(from), target: Boolean(target) };
 
+  // Where over the target: a heading takes a channel on its lower half as
+  // "into the group", and on its upper half as "above it".
+  const box = target.getBoundingClientRect();
+  const at = { clientX: box.left + box.width / 2, clientY: box.top + box.height * 0.8 };
   const dt = new DataTransfer();
   from.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
-  target.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
-  target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  target.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, ...at }));
+  target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, ...at }));
   from.dispatchEvent(new DragEvent('dragend', { dataTransfer: dt, bubbles: true }));
   return { ok: true };
 `);
@@ -271,8 +275,11 @@ async function run() {
     };
   `);
   check(
-    'right-clicking a channel offers rename and delete',
-    rowMenu.items.length === 2 && rowMenu.name === '#general',
+    'right-clicking a channel offers rename and delete, and moving it for those who cannot drag',
+    rowMenu.name === '#general'
+      && rowMenu.items.includes('Rename or set a password')
+      && rowMenu.items.includes('Delete this channel')
+      && rowMenu.items.every((i) => ['Move up', 'Move down', 'Rename or set a password', 'Delete this channel'].includes(i)),
     `${rowMenu.name}: ${rowMenu.items.join(', ')}`,
   );
   await cdp.evaluate(`
@@ -310,18 +317,18 @@ async function run() {
     CHANNEL_NAMES,
   );
   check(
-    'an admin can create a channel, and the name is folded',
-    names.length === 3 && names.includes('gamenight'),
+    'an admin can create a channel, and the name is kept as typed',
+    names.length === 3 && names.includes('Game Night'),
     names.join(', '),
   );
 
   // --- reordering, by dragging ------------------------------------------
-  const dragged = await dragChannel(cdp, 'gamenight', { before: 'voice' });
+  const dragged = await dragChannel(cdp, 'Game Night', { before: 'voice' });
   await sleep(700);
   const reordered = await cdp.evaluate(CHANNEL_NAMES);
   check(
     'dragging a channel onto another drops it above, for everybody',
-    dragged.ok === true && reordered[1] === 'gamenight',
+    dragged.ok === true && reordered[1] === 'Game Night',
     `${JSON.stringify(dragged)} -> ${reordered.join(', ')}`,
   );
 
@@ -341,7 +348,7 @@ async function run() {
   );
   check('an admin can create a group', true, 'Hangouts');
 
-  const intoGroup = await dragChannel(cdp, 'gamenight', { group: 'Hangouts' });
+  const intoGroup = await dragChannel(cdp, 'Game Night', { group: 'Hangouts' });
   await sleep(700);
   const placed = await cdp.evaluate(`
     const nodes = [...document.querySelectorAll('#channel-items > li')];
@@ -352,7 +359,7 @@ async function run() {
   check(
     'dragging a channel onto a group heading puts it in the group',
     intoGroup.ok === true
-      && placed.indexOf('gamenight') === placed.indexOf('GROUP:Hangouts') + 1,
+      && placed.indexOf('Game Night') === placed.indexOf('GROUP:Hangouts') + 1,
     placed.join(' | '),
   );
 
@@ -363,7 +370,7 @@ async function run() {
   const collapsed = await cdp.evaluate(CHANNEL_NAMES);
   check(
     'collapsing a group hides what is inside it, and nothing else',
-    !collapsed.includes('gamenight') && collapsed.includes('general'),
+    !collapsed.includes('Game Night') && collapsed.includes('general'),
     collapsed.join(', '),
   );
 
@@ -390,7 +397,7 @@ async function run() {
   const survived = await cdp.evaluate(CHANNEL_NAMES);
   check(
     'deleting a group leaves its channels behind',
-    survived.includes('gamenight')
+    survived.includes('Game Night')
       && (await cdp.evaluate(
         "return document.querySelectorAll('#channel-items li.channel-group').length;",
       )) === 0,

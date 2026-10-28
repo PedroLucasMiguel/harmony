@@ -1,0 +1,135 @@
+/*
+ * The display-name fonts. Declared once, applied by data-name-font="<id>" on
+ * whatever element holds a name (see nameFontOf in name-fonts.js).
+ *
+ * font-weight is a RANGE so that a name in a bold row uses the one file there
+ * is instead of the browser smearing a fake bold over it, which ruins a pixel
+ * or a script face. font-display: swap, so a name is readable before its font
+ * arrives. They are local files: nothing here is fetched from a font host.
+ * Licences: fonts/LICENSES.txt.
+ *
+ * Each rule also nudges the size: faces differ a lot in how big their letters
+ * are at the same font-size, and Press Start at 1em is twice the width of the
+ * text around it.
+ */
+@font-face {
+  font-family: 'Pacifico';
+  src: url('fonts/Pacifico.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Press Start 2P';
+  src: url('fonts/press-start.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Orbitron';
+  src: url('fonts/orbitron.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Playfair Display';
+  src: url('fonts/playfair.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Bebas Neue';
+  src: url('fonts/bebas.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Caveat';
+  src: url('fonts/caveat.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Fredoka';
+  src: url('fonts/fredoka.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Cinzel';
+  src: url('fonts/cinzel.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Special Elite';
+  src: url('fonts/typewriter.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Permanent Marker';
+  src: url('fonts/marker.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+[data-name-font='pacifico'] {
+  font-family: 'Pacifico', system-ui, sans-serif;
+  font-size: 1.0em;
+  font-synthesis: none;
+}
+[data-name-font='press-start'] {
+  font-family: 'Press Start 2P', system-ui, sans-serif;
+  font-size: 0.72em;
+  font-synthesis: none;
+}
+[data-name-font='orbitron'] {
+  font-family: 'Orbitron', system-ui, sans-serif;
+  font-size: 0.95em;
+  font-synthesis: none;
+}
+[data-name-font='playfair'] {
+  font-family: 'Playfair Display', system-ui, sans-serif;
+  font-size: 1.0em;
+  font-synthesis: none;
+}
+[data-name-font='bebas'] {
+  font-family: 'Bebas Neue', system-ui, sans-serif;
+  font-size: 1.1em;
+  font-synthesis: none;
+}
+[data-name-font='caveat'] {
+  font-family: 'Caveat', system-ui, sans-serif;
+  font-size: 1.15em;
+  font-synthesis: none;
+}
+[data-name-font='fredoka'] {
+  font-family: 'Fredoka', system-ui, sans-serif;
+  font-size: 1.0em;
+  font-synthesis: none;
+}
+[data-name-font='cinzel'] {
+  font-family: 'Cinzel', system-ui, sans-serif;
+  font-size: 0.95em;
+  font-synthesis: none;
+}
+[data-name-font='typewriter'] {
+  font-family: 'Special Elite', system-ui, sans-serif;
+  font-size: 1.0em;
+  font-synthesis: none;
+}
+[data-name-font='marker'] {
+  font-family: 'Permanent Marker', system-ui, sans-serif;
+  font-size: 0.95em;
+  font-synthesis: none;
+}

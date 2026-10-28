@@ -414,6 +414,15 @@ module.exports = {
   // picture itself travels through uploadFile like any other attachment.
   setAvatar: (s, hash) =>
     requestJson(s, '/api/accounts/avatar', { method: 'POST', body: { hash } }),
+  // The banner and the join sound are the same: an already-uploaded file's
+  // hash, or null to take it away. See setAvatar.
+  setBanner: (s, hash) =>
+    requestJson(s, '/api/accounts/banner', { method: 'POST', body: { hash } }),
+  setJoinSound: (s, hash) =>
+    requestJson(s, '/api/accounts/join-sound', { method: 'POST', body: { hash } }),
+  // One of the server's fixed list of ids, or null for the ordinary font.
+  setNameFont: (s, font) =>
+    requestJson(s, '/api/accounts/name-font', { method: 'POST', body: { font } }),
   roster: (s) => requestJson(s, '/api/accounts'),
   setRole: (s, id, role) =>
     requestJson(s, `/api/accounts/${id}/role`, { method: 'POST', body: { role } }),

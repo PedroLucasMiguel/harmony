@@ -377,6 +377,10 @@ export const harmony = {
     onFired: () => () => {},
   },
 
+  strings: {
+    set: async () => true,
+  },
+
   voiceTray: {
     setPictures: async () => false,
     setState: async () => false,

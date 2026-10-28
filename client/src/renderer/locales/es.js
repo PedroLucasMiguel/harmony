@@ -1,0 +1,987 @@
+// Español: la traducción al español (neutro, con tuteo) de Harmony.
+// La fuente es en.js: mismas claves, mismo orden. Los {marcadores} no se
+// traducen ni se renombran; solo pueden moverse dentro de la frase.
+
+export default {
+
+  // --- account
+  'account.delete_details': 'Su cuenta y todos los mensajes que ha escrito se eliminan del servidor. Los mensajes fijados y los archivos adjuntos se van con ellos. Esto no se puede deshacer.',
+  'account.removed': { one: 'Se eliminó a {who}, con {count} mensaje.', other: 'Se eliminó a {who}, con {count} mensajes.' },
+
+  // --- account_confirm_field
+  'account_confirm_field.confirm_password': 'Confirmar contraseña',
+
+  // --- account_fields
+  'account_fields.remember_me': 'Recordarme',
+  'account_fields.username': 'Nombre de usuario',
+  'account_fields.your_name': 'tu-nombre',
+
+  // --- add_stream
+  'add_stream.add_a_stream': 'Agregar una transmisión',
+
+  // --- add_stream_close
+  'add_stream_close.cancel': 'Cancelar',
+
+  // --- add_stream_empty
+  'add_stream_empty.no_other_streams_are': 'No hay otras transmisiones en vivo ahora mismo.',
+
+  // --- admin
+  'admin.promote_details': 'Podrá crear y eliminar canales, silenciar y mover a cualquiera a la fuerza, y eliminar los mensajes de cualquiera. Solo tú puedes quitárselo.',
+
+  // --- app
+  'app.a_composition_is_shared_without': 'En este equipo, una composición se comparte sin sonido.',
+  'app.add': 'Agregar',
+  'app.add_a_reaction': 'Agregar una reacción',
+  'app.already_registered': '¿Ya tienes cuenta?',
+  'app.an_admin_muted_your_microphone': 'Un administrador silenció tu micrófono.',
+  'app.at_least_6_characters': 'Al menos 6 caracteres',
+  'app.attachment': 'archivo adjunto',
+  'app.attachment_2': '(archivo adjunto)',
+  'app.back_to_an_ordinary_member': 'Volver a ser un miembro normal',
+  'app.back_to_stream': 'Volver a la transmisión',
+  'app.back_to_the_grid': 'Volver a la cuadrícula',
+  'app.cancel': 'Cancelar',
+  'app.cancelling': 'Cancelando…',
+  'app.change': 'Cambiar…',
+  'app.change_hotkey': 'Cambiar atajo ({current})',
+  'app.change_source': 'Cambiar fuente',
+  'app.change_source_or_stop_sharing': 'Cambiar la fuente o dejar de compartir',
+  'app.change_the_name_or_put': 'Cambia el nombre o ponle una contraseña',
+  'app.change_what_the_heading_says': 'Cambiar lo que dice el título',
+  'app.checking': 'Comprobando {address}…',
+  'app.checking_2': 'Comprobando…',
+  'app.choose': 'Elegir…',
+  'app.choose_a_password': 'Elige una contraseña',
+  'app.clear': 'Borrar',
+  'app.click_then_press_a_combination': 'Haz clic y luego presiona una combinación',
+  'app.click_to_change': 'Haz clic para cambiar',
+  'app.click_to_expand': 'Haz clic para ampliar',
+  'app.click_to_see_the_attachment': 'Haz clic para ver el archivo adjunto',
+  'app.click_to_switch_or_add': 'Haz clic para cambiar o agregar un servidor',
+  'app.click_to_switch_or_add_2': '{address} -- haz clic para cambiar o agregar un servidor',
+  'app.clip_saved_s_mb': 'Clip guardado — {seconds}s, {size} MB',
+  'app.clips_off': 'Clips desactivados.',
+  'app.clips_on_the_last_s': 'Clips activados — los últimos {CLIP_SECONDS}s de cada transmisión se guardarán en memoria.',
+  'app.close': 'Cerrar {username}',
+  'app.closed_click_to_watch_again': 'Cerrado · haz clic para verlo de nuevo',
+  'app.colour': 'Color {colour}',
+  'app.connect': 'Conectar',
+  'app.connecting': 'Conectando…',
+  'app.connecting_to': 'Conectando con {username}…',
+  'app.connection_quality_measuring': 'Calidad de la conexión: midiendo',
+  'app.connection_quality_milliseconds': 'Calidad de la conexión: {ms} milisegundos',
+  'app.continue': 'Continuar',
+  'app.could_not_add': 'No se pudo agregar {name}: {message}',
+  'app.could_not_apply_the_camera': 'No se pudo aplicar el fondo de la cámara ({message}). Se usa la cámara sin fondo.',
+  'app.could_not_be_registered': 'No se pudo registrar.',
+  'app.could_not_join': 'No se pudo entrar: {error}',
+  'app.could_not_list_audio_devices': 'No se pudieron listar los dispositivos de audio: {message}',
+  'app.could_not_open_that_audio': 'No se pudo abrir esa entrada de audio: {message}',
+  'app.could_not_play': 'No se pudo reproducir "{name}": {message}',
+  'app.could_not_read_that_image': 'No se pudo leer esa imagen.',
+  'app.could_not_save_the_clip': 'No se pudo guardar el clip: {message}',
+  'app.could_not_share_your_screen': 'No se pudo compartir tu pantalla: {message}',
+  'app.could_not_switch_camera': 'No se pudo cambiar de cámara.',
+  'app.could_not_update': 'No se pudo actualizar: {message}',
+  'app.create': 'Crear',
+  'app.create_account': 'Crear cuenta',
+  'app.create_one': 'Crea una',
+  'app.deafen': 'Ensordecer',
+  'app.deafened': 'Ensordecido',
+  'app.delete': '¿Eliminar #{name}?',
+  'app.delete_2': 'Eliminar',
+  'app.delete_s_account': '¿Eliminar la cuenta de {who}?',
+  'app.delete_the_account': 'Eliminar la cuenta',
+  'app.delete_the_clip': '¿Eliminar el clip "{name}"?',
+  'app.delete_the_group': '¿Eliminar el grupo "{name}"?',
+  'app.delete_the_group_2': 'Eliminar el grupo',
+  'app.delete_this_channel': 'Eliminar este canal',
+  'app.delete_this_group': 'Eliminar este grupo',
+  'app.delete_this_message': '¿Eliminar este mensaje?',
+  'app.disconnected_you': '{by} te desconectó.',
+  'app.display_name': 'Nombre para mostrar',
+  'app.download': 'Descargar',
+  'app.download_2': 'Descargar ({attachmentBytes})',
+  'app.downloading': 'Descargando {name}… {received}',
+  'app.downloading_in_the_background': 'Descargando {name} en segundo plano.',
+  'app.drag_to_another_voice_channel': 'Arrastra a otro canal de voz para moverlo, o haz clic derecho para ver los controles',
+  'app.edit': 'Editar #{name}',
+  'app.edit_2': 'Editar',
+  'app.edit_message': 'Editar mensaje',
+  'app.edit_the_layout': 'Editar la disposición',
+  'app.emoji': 'Emoji',
+  'app.end_the_share_for_everybody': 'Terminar lo compartido para todos los espectadores',
+  'app.end_the_stream_for_everybody': 'Terminar la transmisión para todos los espectadores',
+  'app.everything_written_in_it_goes': 'Todo lo escrito en él también se elimina. Esto no se puede deshacer.',
+  'app.exit_fullscreen_esc': 'Salir de pantalla completa (Esc)',
+  'app.folders_cannot_be_sent_zip': 'No se pueden enviar carpetas. Comprímela en un zip primero, o suelta los archivos que contiene.',
+  'app.force_mute': 'Forzar silencio',
+  'app.forget_this_server_and_the': 'Olvidar este servidor y el inicio de sesión guardado para él',
+  'app.fullscreen': 'Pantalla completa',
+  'app.game_night': 'Noche de juegos',
+  'app.go_to_the_message_this': 'Ir al mensaje que se responde',
+  'app.going_live': 'Iniciando transmisión…',
+  'app.gradient': 'Degradado {name}',
+  'app.group_a_folder': 'Grupo (una carpeta)',
+  'app.harmony': 'Harmony {current}',
+  'app.harmony_is_available': 'Harmony {version} está disponible.',
+  'app.harmony_is_ready_to_install': 'Harmony {version} está listo para instalar.',
+  'app.harmony_voices_soundpad_and_sounds': 'Harmony — voces, Soundpad y sonidos (recomendado)',
+  'app.hear_my_own_audio': 'Escuchar mi propio audio',
+  'app.hear_your_own_stream': 'Escuchar tu propia transmisión',
+  'app.hide': 'Ocultar',
+  'app.hide_preview': 'Ocultar vista previa',
+  'app.hide_the_preview': 'Ocultar la vista previa',
+  'app.how_loudly_you_hear_this': 'Qué tan fuerte oyes a esta persona',
+  'app.in_the_channel': '{n} en el canal',
+  'app.in_voice': 'En voz',
+  'app.is_files_on_this_server': '{name} pesa {size}. Los archivos de este servidor están limitados a {limit}.',
+  'app.is_full_people': '{name} está lleno ({cap} personas).',
+  'app.is_not_answering_click_to': '{address} no responde -- haz clic para cambiar o agregar un servidor',
+  'app.join': 'Entrar',
+  'app.join_a_voice_channel_first': 'Entra primero a un canal de voz.',
+  'app.jump_to_this_message': 'Ir a este mensaje',
+  'app.kind': 'Tipo',
+  'app.later': 'Más tarde',
+  'app.leave_the_password_empty_to': 'Deja la contraseña vacía para quitarla.',
+  'app.live_as': 'En vivo como {username}',
+  'app.live_updates_unavailable': 'Actualizaciones en vivo no disponibles: {message}',
+  'app.locked': 'bloqueado',
+  'app.louder_than_the_original_amplified': 'Más fuerte que el original. El audio amplificado puede distorsionarse.',
+  'app.make_admin': 'Hacer admin',
+  'app.make_an_admin': '¿Hacer administrador a {name}?',
+  'app.matching': 'Coincidencias con "{value}"',
+  'app.maximize': 'Maximizar {username}',
+  'app.maximize_2': 'Maximizar {name}',
+  'app.message': 'Mensaje',
+  'app.move_down': 'Bajar',
+  'app.move_this_person': 'Mover a esta persona',
+  'app.move_up': 'Subir',
+  'app.moved_you_to': '{by} te movió a {name}.',
+  'app.mute': 'Silenciar {username}',
+  'app.mute_2': 'Silenciar',
+  'app.mute_everything': 'Silenciar todo',
+  'app.mute_for_me': 'Silenciar para mí',
+  'app.mute_mic': 'Silenciar micrófono',
+  'app.mute_the_soundpad': 'Silenciar el Soundpad',
+  'app.mute_this_share': 'Silenciar esta pantalla compartida',
+  'app.muted': 'Silenciado',
+  'app.muted_2': 'silenciado',
+  'app.name': 'Nombre',
+  'app.name_this_clip': 'Ponle nombre a este clip',
+  'app.name_this_emoji': 'Ponle nombre a este emoji',
+  'app.needs_a_password': '{name} necesita una contraseña',
+  'app.new_channel': 'Nuevo canal',
+  'app.nickname': 'Nombre de usuario',
+  'app.no_account_yet': '¿Aún no tienes cuenta?',
+  'app.no_audio': 'Sin audio',
+  'app.no_clips_yet_add_one': 'Aún no hay clips. Agrega uno.',
+  'app.no_gpu_encoder_available_falling': 'No hay codificador de GPU disponible ({videoEncode}) — se usa H.264 por software, que es más lento pero funciona en todas partes.',
+  'app.no_matches': 'Sin coincidencias ({mode}).',
+  'app.no_password': 'Sin contraseña',
+  'app.no_picture_chosen': 'No se eligió ninguna imagen',
+  'app.nobody_has_added_any_clips': 'Nadie ha agregado clips.',
+  'app.not_set': 'Sin definir',
+  'app.not_you': '¿No eres tú?',
+  'app.nothing_called': 'No hay nada llamado "{value}".',
+  'app.nothing_matching': 'Nada coincide con "{value}".',
+  'app.nothing_share_all_system_audio': 'Nada — compartir todo el audio del sistema',
+  'app.nothing_to_monitor_this_source': 'Nada que monitorear: esta fuente no tiene audio',
+  'app.notifies_the_whole_server': 'notifica a todo el servidor',
+  'app.off': 'Desactivado',
+  'app.off_encoding_on_the_cpu': 'Desactivado — se codifica con la CPU. Vuelve a activarlo a menos que los espectadores hayan visto la imagen dañada.',
+  'app.one_file_per_message_is': 'Un archivo por mensaje: {name} ya está adjunto. Envíalo y luego suelta el siguiente.',
+  'app.one_place_higher_in_the': 'Un lugar más arriba en la lista',
+  'app.one_place_lower_in_the': 'Un lugar más abajo en la lista',
+  'app.online': 'En línea',
+  'app.open_to_everyone': 'Abierto a todos',
+  'app.p_fps': '{height}p · {fps} fps',
+  'app.password': 'Contraseña',
+  'app.pause': 'Pausar',
+  'app.pin': 'Fijar',
+  'app.play_this_clip_from_anywhere': 'Reproduce este clip desde cualquier lugar, incluso dentro de un juego',
+  'app.preview_hidden': 'Vista previa oculta',
+  'app.preview_hidden_you_are_still': 'Vista previa oculta. Sigues en vivo — esto solo evita que Harmony la dibuje.',
+  'app.preview_paused': 'Vista previa en pausa',
+  'app.react': 'Reaccionar',
+  'app.reactions_that_used_it_keep': 'Las reacciones que lo usaban conservan su cuenta y pasan a mostrar el texto.',
+  'app.recent': 'Recientes',
+  'app.reconnecting': 'Reconectando…',
+  'app.remove': 'Quitar :{name}:',
+  'app.remove_2': '¿Quitar :{name}:?',
+  'app.remove_3': 'Quitar',
+  'app.remove_admin': 'Quitar admin',
+  'app.remove_hotkey': 'Quitar atajo',
+  'app.remove_s_admin': '¿Quitar el rol de administrador a {name}?',
+  'app.removes_the_channel_and_everything': 'Elimina el canal y todo lo escrito en él',
+  'app.rename': 'Renombrar "{name}"',
+  'app.rename_or_set_a_password': 'Renombrar o poner una contraseña',
+  'app.rename_this_group': 'Renombrar este grupo',
+  'app.reopen': 'Reabrir {username}',
+  'app.replace': 'Reemplazar',
+  'app.replace_this_file': 'Reemplazar este archivo',
+  'app.reply': 'Responder',
+  'app.restart': 'Reiniciar',
+  'app.restart_to_update': '¿Reiniciar para actualizar?',
+  'app.resume': 'Reanudar',
+  'app.right_click_for_admin_controls': 'Clic derecho para ver los controles de administrador',
+  'app.right_click_for_volume_and': 'Clic derecho para ver el volumen y los controles',
+  'app.save': 'Guardar',
+  'app.save_the_last_seconds': 'Guardar los últimos {CLIP_SECONDS} segundos',
+  'app.saved': 'Guardado.',
+  'app.saved_2': 'Se guardó {name}.',
+  'app.saved_it_applies_next_time': 'Guardado. Se aplicará la próxima vez que inicies Harmony — reiniciar ahora terminaría tu transmisión.',
+  'app.saved_restart_harmony_to_apply': 'Guardado. Reinicia Harmony para aplicarlo — haz clic aquí para reiniciar ahora.',
+  'app.saved_the_media_relay_keeps': 'Guardado. El relay de medios mantiene su ajuste anterior hasta que se reinicie el servidor.',
+  'app.saving': 'Guardando…',
+  'app.server_password': 'Contraseña del servidor',
+  'app.server_password_not_needed': 'Contraseña del servidor (no hace falta)',
+  'app.set_hotkey': 'Definir atajo',
+  'app.share_screen_here': 'Compartir pantalla aquí',
+  'app.sharing_in': 'Compartiendo en {name}',
+  'app.sharing_without_audio': 'Compartiendo sin audio.',
+  'app.show': 'Mostrar',
+  'app.show_a_different_screen_or': 'Mostrar otra pantalla o ventana sin terminar la transmisión',
+  'app.show_a_preview_of_what': 'Mostrar una vista previa de lo que compartes',
+  'app.show_preview': 'Mostrar vista previa',
+  'app.show_this_one_big': 'Mostrar esta en grande',
+  'app.sign_in': 'Iniciar sesión',
+  'app.sign_in_first': 'Inicia sesión primero.',
+  'app.sign_in_to_a_server': 'Inicia sesión en un servidor para ver sus clips del Soundpad.',
+  'app.sign_out': 'Cerrar sesión',
+  'app.signed_in_as': 'Sesión iniciada como {name}.',
+  'app.soundpad_clips': 'Clips del Soundpad',
+  'app.start_again_from_midnight': 'Empezar de nuevo desde Medianoche',
+  'app.start_camera': 'Activar cámara',
+  'app.start_streaming': 'Iniciar transmisión',
+  'app.stop_camera': 'Apagar cámara',
+  'app.stop_hearing_my_own_audio': 'Dejar de escuchar mi propio audio',
+  'app.stop_hearing_your_own_stream': 'Dejar de escuchar tu propia transmisión',
+  'app.stop_sharing': 'Dejar de compartir',
+  'app.stop_streaming': 'Detener transmisión',
+  'app.stop_this_combination_doing_it': 'Evitar que esta combinación lo haga',
+  'app.stop_this_combination_playing_the': 'Evitar que esta combinación reproduzca el clip',
+  'app.stop_watching_this_and_stop': 'Dejar de ver esto y dejar de descargarlo',
+  'app.stream_ended': 'Transmisión terminada',
+  'app.stream_ended_waiting_for': 'Transmisión terminada. Esperando a {username}…',
+  'app.switching': 'Cambiando…',
+  'app.testing': 'Probando…',
+  'app.text_channel': 'Canal de texto',
+  'app.that_camera_cannot_do_that': 'Esa cámara no admite esa calidad. Se vuelve al ajuste anterior.',
+  'app.that_camera_could_not_be': 'No se pudo abrir esa cámara. Se sigue usando la anterior.',
+  'app.that_file_could_not_be': 'No se pudo leer ese archivo como imagen.',
+  'app.that_image_is_too_detailed': 'Esa imagen es demasiado detallada para usarla como logo.',
+  'app.that_is_not_the_right': 'Ese no es el nombre de usuario correcto. No se eliminó nada.',
+  'app.that_message_is_no_longer': 'Ese mensaje ya no está en este canal.',
+  'app.that_microphone_could_not_be': 'No se pudo abrir ese micrófono. Se sigue usando el anterior.',
+  'app.that_one_cannot_be_empty': 'Este no puede estar vacío.',
+  'app.that_one_was_not_right': 'Ese no era el correcto.',
+  'app.that_picture_is_too_detailed': 'Esa imagen es demasiado detallada para reducirla.',
+  'app.that_picture_is_too_detailed_2': 'Esa imagen es demasiado detallada para reducirla a un emoji.',
+  'app.that_source_was_not_allowed': 'No se permitió esa fuente.',
+  'app.the_address_you_were_given': 'La dirección que te dieron para tu servidor de Harmony.',
+  'app.the_camera_could_not_be': 'No se pudo reabrir la cámara. Apágala y vuelve a encenderla.',
+  'app.the_camera_could_not_be_2': 'No se pudo volver a abrir la cámara para cambiar el fondo.',
+  'app.the_camera_stopped_turn_it': 'La cámara se detuvo. Apágala y vuelve a encenderla.',
+  'app.the_channels_in_it_stay': 'Los canales que contiene se conservan',
+  'app.the_channels_in_it_stay_2': 'Los canales que contiene se conservan y vuelven al principio de la lista.',
+  'app.the_original_message_was_deleted': 'El mensaje original fue eliminado.',
+  'app.the_server_never_saw_this': 'El servidor nunca vio que esta transmisión comenzara. Puede que otra persona ya esté transmitiendo con este nombre.',
+  'app.the_two_passwords_do_not': 'Las dos contraseñas no coinciden.',
+  'app.they_can_manage_channels_mute': 'Pueden gestionar canales, y silenciar y mover a otras personas',
+  'app.they_go_back_to_being': 'Vuelven a ser un miembro normal.',
+  'app.this_build_cannot_choose_an': 'Esta versión no puede elegir un dispositivo de salida; se usa el predeterminado del sistema.',
+  'app.this_channel_did_not_give': 'Este canal no entregó una ruta de pantalla. Vuelve a entrar.',
+  'app.this_is_the_last_step': 'Este es el último paso.',
+  'app.this_server': 'Este servidor',
+  'app.this_server_asks_for_a': 'Este servidor pide una contraseña antes que nada.',
+  'app.this_server_has_a_password': 'Este servidor tiene contraseña. Deja esto en blanco para conservar la actual.',
+  'app.this_server_has_accounts_enter': 'Este servidor tiene cuentas. Escribe tu contraseña o crea una cuenta.',
+  'app.this_server_has_no_password': 'Este servidor no tiene contraseña. Escribe una aquí para empezar a pedirla.',
+  'app.this_server_has_no_soundpad': 'Este servidor aún no tiene clips del Soundpad. Se mostrarán aquí a medida que se agreguen.',
+  'app.this_session_expired_sign_in': 'Esta sesión expiró. Inicia sesión de nuevo.',
+  'app.turn_your_camera_on_in': 'Enciende tu cámara en un canal de voz para verla aquí.',
+  'app.type_to_confirm': 'Escribe {nickname} para confirmar',
+  'app.undeafen': 'Quitar ensordecimiento',
+  'app.unlocked': 'desbloqueado',
+  'app.unmute': 'Activar sonido',
+  'app.unmute_everything': 'Activar el sonido de todo',
+  'app.unmute_for_me': 'Activar sonido para mí',
+  'app.unmute_mic': 'Activar micrófono',
+  'app.unmute_the_soundpad': 'Activar el sonido del Soundpad',
+  'app.unpin': 'Desfijar',
+  'app.upload_cancelled': 'Subida cancelada.',
+  'app.use_this_source': 'Usar esta fuente',
+  'app.viewers_will_hear': 'Los espectadores oirán {label}.',
+  'app.viewers_will_hear_all_system': 'Los espectadores oirán todo el audio del sistema.',
+  'app.viewers_will_hear_only_this': 'Los espectadores oirán solo esta aplicación.',
+  'app.viewers_will_hear_system_audio': 'Los espectadores oirán el audio del sistema, excepto {name}.',
+  'app.voice_channel': 'Canal de voz',
+  'app.voice_connected': 'Voz conectada',
+  'app.volume_for': 'Volumen de {username}',
+  'app.volume_for_this_share': 'Volumen de esta transmisión',
+  'app.wait_for_the_file_already': 'Espera a que termine de subirse el archivo actual.',
+  'app.waiting_for_keys': 'Esperando teclas…',
+  'app.waiting_for_to_start_sharing': 'Esperando a que {username} empiece a compartir…',
+  'app.watch_this_again': 'Ver esto de nuevo',
+  'app.watching': '{viewers} viendo',
+  'app.watching_2': 'Viendo a {username}',
+  'app.will_encode_on_the_cpu': 'Se codificará con la CPU después de reiniciar.',
+  'app.will_use_the_gpu_again': 'Volverá a usar la GPU después de reiniciar.',
+  'app.you_already_hear_this_audio': 'Ya oyes este audio por tus altavoces',
+  'app.you_are_live_restarting_now': 'Estás en vivo. Reiniciar ahora termina tu transmisión; la actualización también se instala cuando cierres la app.',
+  'app.your_camera_path_is_already': 'La ruta de tu cámara ya está en uso.',
+  'app.your_chosen_camera_is_unplugged': 'La cámara que elegiste está desconectada. Se usa la predeterminada.',
+  'app.your_display_name': 'Tu nombre para mostrar',
+  'app.your_screen_share_lost_its': 'Tu pantalla compartida perdió la conexión.',
+
+  // --- ask_cancel
+  'ask_cancel.cancel': 'Cancelar',
+
+  // --- audio
+  'audio.input_n': 'Entrada de audio {n}',
+  'audio.selected_input': 'la entrada seleccionada',
+  'audio.unavailable_all': 'El audio por aplicación no está disponible — se compartirá TODO el audio del sistema. {reason}',
+  'audio.unavailable_none': 'El audio por aplicación no está disponible — se comparte sin sonido. {reason}',
+
+  // --- audio_input_field
+  'audio_input_field.audio_input': 'Entrada de audio',
+
+  // --- background
+  'background.file_too_big': 'Ese archivo pesa {size} MB. El límite es de {limit} MB.',
+  'background.the_camera_has_no_video': 'La cámara no tiene video sobre el que trabajar.',
+  'background.webgl2_is_not_available': 'WebGL2 no está disponible.',
+
+  // --- bg_group
+  'bg_group.a_picture_or_a': 'Una imagen o un GIF, de hasta 25 MB. Se queda en este equipo.',
+  'bg_group.background_colour': 'Color de fondo',
+  'bg_group.blur': 'Desenfoque',
+  'bg_group.camera_background': 'Fondo de la cámara',
+  'bg_group.colours': 'Colores',
+  'bg_group.custom': 'Personalizado',
+  'bg_group.direction': 'Dirección',
+  'bg_group.done_on_your_computer': 'Se hace en tu equipo antes de enviar nada. Nadie, ni siquiera el servidor, ve lo que hay detrás de ti.',
+  'bg_group.first_colour': 'Primer color',
+  'bg_group.from': 'Desde',
+  'bg_group.gradient_from': 'Degradado desde',
+  'bg_group.gradient_to': 'Degradado hasta',
+  'bg_group.gradients': 'Degradados',
+  'bg_group.pick_any_colour': 'Elige cualquier color',
+  'bg_group.second_colour': 'Segundo color',
+  'bg_group.to': 'Hasta',
+
+  // --- bg_mode
+  'bg_mode.blur': 'Desenfoque',
+  'bg_mode.colour': 'Color',
+  'bg_mode.gradient': 'Degradado',
+  'bg_mode.image': 'Imagen',
+  'bg_mode.none': 'Ninguno',
+
+  // --- bg_remove
+  'bg_remove.remove': 'Quitar',
+
+  // --- broadcast_clip
+  'broadcast_clip.clip': '✂ Clip',
+
+  // --- broadcast_watch
+  'broadcast_watch.watch_others': 'Ver otras',
+
+  // --- change_source
+  'change_source.change_source': 'Cambiar fuente',
+
+  // --- channel_dock
+  'channel_dock.change_your_display_name': 'Cambia tu nombre para mostrar',
+  'channel_dock.change_your_picture': 'Cambia tu imagen',
+  'channel_dock.devices_and_appearance': 'Dispositivos y apariencia',
+
+  // --- channels
+  'channels.mentions': { one: '{count} mensaje te menciona', other: '{count} mensajes te mencionan' },
+
+  // --- chat
+  'chat.drop_title': 'Suelta para enviar en #{name}',
+  'chat.results': { one: '{count} resultado ({mode})', other: '{count} resultados ({mode})' },
+  'chat.this_channel': 'este canal',
+
+  // --- chat_active
+  'chat_active.search_messages_people_or': 'Buscar mensajes, personas o contenido multimedia',
+
+  // --- chat_attach
+  'chat_attach.attach': 'Adjuntar',
+
+  // --- chat_drop
+  'chat_drop.one_file_per_message': 'Un archivo por mensaje. Queda adjunto, listo para enviar.',
+
+  // --- chat_emoji
+  'chat_emoji.emoji': 'Emoji',
+
+  // --- chat_form
+  'chat_form.attach_a_file': 'Adjuntar un archivo',
+  'chat_form.emoji': 'Emoji',
+  'chat_form.message': 'Mensaje',
+  'chat_form.send': 'Enviar',
+
+  // --- chat_pending
+  'chat_pending.don_t_send_this': 'No enviar esto',
+
+  // --- chat_pending_clear
+  'chat_pending_clear.remove': 'Quitar',
+
+  // --- chat_reply
+  'chat_reply.cancel_the_reply': 'Cancelar la respuesta',
+  'chat_reply.replying_to': 'Respondiendo a',
+
+  // --- chat_reply_clear
+  'chat_reply_clear.cancel_reply': 'Cancelar respuesta',
+
+  // --- chat_search_clear
+  'chat_search_clear.clear': 'Borrar',
+
+  // --- chat_send
+  'chat_send.send': 'Enviar',
+
+  // --- chat_upload
+  'chat_upload.cancel_the_upload': 'Cancelar la subida',
+  'chat_upload.upload_progress': 'Progreso de la subida',
+
+  // --- chat_upload_cancel
+  'chat_upload_cancel.cancel_upload': 'Cancelar subida',
+
+  // --- clip
+  'clip.could_not_read_the_video': 'No se pudieron leer los parámetros de video de esta transmisión.',
+  'clip.no_keyframe_buffered_yet_give': 'Aún no hay ningún fotograma clave en el búfer; dale unos segundos.',
+
+  // --- comp
+  'comp.add_a_screen_window_or': 'Agregar una pantalla, ventana o cámara…',
+  'comp.add_a_source': 'Agregar una fuente',
+  'comp.add_source': '+ Agregar fuente',
+  'comp.bring_to_front': 'Traer al frente',
+  'comp.could_not_add': 'No se pudo agregar {name}: {message}',
+  'comp.crop': 'Recortar',
+  'comp.cropping': 'Recortando {name}',
+  'comp.done': 'Listo',
+  'comp.empty_hint': 'Haz clic derecho para agregar una pantalla, ventana o cámara.',
+  'comp.fill_canvas': 'Rellenar el lienzo',
+  'comp.finish_cropping': 'Terminar de recortar',
+  'comp.finish_free_resize': 'Terminar el cambio libre de tamaño',
+  'comp.fit_to_canvas': 'Ajustar al lienzo',
+  'comp.free_resize': 'Cambio libre de tamaño: {name}',
+  'comp.free_resize_stretch': 'Cambio libre de tamaño (estirar)',
+  'comp.hint': 'En vivo mientras editas. Arrastra para mover, arrastra una esquina para cambiar el tamaño, haz clic derecho para más opciones.',
+  'comp.looking': 'Buscando fuentes…',
+  'comp.nothing_to_add': 'Nada que agregar.',
+  'comp.original_size_1_1': 'Tamaño original (1:1)',
+  'comp.remove': 'Quitar {name}',
+  'comp.reset_crop': 'Restablecer recorte',
+  'comp.send_to_back': 'Enviar al fondo',
+  'comp.size_25_of_the_width': 'Tamaño: 25% del ancho',
+  'comp.size_50_of_the_width': 'Tamaño: 50% del ancho',
+  'comp.size_75_of_the_width': 'Tamaño: 75% del ancho',
+  'comp.title': 'Composición',
+
+  // --- connect
+  'connect.enter_address': 'Escribe la dirección de tu servidor de Harmony.',
+  'connect.not_answering': '{host} no responde. Comprueba que esté en marcha o elige otro servidor.',
+  'connect.owner_key_refused': 'Esa clave de propietario no fue aceptada, así que esta cuenta es un miembro normal.',
+  'connect.pick_username': 'Elige un nombre de usuario.',
+  'connect.username_hint_login': 'El nombre de usuario con el que te registraste.',
+  'connect.username_hint_new': 'Este será tu nombre permanente. De 2 a 20 caracteres, y es como se llamará tu transmisión.',
+  'connect.username_hint_stream': 'Nombre libre → empiezas a transmitir. Nombre ya en vivo → entras y miras.',
+  'connect.wrong_password': 'Contraseña del servidor incorrecta.',
+
+  // --- devices
+  'devices.camera': 'cámara',
+  'devices.microphone': 'micrófono',
+  'devices.output': 'salida',
+  'devices.unplugged': { one: 'El dispositivo que elegiste ({what}) está desconectado. Se usa el predeterminado del sistema hasta que vuelva.', other: 'Los dispositivos que elegiste ({what}) están desconectados. Se usan los predeterminados del sistema hasta que vuelvan.' },
+
+  // --- devices_close
+  'devices_close.done': 'Listo',
+
+  // --- diag
+  'diag.connected': 'conectado',
+  'diag.connection_test': 'Prueba de conexión',
+  'diag.got_role': 'obtuvo {role}',
+  'diag.no_path': 'no se encontró ninguna ruta de red que funcione',
+  'diag.none': 'ninguno',
+  'diag.signaling_on': 'señalización en {address}',
+  'diag.step_exchange': 'Intercambiar datos de conexión',
+  'diag.step_media': 'El servidor de medios está en marcha',
+  'diag.step_reach': 'Llegar al servidor de Harmony',
+  'diag.step_reserve': 'Reservar un nombre de prueba',
+  'diag.step_send': 'Enviar video al servidor',
+  'diag.step_stun': 'Descubrir tu dirección pública (STUN)',
+  'diag.step_test': 'Prueba de conexión',
+  'diag.stun_not_needed': 'no hace falta: este servidor no ofrece STUN',
+  'diag.stun_only': 'solo {types} — puede que UDP esté bloqueado',
+  'diag.verdict_blocked_ports': 'La señalización funciona, pero los medios no pueden pasar. Tu red está bloqueando los puertos de medios. Haría falta un relay TURN.',
+  'diag.verdict_media_down': 'El servidor está activo, pero su servidor de medios no. Es un problema del lado del servidor.',
+  'diag.verdict_ok': 'Todo funciona. Transmitir y ver deberían ir bien desde esta red.',
+  'diag.verdict_reserve': 'No se pudo reservar un nombre temporal; inténtalo de nuevo en un momento.',
+  'diag.verdict_stopped': 'La prueba se detuvo antes de tiempo: {message}',
+  'diag.verdict_tcp': 'Funciona, mediante el respaldo TCP. Espera más retraso de lo normal, pero transmitirá.',
+  'diag.verdict_udp_blocked': 'Parece que UDP está bloqueado en tu red. El servidor también ofrece una ruta TCP; si aun así falla, haría falta un relay TURN.',
+  'diag.verdict_unreachable': 'No se pudo llegar al servidor. Comprueba la dirección y que tu red permita este puerto.',
+
+  // --- diag_close
+  'diag_close.close': 'Cerrar',
+
+  // --- download
+  'download.progress': 'Descargando {name}… {percent}% ({received} de {total})',
+
+  // --- edit_composition
+  'edit_composition.edit_layout': 'Editar disposición',
+
+  // --- emoji
+  'emoji.name_hint': 'El nombre es el disparador: al escribirlo entre dos puntos, la imagen aparece en el mensaje. Letras, números y guiones bajos.',
+
+  // --- emoji_add
+  'emoji_add.add': '+ Agregar',
+
+  // --- emoji_pop
+  'emoji_pop.search_emoji': 'Buscar emoji',
+  'emoji_pop.upload_a_custom_emoji': 'Subir un emoji personalizado',
+
+  // --- exclude_field
+  'exclude_field.exclude_audio': 'Excluir audio',
+
+  // --- fallback_field
+  'fallback_field.if_per_app_audio': 'Si el audio por aplicación no está disponible',
+
+  // --- gpu
+  'gpu.current': 'Ahora en {active}, de {all}. No lo cambies a menos que estés resolviendo un problema: la GPU dedicada suele ser la opción correcta, porque es donde ya vive el juego que se captura.',
+  'gpu.hint': 'Este equipo tiene dos GPU ({all}). Si tu pantalla está conectada a la integrada, cada fotograma que dibuja Harmony se copia entre GPU antes de llegar a la pantalla, lo que cuesta cerca del 10% del equipo mientras transmites. Busca un interruptor MUX, NVIDIA Advanced Optimus o un ajuste de "modo de pantalla" en la utilidad del fabricante de tu laptop y apunta el panel a la GPU dedicada. Vale la pena hacerlo una vez — es lo más importante que puedes cambiar.',
+  'gpu.on_both': 'Activado — tu GPU codifica y decodifica. NVENC, AMF o Quick Sync, el que ofrezca tu controlador.',
+  'gpu.on_encode': 'Activado — tu GPU codifica. NVENC, AMF o Quick Sync, el que ofrezca tu controlador.',
+  'gpu.unknown': 'una GPU desconocida',
+
+  // --- gpu_preference
+  'gpu_preference.the_dedicated_gpu_normally': 'La GPU dedicada — normalmente la correcta',
+  'gpu_preference.the_integrated_gpu': 'La GPU integrada',
+  'gpu_preference.whichever_gpu_windows_picks': 'La GPU que elija Windows',
+
+  // --- gpu_preference_field
+  'gpu_preference_field.run_harmony_on': 'Ejecutar Harmony en',
+
+  // --- hotkey_recorder
+  'hotkey_recorder.press_the_combination_you': 'Presiona la combinación que quieras. Esc cancela.',
+
+  // --- hotkey_recorder_cancel
+  'hotkey_recorder_cancel.cancel': 'Cancelar',
+
+  // --- hotkey_recorder_clear
+  'hotkey_recorder_clear.remove_hotkey': 'Quitar atajo',
+
+  // --- hotkeys
+  'hotkeys.bad_key': 'Esa tecla no se puede usar como atajo.',
+  'hotkeys.deafen': 'Ensordecer / dejar de ensordecer',
+  'hotkeys.err_duplicate': 'También está asignada a otra cosa.',
+  'hotkeys.err_in_use': 'Otro programa ya usa esta combinación. Elige otra.',
+  'hotkeys.err_invalid': 'Windows no puede registrar esta combinación.',
+  'hotkeys.mute': 'Silenciar / activar micrófono',
+  'hotkeys.needs_modifier': 'Agrega Ctrl o Alt. Por sí sola, esta tecla dejaría de funcionar en todos los demás programas mientras Harmony esté abierto.',
+  'hotkeys.not_registered': 'no se pudo registrar.',
+
+  // --- leave_stream
+  'leave_stream.leave': 'Salir',
+
+  // --- lightbox
+  'lightbox.close': 'Cerrar',
+  'lightbox.save_a_copy': 'Guardar una copia',
+
+  // --- lightbox_close
+  'lightbox_close.close': 'Cerrar',
+
+  // --- lightbox_save
+  'lightbox_save.save': 'Guardar',
+
+  // --- limit
+  'limit.bandwidth': 'limitado por tu velocidad de subida',
+  'limit.cpu': 'limitado por este equipo',
+  'limit.other': 'limitado',
+
+  // --- live_list
+  'live_list.live_now': 'En vivo ahora',
+
+  // --- main
+  'main.deafen': 'Ensordecer',
+  'main.deafened': 'ensordecido',
+  'main.disconnect': 'Desconectar',
+  'main.mute': 'Silenciar',
+  'main.muted': 'silenciado',
+  'main.open': 'Abrir Harmony',
+  'main.quit': 'Salir de Harmony',
+  'main.save_attachment': 'Guardar archivo adjunto',
+  'main.still_running': 'Harmony sigue en ejecución',
+  'main.still_running_balloon': 'Sigue funcionando aquí abajo, llamadas incluidas. Haz clic derecho en este icono para salir.',
+  'main.still_running_notice': 'Sigue funcionando en la bandeja, llamadas incluidas. Haz clic derecho en el icono para salir.',
+  'main.undeafen': 'Quitar ensordecimiento',
+  'main.unmute': 'Activar sonido',
+
+  // --- member_list
+  'member_list.members': 'Miembros',
+  'member_list.resize_the_member_list': 'Cambiar el tamaño de la lista de miembros',
+
+  // --- members
+  'members.delete_hint': 'Los elimina a ellos y todo lo que han escrito',
+  'members.move': 'Mover…',
+  'members.offline': 'Desconectados — {count}',
+  'members.online': 'En línea — {count}',
+
+  // --- mosaic
+  'mosaic.nobody': 'Nadie está transmitiendo ahora mismo.',
+  'mosaic.none_live': 'Ninguna de las transmisiones elegidas está en vivo.',
+  'mosaic.none_open': 'No hay transmisiones abiertas. Usa + Agregar transmisión para recuperar una.',
+
+  // --- mosaic_add
+  'mosaic_add.add_stream': '+ Agregar transmisión',
+
+  // --- mosaic_hint
+  'mosaic_hint.each_tile_has_its': 'Cada recuadro tiene su propio volumen. ⤢ maximiza, ⛶ o doble clic pasa a pantalla completa, ✕ cierra.',
+
+  // --- nav
+  'nav.back_to_channels': 'Volver a los canales',
+  'nav.back_to_stream': 'Volver a mi transmisión',
+  'nav.leave': 'Salir',
+
+  // --- owner_key_field
+  'owner_key_field.owner_key': 'Clave de propietario',
+  'owner_key_field.printed_in_the_server': 'Se muestra en el registro del servidor al iniciarlo por primera vez',
+
+  // --- password_field
+  'password_field.server_password': 'Contraseña del servidor',
+  'password_field.this_server_asks_for': 'Este servidor pide una',
+
+  // --- picker
+  'picker.cameras_capture_cards': 'Cámaras y capturadoras',
+  'picker.choose_what_to_share': 'Elige qué compartir',
+  'picker.compose_hint': 'Elige las que quieras para empezar, o ninguna. Cuando estés en vivo podrás agregarlas, moverlas, cambiarles el tamaño y recortarlas: haz clic derecho en la vista previa.',
+  'picker.composite': 'Composición',
+  'picker.framerate': 'Velocidad de fotogramas',
+  'picker.loading': 'Cargando…',
+  'picker.look_for_sources_again': 'Buscar fuentes de nuevo',
+  'picker.none_cameras': 'No se encontraron cámaras ni capturadoras.',
+  'picker.none_screen': 'No se encontraron pantallas.',
+  'picker.none_window': 'No se encontraron ventanas.',
+  'picker.resolution': 'Resolución',
+  'picker.screens': 'Pantallas',
+  'picker.source_type': 'Tipo de fuente',
+  'picker.sources': 'Fuentes',
+  'picker.streaming_as': 'Transmitiendo como',
+  'picker.windows': 'Ventanas',
+
+  // --- picker_refresh
+  'picker_refresh.refresh': 'Actualizar',
+
+  // --- preview
+  'preview.hidden_text': 'Sigues en vivo. Dibujar la vista previa consume GPU además del juego que compartes, así que ocultarla es rendimiento gratis.',
+  'preview.paused_text': 'Sigues en vivo. Harmony no dibuja la vista previa mientras la ventana está minimizada, porque nadie la vería — ese trabajo sería puro desperdicio.',
+
+  // --- priority
+  'priority.sharp': 'Nítida — mantener resolución',
+  'priority.smooth': 'Fluida — mantener velocidad de fotogramas',
+
+  // --- privacy
+  'privacy.hide': 'Ocultar tus datos',
+  'privacy.show': 'Mostrar tus datos',
+
+  // --- profile
+  'profile.back_to_username': 'De vuelta a tu nombre de usuario.',
+  'profile.banner_changed': 'Banner cambiado.',
+  'profile.banner_removed': 'Banner quitado.',
+  'profile.banner_too_big': 'Ese banner pesa más de 2 MB. Elige un GIF más pequeño o una imagen fija, que se reduce por ti.',
+  'profile.font_default': 'Predeterminada',
+  'profile.font_saved': 'Fuente cambiada.',
+  'profile.join_sound_changed': 'Sonido de entrada establecido ({seconds} segundos).',
+  'profile.join_sound_custom': 'Tu propio sonido',
+  'profile.join_sound_default': 'El tono habitual',
+  'profile.join_sound_removed': 'De vuelta al tono habitual.',
+  'profile.join_sound_too_big': 'Ese archivo es demasiado grande. Elige uno de menos de 20 MB.',
+  'profile.join_sound_trimmed': 'Sonido de entrada establecido. Duraba más de {seconds} segundos, así que se cortó ahí.',
+  'profile.join_sound_unreadable': 'No se pudo leer eso como audio.',
+  'profile.name_dialog_text': 'Se muestra a todos en este servidor. Déjalo vacío para volver a "{nickname}". Mayúsculas, espacios y acentos están permitidos.',
+  'profile.picture_changed': 'Imagen cambiada.',
+  'profile.picture_removed': 'Imagen eliminada.',
+  'profile.saved': 'Guardado.',
+
+  // --- profile_choose
+  'profile_banner.choose_banner': 'Elegir banner',
+  'profile_banner.remove_banner': 'Quitar banner',
+  'profile_choose.change_picture': 'Cambiar imagen',
+
+  // --- profile_name_reset
+  'profile_name_reset.use_my_username': 'Usar mi nombre de usuario',
+
+  // --- profile_name_save
+  'profile_name_save.save': 'Guardar',
+
+  // --- profile_remove
+  'profile_remove.remove_picture': 'Quitar imagen',
+
+  // --- quality
+  'profile_sound.choose_sound': 'Elegir sonido',
+  'profile_sound.play': 'Escuchar',
+  'profile_sound.remove_sound': 'Quitar',
+  'quality.fps': '{fps} fps',
+  'quality.native': 'Nativa',
+  'quality.note_heavy': 'Una calidad más alta usa más ancho de banda y más recursos de este equipo, y el fondo de la cámara tiene más trabajo con una imagen más grande.',
+  'quality.note_live': 'Se aplica de inmediato a una cámara en uso.',
+  'quality.note_native': 'Nativa le pide a la cámara lo máximo que ofrece, y la imagen enviada lo sigue.',
+
+  // --- roles
+  'roles.admin': 'admin',
+  'roles.member': 'miembro',
+  'roles.owner': 'propietario',
+
+  // --- scale_reset
+  'scale_reset.reset': 'Restablecer',
+
+  // --- server
+  'server.storage_note': '{used} usados · {free} libres en el disco del servidor. Los archivos antiguos que nadie usa se borran para hacer espacio.',
+  'server.storage_note_short': '{used} usados. Los archivos antiguos que nadie usa se borran para hacer espacio.',
+
+  // --- server_add
+  'server_add.add_a_server': '+ Agregar un servidor',
+
+  // --- server_back
+  'server_back.back_to_my_servers': 'Volver a mis servidores',
+
+  // --- server_cancel
+  'server_cancel.cancel': 'Cancelar',
+
+  // --- server_form
+  'server_form.anybody_who_can_reach': 'Cualquiera que pueda llegar a este servidor puede usarlo.',
+  'server_form.leave_blank_to_keep': 'Déjalo en blanco para mantenerla como está',
+  'server_form.logo': 'Logo',
+  'server_form.name': 'Nombre',
+  'server_form.no_password_at_all': 'Sin contraseña',
+  'server_form.password': 'Contraseña',
+  'server_form.shown_in_everybody_s': 'Se muestra en la lista de servidores de todos. Funciona mejor cuadrada; se reduce a 256 px.',
+  'server_form.this_server': 'Este servidor',
+  'server_form.what_it_is_called': 'Cómo se llama en la barra de título, para todos.',
+
+  // --- server_logo_pick
+  'server_logo_pick.choose_image': 'Elegir imagen…',
+
+  // --- server_logo_remove
+  'server_logo_remove.remove': 'Quitar',
+
+  // --- server_max_file
+  'server_max_file.100_mb': '100 MB',
+  'server_max_file.1_gb': '1 GB',
+  'server_max_file.250_mb': '250 MB',
+  'server_max_file.25_mb': '25 MB',
+  'server_max_file.2_gb': '2 GB',
+  'server_max_file.500_mb': '500 MB',
+  'server_max_file.50_mb': '50 MB',
+  'server_max_file.8_mb': '8 MB',
+
+  // --- server_menu
+  'server_menu.search_servers': 'Buscar servidores',
+
+  // --- server_options_empty
+  'server_options_empty.no_servers_match': 'Ningún servidor coincide.',
+
+  // --- server_save
+  'server_save.save': 'Guardar',
+
+  // --- server_uploads
+  'server_uploads.largest_file': 'Archivo más grande',
+  'server_uploads.space_for_files_gb': 'Espacio para archivos (GB)',
+  'server_uploads.the_biggest_file_anybody': 'El archivo más grande que cualquiera puede enviar en un chat.',
+
+  // --- session
+  'session.account_removed': 'Tu cuenta fue eliminada de este servidor.',
+  'session.disconnected': 'Desconectado: {reason}',
+
+  // --- settings
+  'settings.appearance': 'Apariencia',
+  'settings.appearance.appearance': 'Apariencia',
+  'settings.appearance.bigger': 'Más grande',
+  'settings.appearance.colour_palette': 'Paleta de colores',
+  'settings.appearance.everything_at_once_the': 'Todo a la vez: el texto, los iconos, las imágenes y el espacio entre ellos. Es el zoom propio de la ventana, así que un valor más grande deja menos cosas en pantalla.',
+  'settings.appearance.interface_size': 'Tamaño de la interfaz',
+  'settings.appearance.smaller': 'Más pequeña',
+  'settings.appearance.yours_alone_nothing_is': 'Solo tuyo. No se envía nada al servidor, y dos personas en el mismo canal pueden ver colores distintos.',
+  'settings.hotkeys': 'Atajos',
+  'settings.hotkeys.hotkeys': 'Atajos',
+  'settings.hotkeys.work_anywhere_even_while': 'Funcionan en cualquier lugar, incluso mientras un juego tiene el foco. Una combinación que asignes aquí se quita de todos los demás programas mientras Harmony esté abierto, así que usa un modificador (Ctrl, Alt, Shift) o una tecla F. Abajo se listan todos los clips del Soundpad de este servidor; hacer clic derecho en un clip del Soundpad hace lo mismo.',
+  'settings.language.auto': 'Automático ({language})',
+  'settings.language.note': 'El idioma de los menús y mensajes de esta app. Cada persona del mismo servidor puede usar el suyo; lo que se escribe en un chat se queda como se escribió.',
+  'settings.language.title': 'Idioma',
+  'settings.profile': 'Perfil',
+  'settings.profile.account': 'Cuenta',
+  'settings.profile.banner': 'Banner',
+  'settings.profile.banner_note': 'Se dibuja detrás de tu nombre en la lista de miembros y en los canales de voz, atenuado y desvaneciéndose hacia la izquierda. Una imagen o un GIF, de hasta 2 MB; una imagen fija se reduce para que quepa.',
+  'settings.profile.display_name': 'Nombre para mostrar',
+  'settings.profile.join_sound': 'Sonido de entrada',
+  'settings.profile.join_sound_note': 'Se reproduce para las personas de un canal de voz cuando entras, en lugar del tono habitual. Hasta 10 segundos: lo que dure más se corta en 10. Sirve cualquier archivo de audio que tu equipo pueda reproducir.',
+  'settings.profile.name_font': 'Fuente del nombre',
+  'settings.profile.name_font_note': 'Cómo se dibuja tu nombre para mostrar para todos en este servidor. Las fuentes vienen con la app, así que todos ven la misma.',
+  'settings.profile.picture': 'Imagen',
+  'settings.profile.profile': 'Perfil',
+  'settings.profile.role': 'Rol',
+  'settings.profile.shown_to_everybody_instead': 'Se muestra a todos en lugar de tu nombre de usuario. Mayúsculas, espacios y acentos están permitidos, y dos personas pueden elegir el mismo. Vacío vuelve a tu nombre de usuario.',
+  'settings.profile.shown_to_everybody_on': 'Se muestra a todos en este servidor, recortada en círculo. Sirve cualquier imagen; se reduce a un cuadrado pequeño antes de subirla. Sin imagen, se dibujan tus iniciales.',
+  'settings.profile.username': 'Nombre de usuario',
+  'settings.profile.your_username_is_what': 'Tu nombre de usuario es con el que inicias sesión y el que la gente @menciona. No cambia.',
+  'settings.settings': 'Ajustes',
+  'settings.sounds': 'Sonidos',
+  'settings.sounds.members_join_sounds': 'Sonidos de entrada de los miembros',
+  'settings.sounds.members_join_sounds_hint': 'Cuando alguien que ha elegido su propio sonido de entrada se une a tu canal de voz, oyes el suyo en lugar del tono habitual. Desactivado reproduce el tono habitual para todos.',
+  'settings.sounds.mention_sound': 'Sonido de mención',
+  'settings.sounds.sound_effects_volume': 'Volumen de los efectos de sonido',
+  'settings.sounds.sounds': 'Sonidos',
+  'settings.sounds.three_rising_notes_when': 'Tres notas ascendentes cuando alguien escribe tu nombre, y el único aviso que suena en un canal que no estás mirando.',
+  'settings.sounds.voice_channel_sounds': 'Sonidos del canal de voz',
+  'settings.sounds.when_you_or_somebody': 'Cuando tú u otra persona entra o sale, empieza o termina una transmisión, y cuando silencias o ensordeces. Ascendente significa activado, descendente significa desactivado.',
+  'settings.updates': 'Actualizaciones',
+  'settings.updates.updates': 'Actualizaciones',
+  'settings.voice.camera': 'Cámara',
+  'settings.voice.camera_quality': 'Calidad de la cámara',
+  'settings.voice.devices': 'Dispositivos',
+  'settings.voice.echo_cancellation': 'Cancelación de eco',
+  'settings.voice.echo_cancellation_hint': 'Evita que tu micrófono capte el sonido de tus altavoces. Útil sin auriculares; puede hacer que tu voz baje de volumen mientras suena algo.',
+  'settings.voice.frame_rate': 'Velocidad de fotogramas',
+  'settings.voice.input_sensitivity': 'Sensibilidad de entrada',
+  'settings.voice.input_volume': 'Volumen de entrada',
+  'settings.voice.microphone': 'Micrófono',
+  'settings.voice.noise_suppression': 'Supresión de ruido',
+  'settings.voice.noise_suppression_hint': 'Filtra el ruido de fondo constante, como ventiladores y teclados. Puede cortar el final de las palabras.',
+  'settings.voice.output': 'Salida',
+  'settings.voice.resolution': 'Resolución',
+  'settings.voice.speak_normally_put_the': 'Habla con normalidad. Pon el marcador justo por encima de donde queda la barra cuando estás en silencio, y por debajo de donde queda cuando hablas.',
+  'settings.voice.voice_video': 'Voz y video',
+  'settings.voice_video': 'Voz y video',
+
+  // --- share
+  'share.capture_blocked': 'Se bloqueó la captura de pantalla.',
+
+  // --- soundpad
+  'soundpad.emoji_hint': 'El emoji es opcional, y es lo que permite encontrar un clip en una cuadrícula de veinte botones idénticos.',
+  'soundpad.find_the_perfect_sound': 'Encuentra el sonido perfecto',
+  'soundpad.how_loudly_soundpad_clips': 'Qué tan fuerte suenan para ti los clips del Soundpad',
+  'soundpad.too_big': '"{name}" pesa {size} MB. Los clips están limitados a {limit} MB -- cada cliente descarga todos los clips.',
+
+  // --- soundpad_add
+  'soundpad_add.add': '+ Agregar',
+
+  // --- stats
+  'stats.encode': 'codificación {ms} ms',
+  'stats.link': 'enlace {mbps} Mbps',
+
+  // --- status
+  'status.cam': 'cámara activada',
+  'status.deaf': 'ensordecido -- no puede oír a nadie',
+  'status.forced': 'silenciado por un administrador',
+  'status.muted': 'silenció su micrófono',
+  'status.screen': 'compartiendo pantalla',
+
+  // --- step_account
+  'step_account.server': 'Servidor',
+
+  // --- step_server
+  'step_server.https_harmony_example_com': 'https://harmony.example.com o 192.168.1.50:8080',
+  'step_server.server_address': 'Dirección del servidor',
+
+  // --- stop_stream
+  'stop_stream.stop_streaming': 'Detener transmisión',
+
+  // --- test_connection
+  'test_connection.test_my_connection': 'Probar mi conexión',
+
+  // --- theme
+  'theme.accent': 'Acento',
+  'theme.background': 'Fondo',
+  'theme.dark': 'Oscuro',
+  'theme.daylight': 'Luz de día',
+  'theme.ember': 'Brasa',
+  'theme.forest': 'Bosque',
+  'theme.lavender': 'Lavanda',
+  'theme.midnight': 'Medianoche',
+  'theme.ocean': 'Océano',
+  'theme.onyx': 'Ónix',
+  'theme.panels': 'Paneles',
+  'theme.text': 'Texto',
+
+  // --- toast
+  'toast.click_to_show': '(haz clic para mostrar)',
+
+  // --- update_check
+  'update_check.check_now': 'Buscar ahora',
+
+  // --- updates
+  'updates.available': 'La versión {version} está disponible.',
+  'updates.checking': 'Buscando actualizaciones…',
+  'updates.downloading': 'Descargando {version}… {percent}%',
+  'updates.downloading_banner': 'Descargando Harmony {version}… {percent}%',
+  'updates.error': 'No se pudo actualizar: {message}',
+  'updates.idle': 'Aún sin comprobar.',
+  'updates.latest': 'Todo al día.',
+  'updates.open_page': 'Abrir la página de descarga',
+  'updates.ready': 'La versión {version} está lista. Se instala al reiniciar o salir.',
+  'updates.restart_now': 'Reiniciar ahora',
+  'updates.unsupported_appimage': 'Solo la versión AppImage se actualiza sola.',
+  'updates.unsupported_development': 'Las actualizaciones se aplican a una versión instalada, no a una ejecución de desarrollo.',
+
+  // --- upload
+  'upload.progress': '{percent}% · {sent} de {total}',
+
+  // --- view
+  'view.broadcast.framerate': 'Velocidad de fotogramas',
+  'view.broadcast.priority': 'Prioridad',
+  'view.broadcast.resolution': 'Resolución',
+  'view.broadcast.stop_drawing_the_preview': 'Dejar de dibujar la vista previa — la transmisión sigue en marcha',
+  'view.channels.channels': 'Canales',
+  'view.channels.create_a_channel': 'Crear un canal',
+  'view.channels.members': 'Miembros',
+  'view.channels.resize_the_channel_list': 'Cambiar el tamaño de la lista de canales',
+  'view.channels.server_settings': 'Ajustes del servidor',
+  'view.channels.show_or_hide_the': 'Mostrar u ocultar la lista de miembros',
+  'view.channels.sign_out': 'Cerrar sesión',
+  'view.connect.buffers_already_compressed_video': 'Guarda en memoria video ya comprimido, así que consume poca CPU. Unos 30 MB por transmisión a 1080p.',
+  'view.connect.encode_on_the_gpu': 'Codificar con la GPU',
+  'view.connect.harmony': 'Harmony',
+  'view.connect.keep_the_last_30': 'Conservar los últimos 30 segundos para hacer clips',
+  'view.connect.options': 'Opciones',
+  'view.connect.self_hosted_voice_video': 'Voz, video y chat autoalojados para tu propia comunidad',
+  'view.mosaic.all_volumes': 'Todos los volúmenes',
+  'view.mosaic.mosaic': 'Mosaico',
+
+  // --- voice
+  'voice.measuring': 'Midiendo…',
+  'voice.ms_to_relay': '{ms} ms al relay',
+  'voice.reconnecting': 'Reconectando…',
+
+  // --- voice_config
+  'voice_config.devices': 'Dispositivos',
+
+  // --- voice_flip
+  'voice_flip.switch_camera': 'Cambiar de cámara',
+
+  // --- voice_idle
+  'voice_idle.pick_a_voice_channel': 'Elige un canal de voz para entrar.',
+
+  // --- voice_leave
+  'voice_leave.disconnect': 'Desconectar',
+
+  // --- voice_panel
+  'voice_panel.disconnect': 'Desconectar',
+  'voice_panel.soundboard': 'Soundboard',
+  'voice_panel.switch_camera': 'Cambiar de cámara',
+
+  // --- voice_soundboard
+  'voice_soundboard.soundboard': 'Soundboard',
+
+  // --- watch_add
+  'watch_add.add_stream': '+ Agregar transmisión',
+
+  // --- watch_all
+  'watch_all.watch_all': 'Ver todo',
+
+  // --- watch_clip
+  'watch_clip.clip': '✂ Clip',
+
+  // --- window_audio_fallback
+  'window_audio_fallback.share_silently': 'Compartir sin sonido',
+  'window_audio_fallback.use_system_audio': 'Usar el audio del sistema',
+};

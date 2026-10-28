@@ -25,6 +25,15 @@ never re-encodes it.
 - **Camera backgrounds**: blur, a colour, a gradient, or a picture or GIF
   behind you. Done on your own computer, on the GPU, before a frame is sent;
   the server never sees what was behind you.
+- **Profile**: a picture, a banner (a GIF works) shown dimmed behind your name
+  in the member list and voice channels, a font for your name from ten that
+  ship with the app, and a join sound of up to 10 seconds that plays for the
+  room when you arrive.
+- **Languages**: English, Português (Brasil) and Español, picked in Settings or
+  followed from the system; a new one is a single file (see
+  [Translating](#translating)).
+- **Camera quality**: 360p to 1080p, or the camera's native best, at 24, 30,
+  60 fps or native, changeable while the camera is on.
 - **Text channels** with Markdown, attachments, reactions, custom emoji,
   mentions, pins and search.
 - **Accounts and roles**: owner, admins and members, with optional
@@ -76,6 +85,36 @@ GitHub Actions builds all three and publishes the release.
 
 TLS, dynamic IPs, ports and troubleshooting are covered in
 **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
+## Translating
+
+The app speaks English, Português (Brasil) and Español, chosen in
+*Settings → Appearance → Language* (or following the system's language). Adding
+another takes one file and one line:
+
+1. Copy `client/src/renderer/locales/en.js` to `locales/<code>.js` (`fr.js`,
+   `de.js`, `pt-PT.js`...) and translate the **values**. Leave the keys alone,
+   and leave anything in `{braces}` exactly as it is: the code fills those in
+   by name, and may move them anywhere in the sentence. A value written as
+   `{ one: '...', other: '...' }` is a plural, chosen by the number; give it
+   the forms your language uses (`zero`, `one`, `two`, `few`, `many`, `other`).
+2. Add a line to `locales/index.js`:
+   ```js
+   { code: 'fr', name: 'Français', load: () => import('./fr.js') },
+   ```
+   with the language's name in itself, since that is how a person who cannot
+   read the current one finds it.
+3. `cd client && npm run check:locales` lists what is missing (it shows up in
+   English until translated, so a partial translation still works), a key that
+   English does not have, and any `{placeholder}` that was renamed or lost.
+
+A new string in the code is `t('area.some_key')` in JavaScript, or
+`data-i18n="area.some_key"` (and `data-i18n-title`, `-placeholder`,
+`-aria-label`) in `index.html`, with the English added to `en.js`. To find
+what is still untranslated on screen, run the app with
+`localStorage['harmony.pseudo'] = '1'` set in the developer tools and reload:
+every translated string is then wrapped in ⟦ ⟧, so anything without them
+was missed.
 
 ## Built on
 
