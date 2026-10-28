@@ -32,6 +32,11 @@ never re-encodes it.
 - **Languages**: English, Português (Brasil) and Español, picked in Settings or
   followed from the system; a new one is a single file (see
   [Translating](#translating)).
+- **Hotkeys and push to talk**: global hotkeys for mute, deafen, the camera and
+  every soundpad clip, and an optional push to talk (off by default) on any key
+  or combination. Push to talk works with a game in front; on macOS that needs
+  the Accessibility permission, and without it the key works while Harmony is
+  in front.
 - **Camera quality**: 360p to 1080p, or the camera's native best, at 24, 30,
   60 fps or native, changeable while the camera is on.
 - **Text channels** with Markdown, attachments, reactions, custom emoji,

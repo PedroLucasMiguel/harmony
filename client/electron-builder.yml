@@ -63,6 +63,8 @@ files:
 # what makes per-application audio work in a packaged build.
 asarUnpack:
   - node_modules/loopback-capture/**
+  # Push to talk's key hook: a native module, loaded by path from its prebuilds.
+  - node_modules/uiohook-napi/**
 
 # The app icon, from media/iso.png -- regenerate with
 # `python client/scripts/make-icons.py` after changing the logo.

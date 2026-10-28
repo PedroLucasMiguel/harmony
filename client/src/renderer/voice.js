@@ -224,7 +224,7 @@ export class VoiceSession {
    */
   speakingMids() {
     const out = new Set();
-    if (this.#micMeter && !this.muted && this.#micMeter.speaking) out.add(this.mid);
+    if (this.#micMeter && this.transmitting && this.#micMeter.speaking) out.add(this.mid);
     for (const [mid, sub] of this.#subs) {
       if (sub.sink.speaking) out.add(mid);
     }
@@ -487,7 +487,8 @@ export class VoiceSession {
    * Choose the browser's processing for the microphone, and apply it to the
    * one that is live: the constraints only take effect on a new capture, so
    * a running microphone is swapped for one opened with them, through the
-   * same replaceTrack as a device change.
+   * same replaceTrack as a device change -- after the old capture has let go
+   * of the device, or Chromium would give the new one the old processing.
    *
    * @returns {Promise<boolean>} false if the live microphone could not be
    *   reopened, in which case the old one is still published.
@@ -498,7 +499,7 @@ export class VoiceSession {
     this.micEchoCancellation = Boolean(echoCancellation);
     this.micNoiseSuppression = Boolean(noiseSuppression);
     if (same || !this.#mic) return true;
-    return this.switchMic(this.micDeviceId);
+    return this.switchMic(this.micDeviceId, { releaseFirst: true });
   }
 
   async startMic(publishUrl, deviceId) {
@@ -507,8 +508,9 @@ export class VoiceSession {
       audio: this.#micConstraints(deviceId),
     });
     // Apply the current mute state immediately: joining already muted must not
-    // broadcast a second of room noise before the toggle is read.
-    for (const track of this.#micStream.getAudioTracks()) track.enabled = !this.muted;
+    // broadcast a second of room noise before the toggle is read. With push to
+    // talk on the same goes for a key that is not held.
+    for (const track of this.#micStream.getAudioTracks()) track.enabled = this.transmitting;
 
     this.#mic = await publish({
       url: publishUrl,
@@ -610,11 +612,27 @@ export class VoiceSession {
    * and there is no gap in the path. Swapping a track of the same kind needs
    * no renegotiation, which is the one thing MediaMTX's WHIP cannot do.
    *
-   * @returns {Promise<boolean>} false if the device could not be opened, in
-   *   which case the old microphone is still running and still published.
+   * `releaseFirst` is for reopening the SAME device with different echo
+   * cancellation or noise suppression. Chromium hands a second capture of a
+   * device that is already open the first one's processing and ignores what
+   * the second asked for -- checked against its own getSettings(), which says
+   * echoCancellation: false for a capture that asked for true -- so the new
+   * choice only takes effect once the old capture has let go of the device.
+   * The cost is a gap of a few tens of milliseconds in the microphone
+   * instead of none, which is the price of the switch doing anything.
+   *
+   * @returns {Promise<boolean>} false if the device could not be opened. By
+   *   default the old microphone is then still running and still published;
+   *   with `releaseFirst` it has already been let go, and the health check
+   *   sees it as lost and restarts it.
    */
-  async switchMic(deviceId) {
+  async switchMic(deviceId, { releaseFirst = false } = {}) {
     if (!this.#mic) return false;
+
+    const sender = this.#mic.pc.getSenders().find((s) => s.track?.kind === 'audio');
+    if (!sender) return false;
+
+    if (releaseFirst) this.#micStream?.getTracks().forEach((t) => t.stop());
 
     let stream;
     try {
@@ -632,13 +650,8 @@ export class VoiceSession {
       return false;
     }
     // Carry the mute across, or switching device would quietly unmute you.
-    track.enabled = !this.muted;
+    track.enabled = this.transmitting;
 
-    const sender = this.#mic.pc.getSenders().find((s) => s.track?.kind === 'audio');
-    if (!sender) {
-      stream.getTracks().forEach((t) => t.stop());
-      return false;
-    }
     // Through the chain again, or changing headset silently drops the input
     // volume and the gate -- which reads as "picking my headset breaks my
     // microphone settings" and is impossible to guess the cause of.
@@ -726,10 +739,41 @@ export class VoiceSession {
    */
   setMuted(muted) {
     this.muted = Boolean(muted);
-    for (const track of this.#micStream?.getAudioTracks() ?? []) {
-      track.enabled = !this.muted;
-    }
+    this.#applyTransmit();
     return this.muted;
+  }
+
+  /**
+   * Push to talk: the microphone is silent unless the key is held.
+   *
+   * Done on the track, exactly like mute, and NOT by touching `muted`: the
+   * mute button, its sound, the muted marker everybody sees and the server's
+   * idea of who is muted are all about a decision somebody made, and a key
+   * going down and up forty times a minute is not one. Mute still wins -- a
+   * muted person holding the key is heard by nobody.
+   */
+  pushToTalk = false;
+  pttHeld = false;
+
+  /** Whether the microphone is open to the channel right now. */
+  get transmitting() {
+    return !this.muted && (!this.pushToTalk || this.pttHeld);
+  }
+
+  setPushToTalk(on) {
+    this.pushToTalk = Boolean(on);
+    if (!this.pushToTalk) this.pttHeld = false;
+    this.#applyTransmit();
+  }
+
+  setPttHeld(held) {
+    this.pttHeld = Boolean(held);
+    this.#applyTransmit();
+  }
+
+  #applyTransmit() {
+    const open = this.transmitting;
+    for (const track of this.#micStream?.getAudioTracks() ?? []) track.enabled = open;
   }
 
   // -------------------------------------------------------------- incoming

@@ -102,6 +102,13 @@ const DEFAULTS = {
   // this is the switch for the person who would rather not.
   customJoinSounds: true,
   /*
+   * Push to talk: the microphone is silent unless this key is held. Off, so
+   * nothing changes for anybody who never asks for it. The key is an Electron
+   * accelerator as the hotkey recorder writes it ("V", "F13", "Ctrl+Space").
+   */
+  pushToTalk: false,
+  pushToTalkKey: '',
+  /*
    * The colour palette, by name. Purely local: it is never sent anywhere
    * and is not per server, so two people in the same channel can be
    * looking at different colours.

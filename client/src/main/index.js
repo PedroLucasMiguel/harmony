@@ -13,6 +13,7 @@ const api = require('./api');
 const clips = require('./clips');
 const gpu = require('./gpu');
 const hotkeys = require('./hotkeys');
+const ptt = require('./ptt');
 const updater = require('./updater');
 const voiceTray = require('./voice-tray');
 const strings = require('./strings');
@@ -394,7 +395,7 @@ app.whenReady().then(() => {
 
 // Registrations outlive the window otherwise, holding keys away from every
 // other application until the process is gone.
-app.on('will-quit', () => hotkeys.clear());
+app.on('will-quit', () => { hotkeys.clear(); ptt.stop(); });
 
 // A hotkey fired, wherever the focus was. The renderer decides what it means.
 hotkeys.onFire((id) => {
@@ -584,6 +585,20 @@ function applyScale(percent) {
 handle('app:scale', (_e, percent) => applyScale(percent));
 
 handle('hotkeys:set', (_e, bindings) => hotkeys.set(bindings));
+
+// Push to talk: the hook runs only while the renderer says push to talk is on
+// AND a call is up (see ptt.js), and reports nothing but held / not held.
+handle('ptt:set', (_e, { enabled, accelerator } = {}) => {
+  if (!enabled || !accelerator) {
+    ptt.stop();
+    return { ok: true };
+  }
+  return ptt.start(String(accelerator), (held) => {
+    if (win && !win.isDestroyed()) win.webContents.send('ptt:state', held);
+  });
+});
+handle('ptt:open-settings', () => ptt.openSettings());
+handle('ptt:reset-access', () => ptt.resetAccess());
 
 handle('voice-tray:pictures', (_e, pictures) => voiceTray.setPictures(pictures));
 handle('voice-tray:state', (_e, voice) => voiceTray.setState(voice));

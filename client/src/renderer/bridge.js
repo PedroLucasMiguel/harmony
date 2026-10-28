@@ -100,6 +100,13 @@ const desktop = () => ({
   },
   onWindowVisibility: (handler) => raw.onWindowVisibility(handler),
 
+  ptt: {
+    set: lift(raw.ptt.set),
+    openSettings: lift(raw.ptt.openSettings),
+    resetAccess: lift(raw.ptt.resetAccess),
+    onState: (handler) => raw.ptt.onState(handler),
+  },
+
   permissions: {
     screen: lift(raw.permissions.screen),
     openScreenSettings: lift(raw.permissions.openScreenSettings),

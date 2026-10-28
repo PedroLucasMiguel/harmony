@@ -1444,6 +1444,33 @@
                   <input type="checkbox" class="switch" role="switch" id="mic-noise-suppression" />
                 </label>
               </div>
+
+              <!--
+                Push to talk. Off by default; the key row and the notes under
+                it only exist while it is on. See the Push to talk section of
+                app.js for what holds the microphone open.
+              -->
+              <div class="setting-group" id="ptt-group">
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.push_to_talk">Push to talk</span>
+                    <small data-i18n="settings.voice.push_to_talk_hint">Your microphone stays silent until you hold the key you choose. Muting still wins.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="ptt-enabled" />
+                </label>
+                <div id="ptt-options" hidden>
+                  <div class="hotkey-row">
+                    <span class="hotkey-name" data-i18n="settings.voice.push_to_talk_key">Push-to-talk key</span>
+                    <button type="button" class="ghost small hotkey-key" id="ptt-key"></button>
+                    <button type="button" class="ghost small hotkey-clear" id="ptt-key-clear" data-i18n="app.clear">Clear</button>
+                  </div>
+                  <p class="setting-note" id="ptt-scope" role="status"></p>
+                  <div class="profile-actions" id="ptt-permission" hidden>
+                    <button type="button" class="ghost" id="ptt-open-settings" data-i18n="screen_permission.open_settings">Open System Settings</button>
+                    <button type="button" class="ghost" id="ptt-reset-access" data-i18n="screen_permission.reset">Reset and restart</button>
+                  </div>
+                </div>
+              </div>
                           <!--
                 What is behind you on the camera.
 

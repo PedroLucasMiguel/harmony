@@ -393,6 +393,15 @@ export const harmony = {
     return () => document.removeEventListener('visibilitychange', listener);
   },
 
+  // No global key hook in a browser or on a phone: push to talk there is the
+  // key while the page has focus, which the page handles itself.
+  ptt: {
+    set: async () => ({ ok: false, error: 'unavailable' }),
+    openSettings: async () => false,
+    resetAccess: async () => false,
+    onState: () => () => {},
+  },
+
   permissions: {
     screen: async () => 'granted',
     openScreenSettings: async () => false,

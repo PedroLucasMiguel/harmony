@@ -76,6 +76,18 @@ contextBridge.exposeInMainWorld('harmony', {
     },
   },
 
+  ptt: {
+    set: invoke('ptt:set'),
+    openSettings: invoke('ptt:open-settings'),
+    resetAccess: invoke('ptt:reset-access'),
+    /** The key went down (true) or up (false), whichever application had focus. */
+    onState: (handler) => {
+      const listener = (_event, held) => handler(held);
+      ipcRenderer.on('ptt:state', listener);
+      return () => ipcRenderer.removeListener('ptt:state', listener);
+    },
+  },
+
   hotkeys: {
     set: invoke('hotkeys:set'),
 

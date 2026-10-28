@@ -30,6 +30,10 @@ export function launchApp({ port, userDataDir, onStderr, extraArgs = [] }) {
   // Some shells export this; it would run Electron as plain Node and the app
   // would never start.
   delete env.ELECTRON_RUN_AS_NODE;
+  // No global keyboard hook in tests: push to talk's would ask macOS for the
+  // Accessibility permission on whoever's machine this runs, and the tests drive
+  // the in-window path with real key events instead.
+  env.HARMONY_NO_KEY_HOOK = '1';
 
   const packaged = process.env.HARMONY_BIN;
   const bin = packaged || electronBin;

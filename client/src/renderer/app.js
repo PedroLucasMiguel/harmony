@@ -199,6 +199,14 @@ const el = {
   profileSoundFile: $('profile-sound-file'),
   profileSoundNote: $('profile-sound-note'),
   customJoinSounds: $('custom-join-sounds'),
+  pttEnabled: $('ptt-enabled'),
+  pttOptions: $('ptt-options'),
+  pttKey: $('ptt-key'),
+  pttKeyClear: $('ptt-key-clear'),
+  pttScope: $('ptt-scope'),
+  pttPermission: $('ptt-permission'),
+  pttOpenSettings: $('ptt-open-settings'),
+  pttResetAccess: $('ptt-reset-access'),
   profileNickname: $('profile-nickname'),
   profileRole: $('profile-role'),
   channelsRole: $('channels-role'),
@@ -3873,7 +3881,14 @@ async function joinVoice(channel, password) {
     voiceCue('connect');
     applyStage();
 
-    // Before the capture opens: the constraints only apply to a new one.
+    // Push to talk first, so a microphone that opens is already silent if the
+    // key is not held.
+    await syncPtt();
+    // Before the capture opens: the processing constraints only apply to a new
+    // capture, and the saved volume and sensitivity belong on the chain it is
+    // built with, not on one that was built with the defaults and corrected a
+    // few awaits later.
+    applyMicTuning();
     await applyMicProcessing();
     await state.voice.startMic(
       reply.publish.voice,
@@ -4129,6 +4144,8 @@ async function leaveVoice({ silent = false } = {}) {
   state.channels.roster = [];
   resetCues();
   stopJoinSounds();
+  // No call, so no key to watch for.
+  syncPtt();
   closePeerMenu();
   closeSoundpad();
   el.voiceActive.hidden = true;
@@ -4189,8 +4206,11 @@ function applyVoiceButtons() {
   el.selfStatus.textContent = !inVoice ? t('app.online')
     : state.voice.deafened ? t('app.deafened')
       : state.voice.muted ? t('app.muted')
-        : t('app.in_voice');
+        : state.voice.pushToTalk
+          ? t(state.voice.pttHeld ? 'ptt.status_talking' : 'ptt.status_waiting')
+          : t('app.in_voice');
   el.selfStatus.toggleAttribute('data-in-voice', inVoice);
+  el.selfStatus.toggleAttribute('data-talking', inVoice && state.voice.pushToTalk && state.voice.pttHeld);
 
   const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
   el.voiceWhere.textContent = channel ? channel.name : '';
@@ -5062,6 +5082,7 @@ function renderThemes() {
 const HOTKEY_ACTIONS = [
   { id: 'mute', get label() { return t('hotkeys.mute'); } },
   { id: 'deafen', get label() { return t('hotkeys.deafen'); } },
+  { id: 'camera', get label() { return t('hotkeys.camera'); } },
 ];
 
 /** What the main process said about each binding at the last sync. */
@@ -5085,6 +5106,7 @@ const CODE_KEYS = {
   Space: 'Space', Tab: 'Tab', Enter: 'Enter', Backspace: 'Backspace',
   Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End',
   PageUp: 'PageUp', PageDown: 'PageDown', ScrollLock: 'Scrolllock', PrintScreen: 'PrintScreen',
+  CapsLock: 'Capslock',
   Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\',
   Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`',
   MediaPlayPause: 'MediaPlayPause', MediaTrackNext: 'MediaNextTrack',
@@ -5134,7 +5156,7 @@ function formatAccelerator(accelerator) {
  * Turn a keydown into an accelerator, or say why it cannot be one.
  * @returns {{accelerator?: string, partial?: boolean, error?: string, display: string}}
  */
-function acceleratorFrom(event) {
+function acceleratorFrom(event, { allowBare = false } = {}) {
   const mods = [];
   if (event.ctrlKey) mods.push('Ctrl');
   if (event.altKey) mods.push('Alt');
@@ -5148,7 +5170,16 @@ function acceleratorFrom(event) {
 
   const accelerator = [...mods, key].join('+');
   const strong = event.ctrlKey || event.altKey || event.metaKey;
-  if (!strong && !STANDALONE_KEY.test(key)) {
+  // A global SHORTCUT takes its keys from every other program, so a letter on
+  // its own is refused. Push to talk only listens (see main/ptt.js) and keeps
+  // nobody from typing, so it may be any key at all.
+  // macOS 15 and later register Option and Option + Shift shortcuts without
+  // complaint and then never deliver them to an application in the background.
+  // Said here, while there is still a choice, rather than found out in a game.
+  if (!allowBare && harmony.platform === 'darwin' && event.altKey && !event.ctrlKey && !event.metaKey) {
+    return { error: t('hotkeys.mac_option'), display: formatAccelerator(accelerator) };
+  }
+  if (!allowBare && !strong && !STANDALONE_KEY.test(key)) {
     return {
       error: t('hotkeys.needs_modifier'),
       display: formatAccelerator(accelerator),
@@ -5240,7 +5271,7 @@ async function saveHotkey(id, accelerator) {
  * @returns {Promise<string|null>} an accelerator, '' to remove the binding,
  *   or null for "cancelled, change nothing".
  */
-function recordHotkey(title) {
+function recordHotkey(title, { allowBare = false } = {}) {
   return new Promise((resolve) => {
     el.hotkeyRecorderTitle.textContent = title;
     el.hotkeyCapture.textContent = t('app.waiting_for_keys');
@@ -5272,7 +5303,7 @@ function recordHotkey(title) {
         finish(null);
         return;
       }
-      const result = acceleratorFrom(event);
+      const result = acceleratorFrom(event, { allowBare });
       if (result.partial) {
         el.hotkeyCapture.textContent = `${result.display} + …`;
         return;
@@ -5319,6 +5350,7 @@ async function editHotkey(id, label) {
 function hotkeyRow(id, label, mark = null) {
   const row = document.createElement('div');
   row.className = 'hotkey-row';
+  row.dataset.id = id;
 
   const name = document.createElement('span');
   name.className = 'hotkey-name';
@@ -5411,16 +5443,205 @@ harmony.voiceTray.onCommand((command) => {
 });
 
 harmony.hotkeys.onFired((id) => {
-  if (id === 'mute' || id === 'deafen') {
-    const button = id === 'mute' ? el.voiceMute : el.voiceDeafen;
-    if (!state.voice.channelId || button.disabled) return;
+  // Seen on the Hotkeys page whatever else happens: if a key lights its row
+  // there, it reached the app, and what it does next is a separate question.
+  flashHotkey(id);
+  if (id === 'mute' || id === 'deafen' || id === 'camera') {
+    // The buttons, so a hotkey does exactly what a click does -- for the
+    // camera that includes opening it with the chosen quality and background,
+    // and refusing when there is no call to put it in.
+    const button = id === 'mute' ? el.voiceMute : id === 'deafen' ? el.voiceDeafen : el.voiceCam;
+    if (!state.voice.channelId || button.disabled) {
+      // Said, not swallowed: a key that does nothing looks exactly like a key
+      // that never arrived, and sends somebody off to debug the wrong thing.
+      toast(t('hotkeys.join_first'));
+      return;
+    }
     button.click();
     return;
   }
   if (id.startsWith('clip:')) {
+    if (!state.voice.channelId) {
+      toast(t('hotkeys.join_first'));
+      return;
+    }
     const clip = state.soundpad.clips.find((c) => String(c.id) === id.slice(5));
     if (clip) playSoundpadClip(clip);
   }
+});
+
+/** Light the row of a hotkey that just fired, if the Hotkeys page is open. */
+function flashHotkey(id) {
+  const row = [...el.hotkeyList.querySelectorAll('.hotkey-row')].find((r) => r.dataset.id === id);
+  if (!row) return;
+  row.removeAttribute('data-fired');
+  // Reading a layout property restarts the animation if it is still running.
+  void row.offsetWidth;
+  row.setAttribute('data-fired', '');
+}
+
+// ---------------------------------------------------------------------------
+// Push to talk
+//
+// The microphone is silent unless one key is held (voice.js pushToTalk). Where
+// that key is watched depends on what the build can do:
+//
+//   * the desktop app runs a global key hook for it (main/ptt.js) while a call
+//     is up, so it works with a game in front. It reports "held" or "not".
+//   * without it -- a browser, Linux without X11, macOS before Accessibility
+//     is allowed -- the key is watched here, and only works while Harmony is the
+//     window in front. The settings page says which of the two applies.
+//
+// Exactly one of them is listening at a time, so a key pressed in Harmony is
+// never counted twice.
+// ---------------------------------------------------------------------------
+
+/** A little after the key comes up, so the end of a word is not cut off. */
+const PTT_TAIL_MS = 180;
+
+const ptt = { held: false, global: false, error: null, tail: null };
+
+const pttKey = () => state.settings?.pushToTalkKey ?? '';
+const pttWanted = () => state.settings?.pushToTalk === true && Boolean(pttKey());
+const pttInCall = () => Boolean(state.voice.channelId);
+
+/** The bound key as the recorder wrote it, taken apart for comparing events. */
+function pttBinding() {
+  const parts = pttKey().split('+').filter(Boolean);
+  const key = parts.pop();
+  if (!key) return null;
+  const has = (...names) => parts.some((p) => names.includes(p));
+  return { key, ctrl: has('Ctrl'), alt: has('Alt'), shift: has('Shift'), meta: has('Command', 'Super') };
+}
+
+const pttModifiersMatch = (event, binding) =>
+  event.ctrlKey === binding.ctrl && event.altKey === binding.alt
+  && event.shiftKey === binding.shift && event.metaKey === binding.meta;
+
+function pttMatches(event) {
+  const binding = pttBinding();
+  return Boolean(binding) && codeToKey(event.code) === binding.key && pttModifiersMatch(event, binding);
+}
+
+/** The key went down (true) or up (false). Up waits out the tail. */
+function pttSet(held) {
+  clearTimeout(ptt.tail);
+  ptt.tail = null;
+  const apply = (value) => {
+    ptt.held = value;
+    state.voice.setPttHeld(value);
+    applyVoiceButtons();
+  };
+  if (held) apply(true);
+  else if (ptt.held) ptt.tail = setTimeout(() => apply(false), PTT_TAIL_MS);
+}
+
+/** Typing "v" into the chat must not open the microphone for a bare-V key. */
+const pttTyping = (event) => {
+  const binding = pttBinding();
+  if (!binding || binding.ctrl || binding.alt || binding.meta) return false;
+  const node = event.target;
+  return node instanceof HTMLElement
+    && (node.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName));
+};
+
+// The in-window listener: only when the global hook is not the one listening.
+const pttInWindow = () => pttWanted() && pttInCall() && !ptt.global;
+window.addEventListener('keydown', (event) => {
+  if (!pttInWindow() || event.repeat || !pttMatches(event) || pttTyping(event)) return;
+  pttSet(true);
+}, true);
+window.addEventListener('keyup', (event) => {
+  if (!pttInWindow() || !ptt.held) return;
+  // The key itself, or a modifier of the combination letting go first.
+  const binding = pttBinding();
+  if (!binding || codeToKey(event.code) === binding.key || !pttModifiersMatch(event, binding)) pttSet(false);
+}, true);
+// Losing focus while the key is down means its keyup goes to somebody else.
+window.addEventListener('blur', () => {
+  if (pttInWindow() && ptt.held) pttSet(false);
+});
+
+harmony.ptt.onState((held) => {
+  if (pttWanted() && pttInCall() && ptt.global) pttSet(held);
+});
+
+/**
+ * Bring everything in line with the settings and the call.
+ *
+ * The microphone goes quiet whenever push to talk is on (so the first words
+ * of a call are not broadcast before the key is found), but the key hook only
+ * runs while there is a call to talk in.
+ */
+async function syncPtt() {
+  const wanted = pttWanted();
+  state.voice.setPushToTalk(wanted);
+  if (!wanted || !pttInCall()) {
+    clearTimeout(ptt.tail);
+    ptt.held = false;
+    state.voice.setPttHeld(false);
+  }
+  if (harmony.capabilities.hotkeys) {
+    const result = await harmony.ptt
+      .set({ enabled: wanted && pttInCall(), accelerator: pttKey() })
+      .catch(() => ({ ok: false, error: 'unavailable' }));
+    ptt.global = Boolean(result.ok) && wanted && pttInCall();
+    ptt.error = wanted && pttInCall() && !result.ok ? result.error : null;
+  } else {
+    ptt.global = false;
+    ptt.error = null;
+  }
+  renderPttSettings();
+  applyVoiceButtons();
+}
+
+/** The Push to talk group in Settings. */
+function renderPttSettings() {
+  const on = state.settings?.pushToTalk === true;
+  el.pttEnabled.checked = on;
+  el.pttOptions.hidden = !on;
+  const key = pttKey();
+  el.pttKey.textContent = key ? formatAccelerator(key) : t('app.not_set');
+  el.pttKey.toggleAttribute('data-empty', !key);
+  el.pttKeyClear.hidden = !key;
+
+  // What the key will actually do: it depends on the build and the permission.
+  let scope;
+  if (!key) scope = t('ptt.scope_no_key');
+  else if (!harmony.capabilities.hotkeys || ptt.error === 'disabled') scope = t('ptt.scope_window');
+  else if (ptt.error === 'permission') scope = t('ptt.scope_permission');
+  else if (ptt.error) scope = t('ptt.scope_unavailable');
+  else scope = t('ptt.scope_global');
+  el.pttScope.textContent = scope;
+  el.pttPermission.hidden = !(harmony.platform === 'darwin' && ptt.error === 'permission');
+}
+
+el.pttEnabled.addEventListener('change', async () => {
+  await harmony.settings.set({ pushToTalk: el.pttEnabled.checked });
+  state.settings = await harmony.settings.get();
+  await syncPtt();
+});
+
+async function savePttKey(accelerator) {
+  await harmony.settings.set({ pushToTalkKey: accelerator });
+  state.settings = await harmony.settings.get();
+  await syncPtt();
+}
+
+el.pttKey.addEventListener('click', async () => {
+  const value = await recordHotkey(t('ptt.record_title'), { allowBare: true });
+  // Cancelled: nothing changes, but the shortcuts released for recording have
+  // to be handed back.
+  if (value === null) return syncHotkeys();
+  await syncHotkeys();
+  return savePttKey(value);
+});
+el.pttKeyClear.addEventListener('click', () => savePttKey(''));
+el.pttOpenSettings.addEventListener('click', () => harmony.ptt.openSettings());
+el.pttResetAccess.addEventListener('click', async () => {
+  const ok = await harmony.ptt.resetAccess().catch(() => false);
+  el.pttScope.textContent = ok ? t('ptt.reset_done') : t('ptt.reset_failed');
+  if (ok) harmony.relaunch();
 });
 
 /** Devices seen at the last enumeration, so a change can be compared. */
@@ -12106,6 +12327,7 @@ el.voiceConfig.addEventListener('click', () => {
   el.voiceSounds.checked = state.settings?.voiceSounds !== false;
   el.mentionSound.checked = state.settings?.mentionSound !== false;
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
+  renderPttSettings();
   showVolume(el.soundVolume, el.soundVolumeLabel, state.settings?.soundVolume ?? 100);
   renderHotkeyList();
   // No save: this is drawing the dialog from what is already stored, and
@@ -13171,7 +13393,7 @@ function redrawTexts() {
   harmony.strings.set(texts('main.')).catch(() => {});
   const again = [
     applyVoiceButtons, renderChannels, renderMembers, () => renderVoiceRoster(state.channels.roster),
-    renderChat, renderSoundpad, renderHotkeyList, renderCameraQuality, renderProfile,
+    renderChat, renderSoundpad, renderHotkeyList, renderCameraQuality, renderProfile, renderPttSettings,
     renderBackgroundSettings, renderUpdates, renderLanguageSettings, applyServerInfo, updateAudioNote,
     applyAuthMode,
   ];
