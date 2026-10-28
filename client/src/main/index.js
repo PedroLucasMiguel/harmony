@@ -332,8 +332,31 @@ function createWindow() {
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // The picture-in-picture window: ours, same origin, so the page can move
+    // the streams into it. Always on top, which is the point of it -- it is
+    // for watching while Harmony is out of the way. Size and place come from
+    // the page's window.open features.
+    if (url === 'harmony://app/pip.html') {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          minWidth: 220,
+          minHeight: 150,
+          alwaysOnTop: true,
+          autoHideMenuBar: true,
+          backgroundColor: '#000000',
+          title: 'Harmony',
+          show: true,
+        },
+      };
+    }
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  win.webContents.on('did-create-window', (child) => {
+    // Above full-screen windows too, where the platform lets it be.
+    child.setAlwaysOnTop(true, 'screen-saver');
   });
 
   // Closing hides it to the tray; Quit there, or the app menu, really quits.
@@ -525,6 +548,13 @@ handle('api:session-token', (_e, value) => api.setSessionToken(value));
 handle('api:register', (_e, s, n, p, k) => api.register(s, n, p, k));
 handle('api:login', (_e, s, n, p, k) => api.login(s, n, p, k));
 handle('api:logout', (_e, s) => api.logout(s));
+handle('api:change-password', (_e, s, current, p) => api.changePassword(s, current, p));
+handle('api:recovery-status', (_e, s) => api.recoveryStatus(s));
+handle('api:recovery-set', (_e, s, current, items) => api.setRecovery(s, current, items));
+handle('api:recovery-clear', (_e, s, current) => api.clearRecovery(s, current));
+handle('api:recovery-start', (_e, s, nickname) => api.recoveryStart(s, nickname));
+handle('api:recovery-verify', (_e, s, nickname, answers) => api.recoveryVerify(s, nickname, answers));
+handle('api:recovery-reset', (_e, s, token, p) => api.recoveryReset(s, token, p));
 handle('api:me', (_e, s) => api.me(s));
 handle('api:set-avatar', (_e, s, hash) => api.setAvatar(s, hash));
 handle('api:set-banner', (_e, s, hash) => api.setBanner(s, hash));
@@ -745,6 +775,9 @@ handle('media:upload-finish', (_e, server, id) => api.uploadFinish(server, id));
 handle('media:upload-cancel', (_e, server, id) => api.uploadCancel(server, id));
 
 handle('api:messages', (_e, s, id, before) => api.messages(s, id, before));
+handle('api:dm-request', (_e, s, method, path, body) => api.dmRequest(s, method, path, body));
+handle('api:dm-upload', (_e, s, id, bytes) => api.dmUpload(s, id, bytes));
+handle('api:dm-download', (_e, s, id, hash) => api.dmDownload(s, id, hash));
 handle('api:post-message', (_e, s, id, body) => api.postMessage(s, id, body));
 handle('api:pin-message', (_e, s, id, pinned) => api.pinMessage(s, id, pinned));
 handle('api:delete-message', (_e, s, id) => api.deleteMessage(s, id));

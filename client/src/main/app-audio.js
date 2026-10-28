@@ -13,9 +13,11 @@
 //
 // Keeping one application OUT of a whole-screen share -- the default being
 // Harmony itself, so the channel does not hear its own voices back -- is a
-// separate question from capturing a single window, and it is the half that has
-// a counterpart elsewhere: audio-mac.js (ScreenCaptureKit) and audio-linux.js
-// (PipeWire). Capturing only one window's audio is still Windows-only.
+// separate question from capturing a single window. The first has a
+// counterpart on every platform: audio-mac.js (ScreenCaptureKit) and
+// audio-linux.js (PipeWire). The second is the Windows addon and, on macOS,
+// ScreenCaptureKit again: a filter on one window carries the audio of the
+// application it belongs to. Linux has nothing for it.
 //
 // Chunks are interleaved signed 16-bit little-endian PCM, stereo, 48 kHz.
 
@@ -71,17 +73,27 @@ function addonAvailability() {
 /**
  * What this machine can do about audio.
  *
- *   available  capture a single window's audio (the Windows addon)
- *   exclusion  leave one application out of a whole-screen share's audio --
- *              the addon on Windows, a platform backend on macOS and Linux
+ *   available    capture a single window's audio with the Windows addon, and
+ *                everything else the addon does
+ *   exclusion    leave one application out of a whole-screen share's audio --
+ *                the addon on Windows, a platform backend on macOS and Linux
+ *   windowAudio  share a single window's audio, by whichever of the two ways
+ *                this machine has: the addon, or ScreenCaptureKit on macOS
  */
 async function availability() {
   const native = addonAvailability();
-  if (native.available) return { ...native, exclusion: true, exclusionReason: null };
+  if (native.available) {
+    return { ...native, exclusion: true, exclusionReason: null, windowAudio: true };
+  }
 
   const backend = excluder();
   const found = backend ? await backend.availability() : { available: false, reason: null };
-  return { ...native, exclusion: found.available, exclusionReason: found.reason };
+  return {
+    ...native,
+    exclusion: found.available,
+    exclusionReason: found.reason,
+    windowAudio: process.platform === 'darwin' && found.available,
+  };
 }
 
 function stop() {
@@ -123,6 +135,24 @@ async function start({ kind, sourceId, sourceName, fallback = 'silent', excludeP
   const backend = excluder();
   if (!available && kind === 'screen' && backend && (await backend.availability()).available) {
     return backend.start({ excludePid }, onChunk);
+  }
+
+  // macOS: a window's own audio comes from ScreenCaptureKit, through the same
+  // helper. A window that cannot be captured that way (the helper is missing,
+  // the window has closed, the permission is off) obeys the fallback like any
+  // other window share does.
+  if (!available && kind === 'window' && process.platform === 'darwin' && backend?.windowIdOf) {
+    const windowId = backend.windowIdOf(sourceId);
+    if (windowId && (await backend.availability()).available) {
+      const result = await backend.start({ windowId }, onChunk);
+      if (result.mode !== 'none' || fallback !== 'system') return result;
+      const reasonNote = String(result.note ?? '').replace(/\s*Sharing without audio\.$/, '');
+      return {
+        mode: 'chromium-loopback',
+        format: FORMAT,
+        note: `${reasonNote} Falling back to system audio.`.trim(),
+      };
+    }
   }
 
   if (!available) {

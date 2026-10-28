@@ -247,10 +247,67 @@ export function tuneOpusAnswer(sdp, { dtx = true, ptime = 0 } = {}) {
 }
 
 /**
+ * Whether a connection comes up within `ms`.
+ *
+ * Resolves false for a connection that fails or closes first, as well as for
+ * one that is merely slow: either way it is not going to carry anything, and
+ * waiting on it is how a call looked joined for the better part of a minute
+ * while nobody could hear anybody.
+ */
+function waitConnected(pc, ms) {
+  if (pc.connectionState === 'connected') return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const done = (ok) => {
+      clearTimeout(timer);
+      pc.removeEventListener('connectionstatechange', onChange);
+      resolve(ok);
+    };
+    const onChange = () => {
+      if (pc.connectionState === 'connected') done(true);
+      else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') done(false);
+    };
+    const timer = setTimeout(() => done(false), ms);
+    pc.addEventListener('connectionstatechange', onChange);
+  });
+}
+
+/** Failures that a second try can fix: a slow or lossy link, or a session the relay has not let go of yet. */
+const retryable = (err) => err?.code === 'media_unreachable' || err?.code === 'media_error'
+  || err?.code === 'not_connected' || !err?.code;
+
+const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
  * Publish a MediaStream to a WHIP endpoint.
+ *
+ * With `connectTimeoutMs` it also waits for the connection to be UP, and tries
+ * again (up to `attempts`, each on a fresh connection) if it is not. Without,
+ * it returns as soon as the relay has answered -- which is when the connection
+ * has only begun, and on a poor link may never complete.
+ *
  * @returns {Promise<{pc: RTCPeerConnection, resourceUrl: string|null}>}
  */
-export async function publish({
+export async function publish(options) {
+  const { connectTimeoutMs = 0, attempts = 1 } = options;
+  let failure;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      // More patience each time: the first try is cut short so a lost handshake
+      // costs seconds, and a link that is merely slow is given longer on the next.
+      return await publishOnce(options, connectTimeoutMs * (1 + 0.5 * (attempt - 1)));
+    } catch (err) {
+      failure = err;
+      if (attempt === attempts || !retryable(err)) break;
+      // A beat before the next: a relay that is still holding the last session
+      // lets go of it within seconds, and a link that is dropping packets is
+      // not helped by being asked again in the same instant.
+      await pause(1000 * attempt);
+    }
+  }
+  throw failure;
+}
+
+async function publishOnce({
   url,
   stream,
   iceServers,
@@ -261,7 +318,8 @@ export async function publish({
   contentHint = 'motion',
   degradationPreference = 'balanced',
   insertableStreams = false,
-}) {
+}, connectTimeoutMs) {
+  let resourceUrl = null;
   const pc = new RTCPeerConnection({
     iceServers: relayServers(iceServers),
     bundlePolicy: 'max-bundle',
@@ -295,8 +353,9 @@ export async function publish({
     await pc.setLocalDescription(offer);
     await waitForIceGathering(pc);
 
-    const { answer, resourceUrl } = await harmony.api.sdp(url, pc.localDescription.sdp);
-    await pc.setRemoteDescription({ type: 'answer', sdp: audioTuning ? tuneOpusAnswer(answer, audioTuning) : answer });
+    const reply = await harmony.api.sdp(url, pc.localDescription.sdp);
+    resourceUrl = reply.resourceUrl;
+    await pc.setRemoteDescription({ type: 'answer', sdp: audioTuning ? tuneOpusAnswer(reply.answer, audioTuning) : reply.answer });
 
     // Bitrate has to be set after the answer -- before it, the sender has no
     // negotiated encoding to configure.
@@ -308,9 +367,19 @@ export async function publish({
       }
     }
 
+    if (connectTimeoutMs && !(await waitConnected(pc, connectTimeoutMs))) {
+      const error = new Error('The connection to the media server did not come up.');
+      error.code = 'not_connected';
+      throw error;
+    }
+
     return { pc, resourceUrl };
   } catch (err) {
     pc.close();
+    // The relay may already hold a session for the offer it answered. Let it
+    // go now rather than leave it to time out: the next attempt publishes to
+    // the same path, and a session still holding it is refused.
+    if (resourceUrl) harmony.api.hangup(resourceUrl).catch(() => {});
     throw err;
   }
 }

@@ -43,6 +43,8 @@ const desktop = () => ({
     updates: true,
     reveal: true,
     tray: true,
+    // A window of its own for the picture in picture; see popOutPip.
+    popout: true,
   },
 
   settings: {
@@ -152,6 +154,13 @@ const desktop = () => ({
     register: lift(raw.api.register),
     login: lift(raw.api.login),
     logout: lift(raw.api.logout),
+    changePassword: lift(raw.api.changePassword),
+    recoveryStatus: lift(raw.api.recoveryStatus),
+    setRecovery: lift(raw.api.setRecovery),
+    clearRecovery: lift(raw.api.clearRecovery),
+    recoveryStart: lift(raw.api.recoveryStart),
+    recoveryVerify: lift(raw.api.recoveryVerify),
+    recoveryReset: lift(raw.api.recoveryReset),
     me: lift(raw.api.me),
     setAvatar: lift(raw.api.setAvatar),
     setBanner: lift(raw.api.setBanner),
@@ -173,6 +182,9 @@ const desktop = () => ({
     reorderChannels: lift(raw.api.reorderChannels),
 
     messages: lift(raw.api.messages),
+    dmRequest: lift(raw.api.dmRequest),
+    dmUpload: lift(raw.api.dmUpload),
+    dmDownload: lift(raw.api.dmDownload),
     postMessage: lift(raw.api.postMessage),
     pinMessage: lift(raw.api.pinMessage),
     deleteMessage: lift(raw.api.deleteMessage),

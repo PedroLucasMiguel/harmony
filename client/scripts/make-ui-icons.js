@@ -31,6 +31,11 @@ const ICONS = [
   // tiles and players
   'eye', 'eye-slash', 'squares-four', 'corners-out', 'arrows-out', 'arrows-in', 'scissors',
   'play', 'pause',
+  // private conversations
+  'chat-circle-dots', 'lock-simple', 'shield-check', 'shield-warning', 'key', 'copy', 'arrow-left',
+  'dots-three-vertical', 'prohibit',
+  // the floating stream window
+  'caret-left', 'caret-right', 'picture-in-picture', 'arrow-square-out', 'arrow-square-in',
 ];
 
 // By path: the package's exports map hides package.json.

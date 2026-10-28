@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  The picture-in-picture window, popped out of Harmony. Empty on purpose: the
+  page that opened it moves the player in (see popOutPip in app.js), so the
+  streams never leave the process they are decoded in. All this does is carry
+  the stylesheets and say it has loaded.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self'; script-src 'self'"
+  />
+  <title>Harmony</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="icons.css" />
+  <link rel="stylesheet" href="fonts.css" />
+</head>
+<body class="pip-window">
+  <script src="pip.js"></script>
+</body>
+</html>

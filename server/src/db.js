@@ -355,6 +355,152 @@ const MIGRATIONS = [
     db.exec('ALTER TABLE users ADD COLUMN banner_hash TEXT');
     db.exec('ALTER TABLE users ADD COLUMN join_sound_hash TEXT');
   },
+
+  /*
+   * v14 -- private conversations between two people, end-to-end encrypted.
+   *
+   * The same tables, with the same columns, as Ciranda's, which is where this
+   * feature was made first: a client that speaks one server speaks the other.
+   * Ciranda reached them in four steps (its v12, v13, v14 and v17: the
+   * conversations, what a message said before an edit, deleting a conversation
+   * for yourself, and an index under the file column); they are one here, in
+   * the shape they ended up in.
+   *
+   * The server holds ciphertext and the metadata it cannot avoid knowing
+   * (who, when, how big). It never holds a key that opens anything: the
+   * private half of every identity key is generated on the client, and what
+   * is stored here (`wrapped`) is that key sealed under a recovery key the
+   * server never sees. Nothing below is readable by whoever runs the server,
+   * the owner included, and that is the feature rather than a side effect.
+   *
+   * user_keys keeps HISTORY, not just the current key. A message is sealed
+   * to the pair of keys that existed when it was sent, and somebody who loses
+   * their recovery key and starts over must not make every message the other
+   * person ever received from them unreadable to that other person as well.
+   * The current key is the newest row.
+   *
+   * dm_messages.sender_key / recipient_key are plain integers, not foreign
+   * keys: a message names the keys it was sealed to, and an account removal
+   * that takes the keys with it must not be blocked by -- or cascade through
+   * -- the other person's half of the history, which goes with the
+   * conversation anyway.
+   *
+   * user_a < user_b makes "the conversation between these two" exactly one
+   * row, so two people opening it at the same moment cannot make two.
+   *
+   * dm_reads is a high-water mark per person, which is all an unread count
+   * needs and is the same on every device that person uses. It is never sent
+   * to the other side: "seen" is something to opt into, not a default.
+   * cleared_id is the other mark beside it: everything up to it is gone for
+   * that person and still there for the other. Something new brings the
+   * conversation back, starting from there; once both have cleared past a
+   * message nobody can see it any more, and it is deleted for real.
+   *
+   * dm_message_edits keeps each version that was REPLACED, sealed as it was,
+   * with the moment it was written; the current text stays on the message.
+   * Deleting the message takes every version along (ON DELETE CASCADE).
+   *
+   * kind = 'call' rows are written by the server itself -- "missed call",
+   * "call, 5 minutes" -- from facts it already has; `meta` holds them as
+   * plain JSON and `sealed` is null. Nothing here writes them yet, and a
+   * client that meets one draws it.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE user_keys (
+        id         INTEGER PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        public_key TEXT    NOT NULL,
+        wrapped    TEXT    NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX user_keys_user ON user_keys(user_id, id DESC);
+
+      CREATE TABLE dm_conversations (
+        id         INTEGER PRIMARY KEY,
+        user_a     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_b     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        last_at    INTEGER NOT NULL,
+        CHECK (user_a < user_b),
+        UNIQUE (user_a, user_b)
+      );
+      CREATE INDEX dm_conversations_b ON dm_conversations(user_b);
+
+      CREATE TABLE dm_messages (
+        id              INTEGER PRIMARY KEY,
+        conversation_id INTEGER NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind            TEXT    NOT NULL DEFAULT 'text',
+        sender_key      INTEGER,
+        recipient_key   INTEGER,
+        sealed          TEXT,
+        meta            TEXT,
+        attachment_hash TEXT    REFERENCES uploads(hash),
+        created_at      INTEGER NOT NULL,
+        edited_at       INTEGER
+      );
+      CREATE INDEX dm_messages_conversation ON dm_messages(conversation_id, id DESC);
+      CREATE INDEX dm_messages_attachment ON dm_messages(attachment_hash) WHERE attachment_hash IS NOT NULL;
+
+      CREATE TABLE dm_reactions (
+        message_id    INTEGER NOT NULL REFERENCES dm_messages(id) ON DELETE CASCADE,
+        user_id       INTEGER NOT NULL REFERENCES users(id)       ON DELETE CASCADE,
+        sender_key    INTEGER NOT NULL,
+        recipient_key INTEGER NOT NULL,
+        sealed        TEXT    NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        PRIMARY KEY (message_id, user_id)
+      );
+
+      CREATE TABLE dm_reads (
+        conversation_id INTEGER NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+        user_id         INTEGER NOT NULL REFERENCES users(id)            ON DELETE CASCADE,
+        last_read_id    INTEGER NOT NULL,
+        cleared_id      INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (conversation_id, user_id)
+      );
+
+      CREATE TABLE dm_blocks (
+        blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (blocker_id, blocked_id)
+      );
+
+      CREATE TABLE dm_message_edits (
+        id            INTEGER PRIMARY KEY,
+        message_id    INTEGER NOT NULL REFERENCES dm_messages(id) ON DELETE CASCADE,
+        sender_key    INTEGER NOT NULL,
+        recipient_key INTEGER NOT NULL,
+        sealed        TEXT    NOT NULL,
+        written_at    INTEGER NOT NULL
+      );
+      CREATE INDEX dm_message_edits_message ON dm_message_edits(message_id, id);
+    `);
+  },
+  /*
+   * v15: recovering a password from three questions the person wrote.
+   *
+   * One row per question, three per account or none. The ANSWER is stored the
+   * way a password is -- salted scrypt, of the answer after it has been
+   * normalised (see recovery.js) -- because an answer is a password that
+   * somebody picked from a much smaller space, and that is worth hiding from
+   * anyone who can read the database file. The question is plain text: it has
+   * to be shown to somebody who is not signed in.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE recovery_answers (
+        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        slot        INTEGER NOT NULL CHECK (slot BETWEEN 1 AND 3),
+        question    TEXT    NOT NULL,
+        answer_hash TEXT    NOT NULL,
+        created_at  INTEGER NOT NULL,
+        PRIMARY KEY (user_id, slot)
+      );
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

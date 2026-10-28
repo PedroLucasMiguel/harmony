@@ -778,6 +778,21 @@ export async function playJoinSound(url, { maxSeconds = 10 } = {}) {
   return source;
 }
 
+/**
+ * Why a cue might be silent, in numbers: the state of the context the cues play
+ * through, where it is going, and what has been asked of it.
+ */
+export function cueStatus() {
+  const c = ctx;
+  return {
+    context: c ? c.state : 'not created yet',
+    sinkId: c && typeof c.sinkId === 'string' ? (c.sinkId || 'default') : null,
+    volume: cueVolume,
+    playingJoinSounds: activeJoinSounds.size,
+    cachedJoinSounds: samples.size,
+  };
+}
+
 /** Silence any join sound still playing: leaving the room ends them. */
 export function stopJoinSounds() {
   for (const source of activeJoinSounds) {

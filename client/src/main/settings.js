@@ -114,6 +114,14 @@ const DEFAULTS = {
    * costs nothing to anybody who is looking, and they come back at once.
    */
   pauseHiddenCameras: true,
+  // The channel's streams as one small floating window instead of a stage: off,
+  // because it changes where everything is. pipRect remembers where the person
+  // left the window and how big they made it ({ x, y, w } in pixels).
+  pictureInPicture: false,
+  // Pop the picture-in-picture window out of Harmony, over everything else,
+  // while Harmony is minimised or hidden, and put it back when it returns.
+  pipPopOut: true,
+  pipRect: null,
   pushToTalkKey: '',
   /*
    * The colour palette, by name. Purely local: it is never sent anywhere

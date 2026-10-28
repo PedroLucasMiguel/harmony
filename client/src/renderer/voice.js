@@ -45,6 +45,10 @@ const VOICE_BITRATE = 32_000;
  */
 const VOICE_PTIME_MS = 40;
 
+/** How long the microphone's connection has to come up, and how many tries it gets. */
+const MIC_CONNECT_TIMEOUT_MS = 5000;
+const MIC_CONNECT_ATTEMPTS = 3;
+
 /**
  * What a camera may send while it is starting, and when it may send more.
  *
@@ -673,6 +677,15 @@ export class VoiceSession {
       iceServers: this.iceServers,
       // Fewer, bigger packets, and none for silence: see tuneOpusAnswer.
       audioTuning: { dtx: true, ptime: VOICE_PTIME_MS },
+      // Joined means CONNECTED. On a poor link the first connection can stall
+      // (lost checks, a lost handshake) and Chromium gives up on it only
+      // after fifteen seconds or much more -- a call that looks joined while
+      // nobody can hear you, until you leave and join again. Five seconds
+      // is several round trips of margin even on a slow link, a good one
+      // connects in well under one, and each further try gets half as long
+      // again.
+      connectTimeoutMs: MIC_CONNECT_TIMEOUT_MS,
+      attempts: MIC_CONNECT_ATTEMPTS,
     });
 
     // Either of these is a microphone nobody can hear any more, and nothing

@@ -120,6 +120,95 @@ async function requestJson(serverUrl, pathname, {
 }
 
 /**
+ * Private conversations: the paths they use, and nothing else.
+ *
+ * One narrow door instead of a wrapper per route -- there are about a dozen --
+ * and narrow on purpose: the renderer can only ask for these, with these
+ * methods, so a page that went wrong could not use it as a way to call the rest
+ * of the API with the session's token.
+ */
+const DM_PATH = new RegExp(
+  '^/api/(keys(/wrap|/lookup)?|inbox'
+  + '|dms(/blocks|/\\d+(/(messages|read|clear))?)?'
+  + '|dm-messages/\\d+/(edit|edits|delete|react))(\\?[A-Za-z0-9=&,._-]*)?$',
+);
+
+/**
+ * A private-conversation request, answered as DATA: {status, body}, for every
+ * HTTP status. An error here carries things the caller needs (a `stale_key`
+ * refusal brings the keys to seal to again), and errors cross to the page as a
+ * message and a code only. Only a server that cannot be reached throws.
+ */
+async function dmRequest(serverUrl, method, pathname, body) {
+  if (!['GET', 'POST'].includes(method) || !DM_PATH.test(String(pathname))) {
+    throw new ApiError('Not a private-conversation request.', { code: 'bad_request' });
+  }
+  const url = `${normalizeBase(serverUrl)}${pathname}`;
+  let res;
+  try {
+    const headers = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (password) headers['X-Harmony-Password'] = password;
+    if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+    res = await fetch(url, {
+      method,
+      headers: Object.keys(headers).length ? headers : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new ApiError(
+      err.name === 'TimeoutError'
+        ? 'The server did not respond in time.'
+        : `Could not reach ${url}. Check the server address and that Harmony is running.`,
+      { code: 'unreachable' },
+    );
+  }
+  const text = await res.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { /* non-JSON error body */ }
+  return { status: res.status, body: payload };
+}
+
+/** A file already sealed on this computer, to a conversation. {status, body}. */
+async function dmUpload(serverUrl, conversationId, bytes) {
+  if (!Number.isSafeInteger(Number(conversationId))) throw new ApiError('Bad conversation.', { code: 'bad_request' });
+  const url = `${normalizeBase(serverUrl)}/api/dms/${Number(conversationId)}/uploads`;
+  const headers = { 'Content-Type': 'application/octet-stream' };
+  if (password) headers['X-Harmony-Password'] = password;
+  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  let res;
+  try {
+    res = await fetch(url, { method: 'POST', headers, body: Buffer.from(bytes), signal: AbortSignal.timeout(120_000) });
+  } catch (err) {
+    throw new ApiError(`Upload failed: ${err.message}`, { code: 'unreachable' });
+  }
+  const text = await res.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { /* non-JSON error body */ }
+  return { status: res.status, body: payload };
+}
+
+/** A sealed file, still sealed: {status, bytes}. Opened by whoever holds its key. */
+async function dmDownload(serverUrl, conversationId, hash) {
+  if (!Number.isSafeInteger(Number(conversationId)) || !/^[0-9a-f]{64}$/.test(String(hash))) {
+    throw new ApiError('Bad file.', { code: 'bad_request' });
+  }
+  const url = `${normalizeBase(serverUrl)}/api/dms/${Number(conversationId)}/uploads/${hash}`;
+  const headers = {};
+  if (password) headers['X-Harmony-Password'] = password;
+  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  let res;
+  try {
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(120_000) });
+  } catch (err) {
+    throw new ApiError(`Could not download the file: ${err.message}`, { code: 'unreachable' });
+  }
+  if (!res.ok) return { status: res.status, bytes: null };
+  return { status: res.status, bytes: new Uint8Array(await res.arrayBuffer()) };
+}
+
+/**
  * The WHIP/WHEP handshake: POST an SDP offer, get an SDP answer plus a
  * Location header naming the session resource (used later to hang up).
  */
@@ -378,6 +467,9 @@ module.exports = {
   ApiError,
   setPassword,
   setSessionToken,
+  dmRequest,
+  dmUpload,
+  dmDownload,
   // The current server, with a shorter wait than an ordinary request: this
   // is what the connect screen shows a spinner for.
   health: (s) => requestJson(s, '/api/health', { timeoutMs: HEALTH_TIMEOUT_MS }),
@@ -398,6 +490,23 @@ module.exports = {
       body: { nickname, password: password_, ...(ownerKey ? { ownerKey } : {}) },
     }),
   logout: (s) => requestJson(s, '/api/accounts/logout', { method: 'POST' }),
+
+  // The password: changing it while signed in, and getting back in when it is
+  // forgotten (three questions the person wrote -- see server/src/recovery.js).
+  // The last three need no session: they are what the sign-in screen uses.
+  changePassword: (s, current, password_) =>
+    requestJson(s, '/api/accounts/password', { method: 'POST', body: { current, password: password_ } }),
+  recoveryStatus: (s) => requestJson(s, '/api/accounts/recovery'),
+  setRecovery: (s, current, items) =>
+    requestJson(s, '/api/accounts/recovery', { method: 'POST', body: { current, items } }),
+  clearRecovery: (s, current) =>
+    requestJson(s, '/api/accounts/recovery/clear', { method: 'POST', body: { current } }),
+  recoveryStart: (s, nickname) =>
+    requestJson(s, '/api/accounts/recovery/start', { method: 'POST', body: { nickname } }),
+  recoveryVerify: (s, nickname, answers) =>
+    requestJson(s, '/api/accounts/recovery/verify', { method: 'POST', body: { nickname, answers } }),
+  recoveryReset: (s, resetToken, password_) =>
+    requestJson(s, '/api/accounts/recovery/reset', { method: 'POST', body: { resetToken, password: password_ } }),
 
   // Channels. Reading is any member; everything else is admin-gated server
   // side, so these just surface whatever it answers.

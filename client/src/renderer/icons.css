@@ -39,3 +39,17 @@
 [data-icon='scissors'] { --icon: url('icons/scissors.svg'); }
 [data-icon='play'] { --icon: url('icons/play.svg'); }
 [data-icon='pause'] { --icon: url('icons/pause.svg'); }
+[data-icon='chat-circle-dots'] { --icon: url('icons/chat-circle-dots.svg'); }
+[data-icon='lock-simple'] { --icon: url('icons/lock-simple.svg'); }
+[data-icon='shield-check'] { --icon: url('icons/shield-check.svg'); }
+[data-icon='shield-warning'] { --icon: url('icons/shield-warning.svg'); }
+[data-icon='key'] { --icon: url('icons/key.svg'); }
+[data-icon='copy'] { --icon: url('icons/copy.svg'); }
+[data-icon='arrow-left'] { --icon: url('icons/arrow-left.svg'); }
+[data-icon='dots-three-vertical'] { --icon: url('icons/dots-three-vertical.svg'); }
+[data-icon='prohibit'] { --icon: url('icons/prohibit.svg'); }
+[data-icon='caret-left'] { --icon: url('icons/caret-left.svg'); }
+[data-icon='caret-right'] { --icon: url('icons/caret-right.svg'); }
+[data-icon='picture-in-picture'] { --icon: url('icons/picture-in-picture.svg'); }
+[data-icon='arrow-square-out'] { --icon: url('icons/arrow-square-out.svg'); }
+[data-icon='arrow-square-in'] { --icon: url('icons/arrow-square-in.svg'); }

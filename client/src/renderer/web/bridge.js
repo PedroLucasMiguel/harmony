@@ -316,6 +316,8 @@ export const harmony = {
     nativeScreenShare: NATIVE,
     appAudio: false,
     hotkeys: false,
+    // A window of its own for the picture in picture is the desktop's.
+    popout: false,
     clips: false,
     gpu: false,
     // A viewport scale only means something where the page IS the window:

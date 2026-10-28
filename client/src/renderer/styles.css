@@ -6412,3 +6412,430 @@ input[data-saved] {
   0%, 30% { background: rgb(var(--accent-rgb) / 0.35); }
   100% { background: transparent; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Private conversations: the button in the corner, the list under it, the
+ * conversation on the stage and the dialogs for the keys. See dm-ui.js. The
+ * messages themselves are drawn with the chat's own classes.
+ * ------------------------------------------------------------------------- */
+
+.dm-open {
+  position: relative;
+}
+.dm-badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+.dm-panel {
+  position: fixed;
+  z-index: 70;
+  top: 3.25rem;
+  right: 0.75rem;
+  width: min(23rem, calc(100vw - 1.5rem));
+  max-height: min(34rem, calc(100vh - 4.5rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border: 1px solid rgb(var(--tint-rgb) / 0.14);
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+}
+.dm-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.dm-panel-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.dm-panel-note,
+.dm-empty {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.dm-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.dm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+}
+.dm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.dm-row:hover,
+.dm-row[data-current] {
+  background: rgb(var(--tint-rgb) / 0.07);
+}
+.dm-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.dm-row-top,
+.dm-row-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.dm-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.dm-row-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.dm-row-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.dm-row[data-unread] .dm-row-text {
+  color: var(--text);
+}
+.dm-row-count {
+  flex: none;
+  min-width: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.1rem;
+  text-align: center;
+}
+
+/* The conversation: the chat's own layout, with a header that has a lock in it. */
+#dm-active {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.dm-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dm-head h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dm-head-avatar {
+  flex: none;
+}
+.dm-lock[data-icon] {
+  flex: none;
+  color: var(--live);
+}
+.dm-verified {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgb(var(--live-rgb) / 0.18);
+  color: var(--live);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+#dm-safety[data-verified] {
+  color: var(--live);
+}
+.dm-more {
+  align-self: center;
+  margin: 0.3rem 0;
+}
+.dm-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.4rem 0;
+}
+.dm-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgb(var(--tint-rgb) / 0.14);
+  background: rgb(var(--tint-rgb) / 0.05);
+  font-size: 0.85rem;
+}
+.dm-banner-row > span {
+  flex: 1 1 14rem;
+}
+.dm-unreadable,
+.dm-call {
+  color: var(--muted);
+  font-style: italic;
+}
+.dm-unreadable[data-icon]::before {
+  /* The lock, drawn where the generic icon rule puts it, but in line with the words. */
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.35em;
+  vertical-align: -0.12em;
+}
+.dm-unconfirmed {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--warn);
+  font-size: 0.75rem;
+}
+
+/* The keys. */
+.dm-keys {
+  width: min(30rem, 92vw);
+}
+.dm-keys h2 {
+  margin-top: 0;
+}
+.dm-recovery {
+  margin: 0.8rem 0;
+  padding: 0.8rem 0.9rem;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px dashed var(--border-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.dm-safety-number {
+  font-size: 1.2rem;
+}
+.dm-recovery-input {
+  width: 100%;
+  margin: 0.8rem 0 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---------- picture in picture ---------- */
+
+/*
+ * The channel's streams as one window floating over the app. Fixed, so it
+ * stays where it was put whichever column is showing; its position and width
+ * are set from script (the person drags and resizes it), the height follows
+ * from the width so the picture keeps its shape.
+ */
+.pip {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(var(--tint-rgb) / 0.18);
+}
+.pip[hidden] {
+  display: none;
+}
+.pip[data-moving],
+.pip[data-resizing] {
+  user-select: none;
+}
+.pip-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.35rem;
+  background: rgb(var(--tint-rgb) / 0.1);
+  backdrop-filter: blur(6px);
+  font-size: 0.75rem;
+  cursor: grab;
+  touch-action: none;
+}
+.pip[data-moving] .pip-bar {
+  cursor: grabbing;
+}
+.pip-bar .tile-btn {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 4px;
+  line-height: 1;
+}
+.pip-bar .tile-btn:hover {
+  background: rgb(var(--tint-rgb) / 0.18);
+}
+.pip-bar .tile-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pip-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+/* Who is talking, when that is why the window is showing a camera. */
+.pip-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  color: var(--accent);
+}
+.pip-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.pip-body > .channel-tile {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+  cursor: default;
+}
+.pip-body > .channel-tile video {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  aspect-ratio: auto;
+}
+.pip-body > .channel-tile .tile-controls,
+.pip-body > .channel-tile .tile-corner {
+  opacity: 1;
+}
+/* Popped out into a window of its own: it fills that window, and the
+   operating system does the moving and the sizing. */
+.pip[data-detached] {
+  position: static;
+  width: 100%;
+  height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
+.pip[data-detached] .pip-bar {
+  cursor: default;
+}
+.pip[data-detached] .pip-resize {
+  display: none;
+}
+body.pip-window {
+  padding: 0;
+  background: #000;
+  overflow: hidden;
+}
+/* Closing a stream leaves a square on the stage to reopen it from, and the
+   stage is not showing: the way to stop watching is to leave the window. */
+.pip-body > .channel-tile .tile-btn[data-role='close'] {
+  display: none;
+}
+/* Small windows have no room for a volume slider's label. */
+.pip-body > .channel-tile .tile-volume-label {
+  display: none;
+}
+.pip-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 50%, rgb(255 255 255 / 0.75) 50% 58%, transparent 58% 68%, rgb(255 255 255 / 0.75) 68% 76%, transparent 76%);
+  opacity: 0.7;
+  filter: drop-shadow(0 0 1px #000);
+}
+.pip-resize:hover {
+  opacity: 1;
+}
+/* Everything the stage's own layouts do to a tile is moot while the window
+   is showing: the streams that are not chosen wait out of sight. */
+.channel-video[data-layout='pip'] {
+  display: none;
+}
+
+/* ---------- who a stream is ---------- */
+
+/* The picture of whose stream it is, and their mute and deafen glyphs, in the
+   caption. Small: the caption is a strip, and the stream is the point. */
+.channel-tile .tile-face {
+  font-size: 0.62rem;
+}
+.channel-tile .tile-face[hidden],
+.channel-tile .tile-standing[hidden] {
+  display: none;
+}
+.channel-tile .tile-standing {
+  gap: 0.3rem;
+}
+
+/* ---------- security ---------- */
+
+/* A question and its answer, side by side where there is room. */
+.security-question {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 0.6rem;
+  align-items: end;
+}
+@media (max-width: 640px) {
+  .security-question {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+.security-status {
+  font-weight: 600;
+}
+.security-status[data-on] {
+  color: var(--live);
+}
+#forgot-row {
+  margin-top: 0.2rem;
+}

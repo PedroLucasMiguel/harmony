@@ -170,6 +170,9 @@
             <span id="auth-mode-text"></span>
             <button type="button" class="linklike" id="auth-mode-toggle"></button>
           </p>
+          <p class="switch-auth" id="forgot-row">
+            <button type="button" class="linklike" id="forgot-password" data-i18n="security.forgot">Forgot password?</button>
+          </p>
         </div>
 
         <p class="error" id="connect-error" hidden></p>
@@ -325,6 +328,15 @@
             answer ("you are not the owner") is not worth asking everybody
             on every screen.
           -->
+          <!--
+            Private conversations: the list opens under this. Hidden until a
+            session is signed in, and for good on a server that has none (the
+            list says so). The badge is what has not been read.
+          -->
+          <button class="ghost small icon-only dm-open" id="dm-open" data-icon="chat-circle-dots"
+                  title="Private messages" aria-label="Private messages" hidden data-i18n-title="dm.open" data-i18n-aria-label="dm.open">
+            <span class="dm-badge" id="dm-badge" hidden></span>
+          </button>
           <button
             class="ghost small icon-only"
             id="server-settings"
@@ -339,6 +351,23 @@
                   title="Sign out" aria-label="Sign out" data-i18n-title="view.channels.sign_out" data-i18n-aria-label="view.channels.sign_out"></button>
         </div>
       </header>
+
+      <!--
+        The list of private conversations, under the button in the corner.
+        Drawn by dm-ui.js; what it says when there is nothing to list (not set
+        up, locked, a server without them) is in #dm-panel-note.
+      -->
+      <div class="dm-panel" id="dm-panel" hidden role="dialog" aria-label="Private messages" data-i18n-aria-label="dm.title">
+        <div class="dm-panel-head">
+          <h2 data-i18n="dm.title">Private messages</h2>
+          <button class="ghost small icon-only" id="dm-panel-close" data-icon="x"
+                  title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+        </div>
+        <p class="muted dm-panel-note" id="dm-panel-note" hidden></p>
+        <div class="dm-panel-actions" id="dm-panel-actions" hidden></div>
+        <ul class="dm-list" id="dm-list"></ul>
+        <p class="muted dm-empty" id="dm-empty" hidden data-i18n="dm.empty">No private conversations yet. Right-click someone in the member list and choose &ldquo;Send a private message&rdquo;.</p>
+      </div>
 
       <div class="channels-layout">
         <aside class="channel-list">
@@ -523,6 +552,23 @@
           to show -- a permanent empty third of the window is worse than no
           column at all.
         -->
+        <!--
+          Picture in picture: the channel's streams as one small window that
+          floats over whatever is on screen. Hidden unless the setting is on and
+          there is somebody else's stream to show. See renderChannelVideo.
+        -->
+        <div class="pip" id="pip" hidden>
+          <div class="pip-bar" id="pip-bar" data-i18n-title="app.pip_move" title="Drag to move">
+            <button type="button" class="tile-btn" id="pip-prev" data-icon="caret-left" data-i18n-title="app.pip_previous" title="Previous stream"></button>
+            <span class="pip-count" id="pip-count"></span>
+            <button type="button" class="tile-btn" id="pip-next" data-icon="caret-right" data-i18n-title="app.pip_next" title="Next stream"></button>
+            <span class="pip-note" id="pip-note"></span>
+            <button type="button" class="tile-btn" id="pip-detach" data-cap="popout" data-icon="arrow-square-out" data-i18n-title="app.pip_pop_out" title="Pop out of Harmony"></button>
+            <button type="button" class="tile-btn" id="pip-stage" data-icon="squares-four" data-i18n-title="app.pip_back_to_the_stage" title="Put the streams back on the stage"></button>
+          </div>
+          <div class="pip-body" id="pip-body"></div>
+          <div class="pip-resize" id="pip-resize" data-i18n-title="app.pip_resize" title="Drag to resize"></div>
+        </div>
         <section class="channel-stage" id="channel-stage" hidden>
           <!--
             Exactly one of these at a time. Clicking a text channel puts the
@@ -643,6 +689,56 @@
               <input id="chat-file" type="file" hidden />
             </form>
             <p class="muted" id="chat-note"></p>
+          </div>
+
+          <!--
+            A private conversation. Beside the channel's chat and never with
+            it: applyStage decides which. Same classes as the chat's, so the
+            same look.
+          -->
+          <div id="dm-active" hidden>
+            <header class="voice-head dm-head">
+              <span class="avatar dm-head-avatar" id="dm-head-avatar"></span>
+              <h2 id="dm-name"></h2>
+              <span class="dm-lock" data-icon="lock-simple" title="End-to-end encrypted: only the two of you can read this."
+                    data-i18n-title="dm.encrypted"></span>
+              <span class="dm-verified" id="dm-verified" hidden data-i18n="dm.verified">Verified</span>
+              <button class="ghost small icon-only" id="dm-safety" data-icon="shield-check"
+                      title="Safety number" aria-label="Safety number" data-i18n-title="dm.safety.menu" data-i18n-aria-label="dm.safety.menu"></button>
+              <button class="ghost small icon-only" id="dm-menu-button" data-icon="dots-three-vertical"
+                      title="More" aria-label="More" data-i18n-title="dm.more" data-i18n-aria-label="dm.more"></button>
+              <button class="ghost small icon-only" id="dm-close" data-icon="x"
+                      title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+            </header>
+            <div id="dm-banner" class="dm-banner" hidden></div>
+            <button class="ghost small dm-more" id="dm-more" hidden data-i18n="dm.load_older">Load older messages</button>
+            <div id="dm-log" class="chat-log"></div>
+            <form id="dm-form" class="chat-form">
+              <div class="composer">
+                <div class="composer-reply" id="dm-reply" hidden>
+                  <span class="composer-reply-text"><span data-i18n="chat_reply.replying_to">Replying to</span> <strong id="dm-reply-name"></strong></span>
+                  <button type="button" class="composer-btn" id="dm-reply-clear"
+                          data-icon="x" title="Cancel the reply" data-i18n-title="chat_reply.cancel_the_reply" data-i18n="chat_reply_clear.cancel_reply">Cancel reply</button>
+                </div>
+                <div class="composer-file" id="dm-pending" hidden>
+                  <span class="composer-filename" id="dm-pending-name"></span>
+                  <button type="button" class="composer-btn" id="dm-pending-clear"
+                          data-icon="x" title="Don't send this" data-i18n-title="chat_pending.don_t_send_this" data-i18n="chat_pending_clear.remove">Remove</button>
+                </div>
+                <div class="composer-row">
+                  <button type="button" class="composer-btn composer-plus" id="dm-attach" data-icon="plus-circle"
+                          title="Attach a file" data-i18n-title="chat_form.attach_a_file" data-i18n="chat_attach.attach">Attach</button>
+                  <textarea id="dm-input" placeholder="Write a private message" autocomplete="off" maxlength="4000" rows="1"
+                            data-i18n-placeholder="dm.placeholder"></textarea>
+                  <button type="button" class="composer-btn" id="dm-emoji" data-icon="smiley"
+                          title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji">Emoji</button>
+                  <button type="submit" class="composer-btn composer-send" id="dm-send" data-icon="paper-plane-right"
+                          title="Send" data-i18n-title="chat_form.send" data-i18n="chat_send.send">Send</button>
+                </div>
+              </div>
+              <input id="dm-file" type="file" hidden />
+            </form>
+            <p class="muted" id="dm-note"></p>
           </div>
         </section>
 
@@ -1150,6 +1246,9 @@
           <button type="button" role="tab" class="settings-tab" data-tab="profile" aria-selected="false">
             <span class="settings-tab-icon" data-icon="user-circle" aria-hidden="true"></span><span data-i18n="settings.profile">Profile</span>
           </button>
+          <button type="button" role="tab" class="settings-tab" data-tab="security" aria-selected="false">
+            <span class="settings-tab-icon" data-icon="shield-check" aria-hidden="true"></span><span data-i18n="settings.security">Security</span>
+          </button>
           <button type="button" role="tab" class="settings-tab" data-tab="appearance" aria-selected="true">
             <span class="settings-tab-icon" data-icon="eye" aria-hidden="true"></span><span data-i18n="settings.appearance">Appearance</span>
           </button>
@@ -1296,6 +1395,85 @@
               the only one here that is not about hardware. Size sits with it:
               both are about reading the app rather than the hardware under it.
             -->
+            <!--
+              How you get into this account: the password, and what to do if
+              you forget it. Both ask for the password you have now.
+            -->
+            <section class="settings-page" role="tabpanel" data-page="security" hidden>
+              <h3 class="settings-page-title" data-i18n="security.title">Security</h3>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="security.password_title">Password</span>
+                </div>
+                <p class="setting-note" data-i18n="security.password_hint">Change the password you sign in with. Any other device signed in to this account is signed out when you do.</p>
+                <label class="field">
+                  <span data-i18n="security.current_password">Current password</span>
+                  <input id="sec-current" type="password" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span data-i18n="security.new_password">New password</span>
+                  <input id="sec-new" type="password" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span data-i18n="security.confirm_password">Confirm the new password</span>
+                  <input id="sec-confirm" type="password" autocomplete="off" />
+                </label>
+                <div class="profile-actions">
+                  <button type="button" class="primary" id="sec-change" data-i18n="security.change_password">Change password</button>
+                </div>
+                <p class="setting-note profile-status" id="sec-change-note" role="status"></p>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" data-i18n="security.recovery_title">Password recovery</span>
+                </div>
+                <p class="setting-note" data-i18n="security.recovery_hint">Write three questions only you can answer. If you forget your password you can choose a new one from the sign-in screen by answering all three.</p>
+                <p class="setting-note security-status" id="sec-rec-status" role="status"></p>
+                <div class="security-question">
+                  <label class="field">
+                    <span data-i18n="security.question_1">Question 1</span>
+                    <input id="sec-q1" type="text" maxlength="140" autocomplete="off" spellcheck="false" data-i18n-placeholder="security.question_placeholder" placeholder="What was the name of your first pet?" />
+                  </label>
+                  <label class="field">
+                    <span data-i18n="security.answer_1">Answer 1</span>
+                    <input id="sec-a1" type="text" maxlength="200" autocomplete="off" spellcheck="false" />
+                  </label>
+                </div>
+                <div class="security-question">
+                  <label class="field">
+                    <span data-i18n="security.question_2">Question 2</span>
+                    <input id="sec-q2" type="text" maxlength="140" autocomplete="off" spellcheck="false" />
+                  </label>
+                  <label class="field">
+                    <span data-i18n="security.answer_2">Answer 2</span>
+                    <input id="sec-a2" type="text" maxlength="200" autocomplete="off" spellcheck="false" />
+                  </label>
+                </div>
+                <div class="security-question">
+                  <label class="field">
+                    <span data-i18n="security.question_3">Question 3</span>
+                    <input id="sec-q3" type="text" maxlength="140" autocomplete="off" spellcheck="false" />
+                  </label>
+                  <label class="field">
+                    <span data-i18n="security.answer_3">Answer 3</span>
+                    <input id="sec-a3" type="text" maxlength="200" autocomplete="off" spellcheck="false" />
+                  </label>
+                </div>
+                <label class="field">
+                  <span data-i18n="security.current_password">Current password</span>
+                  <input id="sec-rec-current" type="password" autocomplete="off" />
+                </label>
+                <div class="profile-actions">
+                  <button type="button" class="primary" id="sec-rec-save" data-i18n="security.save_recovery">Save questions</button>
+                  <button type="button" class="ghost" id="sec-rec-clear" data-i18n="security.remove_recovery" hidden>Remove recovery</button>
+                </div>
+                <p class="setting-note" data-i18n="security.answers_note">Answers do not care about capital letters, accents, punctuation or extra spaces. They are stored scrambled, like a password, and cannot be read back; saving replaces all three.</p>
+                <p class="setting-note profile-status" id="sec-rec-note" role="status"></p>
+              </div>
+            </section>
+
             <section class="settings-page" role="tabpanel" data-page="appearance">
               <h3 class="settings-page-title" data-i18n="settings.appearance.appearance">Appearance</h3>
 
@@ -1479,6 +1657,20 @@
                     <small data-i18n="settings.voice.pause_hidden_cameras_hint">When the window is minimised, in the tray or covered, other people's cameras are not downloaded or decoded, which saves your connection and the server's. They come back the moment you do. Voices and screen shares carry on.</small>
                   </span>
                   <input type="checkbox" class="switch" role="switch" id="pause-hidden-cameras" checked />
+                </label>
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.picture_in_picture">Picture in picture</span>
+                    <small data-i18n="settings.voice.picture_in_picture_hint">Streams in a channel are shown in one small window that floats over the app while you read a text channel.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="picture-in-picture" />
+                </label>
+                <label class="setting-toggle" data-cap="popout">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.pip_pop_out">Pop the window out when Harmony is minimised</span>
+                    <small data-i18n="settings.voice.pip_pop_out_hint">The picture in picture becomes a window of its own, on top of everything else, whenever Harmony is minimised or hidden, and goes back in when you return. The button on its bar does it by hand.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="pip-pop-out" checked />
                 </label>
               </div>
                           <!--

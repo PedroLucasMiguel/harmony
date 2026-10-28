@@ -1,8 +1,12 @@
-// System audio minus one application, on macOS.
+// System audio minus one application, or one window's application alone, on
+// macOS.
 //
 // The Windows capture addon has no macOS counterpart, and Chromium's own
-// loopback cannot leave anything out. ScreenCaptureKit can: a content filter
-// that excludes applications also excludes their audio. There is no Node
+// loopback cannot leave anything out or pick one thing. ScreenCaptureKit can: a
+// content filter that excludes applications also excludes their audio, and one
+// on a single window carries only the audio of the application that owns it
+// (macOS has no sound per window; it is the application's, as on Windows).
+// There is no Node
 // binding for it, so a small Swift program (client/native/mac) does the
 // capture and writes PCM to its stdout, which is spawned from here.
 //
@@ -32,6 +36,7 @@ const READY_TIMEOUT_MS = 8000;
 const EXIT_NOTES = {
   2: 'Screen Recording is not allowed for Harmony. Turn it on in System Settings > Privacy & Security; if it is already on, open the source picker and use "Reset and restart".',
   3: 'There is no display to capture audio from.',
+  5: 'That window is not open any more.',
 };
 
 let child = null;
@@ -77,22 +82,55 @@ function stop() {
 }
 
 /**
- * @param {{excludePid: number|null}} opts
+ * What the helper is asked for. Pure, for the tests.
+ *
+ * A window wins over everything: its application's audio, and no tree to work
+ * out -- ScreenCaptureKit knows which sound belongs to which application.
+ */
+function helperArgs({ excluded = [], windowId = null } = {}) {
+  if (windowId) return ['--include-window', String(windowId)];
+  return excluded.length ? ['--exclude-pids', excluded.join(',')] : [];
+}
+
+/**
+ * The window number in a source id from the picker: "window:1234:0" -> 1234.
+ * Null for anything else.
+ */
+function windowIdOf(sourceId) {
+  const match = /^window:(\d+):/.exec(String(sourceId ?? ''));
+  const id = match ? Number(match[1]) : 0;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * @param {{excludePid?: number|null, windowId?: number|null}} opts
  * @param {(chunk: Buffer) => void} onChunk
  * @returns {Promise<{mode: string, format: object, note: string|null, pid?: number}>}
  */
-async function start({ excludePid = null }, onChunk) {
+async function start({ excludePid = null, windowId = null }, onChunk) {
   stop();
 
   const { available, reason } = availability();
   if (!available) return { mode: 'none', format: FORMAT, note: `${reason} Sharing without audio.` };
 
-  const excluded = excludePid ? [...(await processes.tree(excludePid))] : [];
-  const args = excluded.length ? ['--exclude-pids', excluded.join(',')] : [];
+  const excluded = !windowId && excludePid ? [...(await processes.tree(excludePid))] : [];
+  const args = helperArgs({ excluded, windowId });
 
   const running = spawn(helperPath(), args, { stdio: ['pipe', 'pipe', 'pipe'] });
   child = running;
   running.stdout.on('data', alignFrames(onChunk));
+  // What the helper says goes in the log: which application it is capturing,
+  // whether any sound has arrived. Silence is the failure there is least to
+  // go on for, and this is most of what there is.
+  let pending = '';
+  running.stderr.on('data', (data) => {
+    pending += data;
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) {
+      if (line.trim() && line.trim() !== 'ready') console.log(`[audio] mac helper: ${line.trim()}`);
+    }
+  });
 
   const outcome = await new Promise((resolve) => {
     let stderr = '';
@@ -117,7 +155,7 @@ async function start({ excludePid = null }, onChunk) {
     return {
       mode: 'none',
       format: FORMAT,
-      note: `Could not capture system audio: ${outcome.why} Sharing without audio.`,
+      note: `Could not capture ${windowId ? "that window's audio" : 'system audio'}: ${outcome.why} Sharing without audio.`,
     };
   }
 
@@ -130,9 +168,12 @@ async function start({ excludePid = null }, onChunk) {
     }
   });
 
+  if (windowId) return { mode: 'application', format: FORMAT, note: null };
   return excluded.length
     ? { mode: 'system-excluding', format: FORMAT, note: null, pid: excludePid }
     : { mode: 'system', format: FORMAT, note: null };
 }
 
-module.exports = { start, stop, availability, listProcesses, FORMAT };
+module.exports = {
+  start, stop, availability, listProcesses, helperArgs, windowIdOf, FORMAT,
+};

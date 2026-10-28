@@ -35,9 +35,12 @@ import {
   publicMessage, publicClip, publicEmoji, mediaTypeOf, mentionsIn,
   MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MAX_JOIN_SOUND_BYTES,
   MAX_JOIN_SOUND_SECONDS, MAX_CLIP_BYTES, MAX_EMOJI_BYTES, MAX_EMOJIS,
-  MAX_FILE_LIMIT, DEFAULT_FILE_BYTES,
+  MAX_FILE_LIMIT, DEFAULT_FILE_BYTES, SEALED_TYPE,
 } from './chat.js';
 import { UploadSessions } from './upload-sessions.js';
+import { DirectMessages } from './dms.js';
+import { mountDirectMessages } from './dm-routes.js';
+import { Recovery, mountRecovery } from './recovery.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -53,10 +56,22 @@ app.disable('x-powered-by');
  * proxies it actually trusts, landing on the address Caddy observed.
  */
 app.set('trust proxy', 'loopback');
-const jsonBody = express.json({ limit: '16kb' });
+/*
+ * Request bodies are small JSON everywhere except a private conversation's
+ * routes, where a message arrives sealed: a 4000-character body that is all
+ * emoji is 16 KB of UTF-8 before it is encrypted and base64'd. Those get a
+ * bigger allowance -- still a ceiling, enforced again per field in dms.js --
+ * and everything else keeps the tight one.
+ */
+const smallJson = express.json({ limit: '16kb' });
+const sealedJson = express.json({ limit: '96kb' });
 // Not for an upload: a file that happens to be JSON is a file, and the parser
 // would read it as a request body (and refuse anything past 16 kb of it).
-app.use((req, res, next) => (req.path === '/api/uploads' ? next() : jsonBody(req, res, next)));
+const isUpload = (path) => path === '/api/uploads' || /^\/api\/dms\/\d+\/uploads$/.test(path);
+app.use((req, res, next) => {
+  if (isUpload(req.path)) return next();
+  return (req.path.startsWith('/api/dm') ? sealedJson : smallJson)(req, res, next);
+});
 
 const db = openDatabase({ dataDir: ensureDataDir(config.dataDir) });
 const metaStore = meta(db);
@@ -70,6 +85,8 @@ const chat = new Chat(db, { dataDir: config.dataDir, maxDiskBytes: config.maxDis
 const uploads = new UploadSessions(chat);
 const soundpad = new Soundpad(db);
 const emojis = new Emojis(db);
+const dms = new DirectMessages(db);
+const recovery = new Recovery(db);
 /*
  * The name and the door key.
  *
@@ -95,6 +112,16 @@ const limiter = new LoginLimiter({
  * rotates addresses still cannot grind a single account.
  */
 const loginLimiter = new LoginLimiter({
+  maxAttempts: config.maxLoginAttempts,
+  lockoutMinutes: config.lockoutMinutes,
+});
+/**
+ * Wrong "current password" tries by somebody ALREADY signed in -- changing the
+ * password, setting recovery questions. Separate from the login limiter on
+ * purpose: somebody holding a stolen session must not be able to lock the real
+ * owner out of signing in by guessing here.
+ */
+const passwordLimiter = new LoginLimiter({
   maxAttempts: config.maxLoginAttempts,
   lockoutMinutes: config.lockoutMinutes,
 });
@@ -223,6 +250,13 @@ app.get('/api/health', (req, res) => {
     mediamtx: monitor.reachable ? 'up' : 'down',
     passwordRequired: serverSettings.passwordRequired,
     authenticated: authed,
+    // What this server can do beyond the basics, for a client to ask before it
+    // relies on it. Private conversations themselves are told by their routes
+    // answering at all (a 404 on /api/keys is a server without them).
+    // `dm-clear`: deleting a conversation for yourself. Ciranda's list also
+    // has `inbox`, which promises sockets that carry only private messages;
+    // Harmony's sockets are all the same kind, so it is not claimed here.
+    features: ['dm-clear'],
     ...(authed
       ? {
           name: serverSettings.name,
@@ -400,16 +434,40 @@ app.get('/api/accounts/me', requireLogin, (req, res) => {
 });
 
 app.post('/api/accounts/password', requireLogin, async (req, res) => {
+  const key = `u${req.user.id}`;
+  const gate = passwordLimiter.check(key);
+  if (!gate.allowed) {
+    res.set('Retry-After', String(gate.retryAfterSec));
+    return res.status(429).json({
+      error: 'locked_out',
+      retryAfterSec: gate.retryAfterSec,
+      message: `Too many wrong passwords. Try again in ${formatWait(gate.retryAfterSec)}.`,
+    });
+  }
   const ok = await accounts.verify(req.user.nickname, req.body?.current);
   if (!ok) {
+    const failed = passwordLimiter.fail(key);
+    if (failed.locked) {
+      res.set('Retry-After', String(failed.retryAfterSec));
+      return res.status(429).json({
+        error: 'locked_out',
+        retryAfterSec: failed.retryAfterSec,
+        message: `Too many wrong passwords. Try again in ${formatWait(failed.retryAfterSec)}.`,
+      });
+    }
     return res.status(401).json({ error: 'bad_credentials', message: 'Current password is wrong.' });
   }
+  passwordLimiter.succeed(key);
   const result = await accounts.changePassword(req.user.id, req.body?.password);
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: 'Use at least 6 characters.' });
   }
   // changePassword drops every session for this account, including this one.
   return res.json({ ok: true, token: accounts.startSession(req.user.id) });
+});
+
+mountRecovery(app, {
+  requireLogin, accounts, recovery, loginLimiter, passwordLimiter, publicUser,
 });
 
 /**
@@ -1432,6 +1490,31 @@ app.post(
  */
 app.get('/api/uploads/:hash', requireLogin, (req, res) => sendUpload(req, res));
 
+// ---------------------------------------------------------------------------
+// Private conversations: see dm-routes.js
+// ---------------------------------------------------------------------------
+
+mountDirectMessages(app, {
+  requireLogin,
+  dms,
+  chat,
+  accounts,
+  push: (userIds, payload) => { for (const id of userIds) realtime?.toUser(id, payload); },
+  broadcast: (payload) => realtime?.broadcast(payload),
+});
+
+/**
+ * Whether anything arrived, for a client that keeps this server in the
+ * background with no socket open: the newest private message. Cheap on
+ * purpose, since it is asked every 15 seconds; the client opens a socket only
+ * once the answer changes. The same route, and the same two fields beside
+ * `latest`, as Ciranda's, which also has calls to report here: there are none
+ * in Harmony, so nobody is ringing and nobody is in one.
+ */
+app.get('/api/inbox', requireLogin, (req, res) => {
+  res.json({ latest: dms.latest(req.user.id), ringing: false, inCall: false });
+});
+
 /** A key for loading uploads without headers. See GET /api/media/:hash. */
 app.get('/api/media-key', requireLogin, (req, res) => {
   res.json({ key: mintMediaKey(mediaSecret, req.user.id) });
@@ -1442,7 +1525,9 @@ function sendUpload(req, res) {
   if (!/^[0-9a-f]{64}$/.test(hash)) return res.status(400).json({ error: 'bad_hash' });
 
   const info = chat.fileInfo(hash);
-  if (!info) return res.status(404).json({ error: 'no_such_file' });
+  // A conversation's sealed file is read through that conversation, by the two
+  // people in it (dm-routes.js), and through nothing else.
+  if (!info || info.content_type === SEALED_TYPE) return res.status(404).json({ error: 'no_such_file' });
 
   res.set('Content-Type', info.content_type);
   res.set('X-Content-Type-Options', 'nosniff');

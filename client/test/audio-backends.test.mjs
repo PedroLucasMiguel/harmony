@@ -149,3 +149,111 @@ describe('PipeWire link planning', () => {
     assert.deepEqual(planLinks(graph.filter((o) => o.id !== 10 && o.info?.props?.['node.id'] !== 10)), []);
   });
 });
+
+describe('the audio of one window, on macOS', () => {
+  const mac = require('../src/main/audio-mac.js');
+
+  it('reads the window number out of a picker source id', () => {
+    assert.equal(mac.windowIdOf('window:1234:0'), 1234);
+    assert.equal(mac.windowIdOf('window:7:1'), 7);
+    assert.equal(mac.windowIdOf('screen:1:0'), null);
+    assert.equal(mac.windowIdOf('window:0:0'), null);
+    assert.equal(mac.windowIdOf('window:abc:0'), null);
+    assert.equal(mac.windowIdOf(undefined), null);
+  });
+
+  it('asks the helper for the window alone, or for the system less some apps', () => {
+    assert.deepEqual(mac.helperArgs({ windowId: 1234 }), ['--include-window', '1234']);
+    assert.deepEqual(mac.helperArgs({ excluded: [100, 101] }), ['--exclude-pids', '100,101']);
+    assert.deepEqual(mac.helperArgs({}), []);
+    // A window is never also a list of apps to leave out.
+    assert.deepEqual(mac.helperArgs({ windowId: 9, excluded: [1] }), ['--include-window', '9']);
+  });
+});
+
+describe('where a window share goes on macOS', () => {
+  const appAudioPath = require.resolve('../src/main/app-audio.js');
+  const macPath = require.resolve('../src/main/audio-mac.js');
+  const realMac = require.cache[macPath]?.exports ?? require(macPath);
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+
+  /** app-audio.js as if on a Mac whose helper behaves as `fake` says. */
+  function loadOnMac(fake) {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    require.cache[macPath].exports = { ...realMac, ...fake };
+    delete require.cache[appAudioPath];
+    return require(appAudioPath);
+  }
+  const restore = () => {
+    Object.defineProperty(process, 'platform', platform);
+    require.cache[macPath].exports = realMac;
+    delete require.cache[appAudioPath];
+  };
+
+  const window = { kind: 'window', sourceId: 'window:4242:0', sourceName: 'Some Game' };
+
+  it('says a window can be shared with its own audio, though no addon is there', async () => {
+    const audio = loadOnMac({ availability: async () => ({ available: true, reason: null }) });
+    try {
+      const found = await audio.availability();
+      assert.equal(found.available, false);
+      assert.equal(found.windowAudio, true);
+      assert.equal(found.exclusion, true);
+    } finally { restore(); }
+  });
+
+  it('does not, where the helper cannot run', async () => {
+    const audio = loadOnMac({ availability: async () => ({ available: false, reason: 'too old' }) });
+    try {
+      assert.equal((await audio.availability()).windowAudio, false);
+    } finally { restore(); }
+  });
+
+  it('hands the window number to the helper and reports one application', async () => {
+    let asked = null;
+    const audio = loadOnMac({
+      availability: async () => ({ available: true, reason: null }),
+      start: async (opts) => { asked = opts; return { mode: 'application', format: {}, note: null }; },
+    });
+    try {
+      const result = await audio.start(window, () => {});
+      assert.deepEqual(asked, { windowId: 4242 });
+      assert.equal(result.mode, 'application');
+    } finally { restore(); }
+  });
+
+  it('shares without sound when the window cannot be captured and silence is what was asked for', async () => {
+    const audio = loadOnMac({
+      availability: async () => ({ available: true, reason: null }),
+      start: async () => ({ mode: 'none', format: {}, note: 'That window is not open any more. Sharing without audio.' }),
+    });
+    try {
+      const result = await audio.start({ ...window, fallback: 'silent' }, () => {});
+      assert.equal(result.mode, 'none');
+    } finally { restore(); }
+  });
+
+  it('falls back to the system audio when that is what was asked for', async () => {
+    const audio = loadOnMac({
+      availability: async () => ({ available: true, reason: null }),
+      start: async () => ({ mode: 'none', format: {}, note: 'That window is not open any more. Sharing without audio.' }),
+    });
+    try {
+      const result = await audio.start({ ...window, fallback: 'system' }, () => {});
+      assert.equal(result.mode, 'chromium-loopback');
+      assert.match(result.note, /not open any more\. Falling back to system audio\.$/);
+    } finally { restore(); }
+  });
+
+  it('leaves a whole-screen share exactly as it was', async () => {
+    let asked = null;
+    const audio = loadOnMac({
+      availability: async () => ({ available: true, reason: null }),
+      start: async (opts) => { asked = opts; return { mode: 'system-excluding', format: {}, note: null }; },
+    });
+    try {
+      await audio.start({ kind: 'screen', sourceId: 'screen:1:0', excludePid: 99 }, () => {});
+      assert.deepEqual(asked, { excludePid: 99 });
+    } finally { restore(); }
+  });
+});

@@ -10,10 +10,13 @@ import { drawTrayIcons } from './tray-icons.js';
 import { t, texts, setLanguage, languages, currentLanguage, resolveLanguage, cachedPreference, onLanguageChange } from './i18n.js';
 import {
   createSink, MAX_GAIN, asPercent, playSample, setOutputDevice, monitorStream, playCue,
-  setCueVolume, playJoinSound, stopJoinSounds,
+  setCueVolume, playJoinSound, stopJoinSounds, cueStatus,
 } from './gain.js';
 import { NAME_FONTS, nameFontOf } from './name-fonts.js';
 import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
+import { recoverAccount } from './recovery-flow.js';
+import { createSecurityUi } from './security-ui.js';
+import { createDmUi } from './dm-ui.js';
 
 // ---------------------------------------------------------------------------
 // Stream presets
@@ -199,6 +202,20 @@ const el = {
   profileSoundFile: $('profile-sound-file'),
   profileSoundNote: $('profile-sound-note'),
   customJoinSounds: $('custom-join-sounds'),
+  forgotPassword: $('forgot-password'),
+  forgotRow: $('forgot-row'),
+  pictureInPicture: $('picture-in-picture'),
+  pip: $('pip'),
+  pipBar: $('pip-bar'),
+  pipBody: $('pip-body'),
+  pipPrev: $('pip-prev'),
+  pipNext: $('pip-next'),
+  pipCount: $('pip-count'),
+  pipNote: $('pip-note'),
+  pipStage: $('pip-stage'),
+  pipDetach: $('pip-detach'),
+  pipPopOut: $('pip-pop-out'),
+  pipResize: $('pip-resize'),
   pauseHiddenCameras: $('pause-hidden-cameras'),
   pttEnabled: $('ptt-enabled'),
   pttOptions: $('ptt-options'),
@@ -635,6 +652,9 @@ const state = {
   /** Can one application be kept out of a screen share's audio? Not the same
    *  as audioAvailable, which is about capturing a single window's. */
   audioExclusion: false,
+  /** Can a window be shared with only its own application's audio? The Windows
+   *  addon, or ScreenCaptureKit on a Mac. */
+  audioWindow: false,
 
   sources: [],
   cameras: [],
@@ -969,6 +989,10 @@ async function boot() {
 
   const availability = await harmony.audio.availability();
   state.audioAvailable = availability.available;
+  // A single window's own audio: the Windows addon, or ScreenCaptureKit on a
+  // Mac. A build that does not say (the browser and Android ones) means the
+  // addon, which is what `available` was.
+  state.audioWindow = availability.windowAudio ?? availability.available;
   state.audioUnavailableReason = availability.reason;
   state.audioExclusion = Boolean(availability.exclusion);
 
@@ -1299,6 +1323,7 @@ async function adoptServer(server) {
  * `profile` null means a server never seen: everything blank.
  */
 async function loadProfile(profile) {
+  dmUi?.stop();
   state.auth.user = null;
   state.auth.mode = 'login';
   state.auth.token = profile?.sessionToken ?? '';
@@ -1794,6 +1819,8 @@ function applyAuthMode() {
 
   el.authModeText.textContent = registering ? t('app.already_registered') : t('app.no_account_yet');
   el.authModeToggle.textContent = registering ? t('app.sign_in') : t('app.create_one');
+  // Only where there is a password to have forgotten.
+  el.forgotRow.hidden = registering || signedIn;
   el.continue.textContent = registering ? t('app.create_account') : t('app.connect');
 }
 
@@ -1811,6 +1838,17 @@ async function adoptSession(token) {
   } else {
     state.settings = await harmony.settings.set(patch);
   }
+}
+
+/**
+ * Keep the account's password for the next start, if they asked to be remembered:
+ * sealed by the system's keychain, like the one saved when they signed in.
+ */
+async function rememberAccountPassword(password) {
+  if (!el.rememberAccount.checked || !password) return;
+  if (serverKey(state.server ?? el.serverUrl.value) !== serverKey(el.serverUrl.value)) return;
+  const sealed = await harmony.secrets.protect(password).catch(() => '');
+  if (sealed) await saveProfile({}, { accountSecret: sealed });
 }
 
 /**
@@ -2133,6 +2171,14 @@ const AVATAR_PX = 256;
 const AVATAR_MAX_BYTES = 256 * 1024;
 
 const knownUser = (id) => state.users.get(id) ?? null;
+
+/**
+ * Private conversations: the page for them (dm-ui.js). Made at the bottom of
+ * this file, once everything it is handed exists; null until then, which is why
+ * every use here asks with `?.`.
+ */
+let dmUi = null;
+let securityUi = null;
 
 /**
  * What to call somebody.
@@ -2618,6 +2664,9 @@ async function enterChannels() {
     } catch { /* nothing more to try */ }
   }
   renderChannels();
+  // After the accounts are known (names and faces) and the socket is up, so a
+  // push that arrives while the keys are being fetched is not missed.
+  dmUi?.start().catch((err) => console.warn('[dm] could not start:', err));
 }
 
 /**
@@ -3386,8 +3435,10 @@ function openMemberMenu(user, event) {
   // Owner only, and never the owner. Granting admin is reversible and a
   // force-mute lasts until it is lifted; this is neither.
   const canRemove = isOwner() && theirRole !== 'owner' && user.id !== me;
+  // Anybody may write to anybody else: this is the one entry every member has.
+  const canMessage = user.id !== me && Boolean(dmUi?.available);
 
-  if (!canPromote && !canDemote && !canRemove) return;
+  if (!canPromote && !canDemote && !canRemove && !canMessage) return;
 
   // The children, not the element: replaceWith would drop the node the
   // handle points at and the next open would write into a detached one.
@@ -3406,6 +3457,18 @@ function openMemberMenu(user, event) {
     button.addEventListener('click', run);
     return button;
   };
+
+  if (canMessage) {
+    rows.push(item(
+      t('dm.send'),
+      t('dm.send_hint'),
+      () => {
+        closeMemberMenu();
+        dmUi.openWith(user.id);
+      },
+    ));
+    if (canPromote || canDemote || canRemove) rows.push(document.createElement('hr'));
+  }
 
   if (canPromote || canDemote) {
     rows.push(item(
@@ -3785,6 +3848,7 @@ async function onChannelClick(channel) {
   // which left the chat covering the thing you were trying to watch with no
   // obvious way to put it away.
   if (channel.id === state.voice.channelId) {
+    dmUi?.closeConversation();
     closeChat();
     return undefined;
   }
@@ -3804,13 +3868,27 @@ async function onChannelClick(channel) {
  * you look at, and the window is not big enough to look at two things.
  */
 function applyStage() {
+  // The picture in picture comes and goes with what is on the stage: out of the
+  // way while the streams are the stage, over the chat the moment it is not.
+  // Whoever changed the stage said so by calling this, so this is where to look.
+  if (pipWanted() !== (el.channelVideo.dataset.layout === 'pip')) {
+    renderChannelVideo();
+    return;
+  }
   const chatting = Boolean(state.chat.channelId);
-  const tiles = Boolean(el.channelVideo.querySelector('.channel-tile'));
+  // In picture in picture the streams are in their own window, not on the stage.
+  const tiles = el.channelVideo.dataset.layout !== 'pip'
+    && Boolean(el.channelVideo.querySelector('.channel-tile'));
+
+  // A private conversation is a third thing the stage can hold, and like the
+  // other two it is never shown with them: dm-ui.js shows and hides its own
+  // panel, and this only makes room for it.
+  const conversing = Boolean(dmUi?.isOpen());
 
   el.chatActive.hidden = !chatting;
-  el.channelVideo.hidden = chatting || !tiles;
+  el.channelVideo.hidden = chatting || conversing || !tiles;
 
-  const stage = chatting || tiles;
+  const stage = chatting || conversing || tiles;
   el.channelStage.hidden = !stage;
 
   // Whether the middle column exists at all comes off these -- see the
@@ -3824,15 +3902,34 @@ function applyStage() {
   el.voicePanel.hidden = el.voiceActive.hidden;
 }
 
+/**
+ * A request that is safe to send twice, sent again once if the server did not
+ * answer in time. Joining and announcing a path are both that: the server hands
+ * a member who joins again the slot they already have. On a link that drops
+ * packets a single unanswered request used to be the whole join failing, and
+ * pressing the button a second time was all it took.
+ */
+async function requestAgain(type, payload) {
+  try {
+    return await harmony.realtime.request(type, payload);
+  } catch (err) {
+    if (!/did not answer/i.test(err.message)) throw err;
+    return harmony.realtime.request(type, payload);
+  }
+}
+
 async function joinVoice(channel, password) {
   if (state.channels.joining) return;
   state.channels.joining = true;
   showChannelsError('');
+  // Whether the server has put us in the room, so that a join that fails after
+  // that can say so rather than leave a member standing in it who is not.
+  let admitted = false;
 
   try {
     if (state.voice.channelId) await leaveVoice({ silent: true });
 
-    const reply = await harmony.realtime.request('voice:join', {
+    const reply = await requestAgain('voice:join', {
       channelId: channel.id,
       ...(password ? { password } : {}),
     });
@@ -3855,6 +3952,7 @@ async function joinVoice(channel, password) {
       return showChannelsError(t('app.could_not_join', { error: reply.error }));
     }
 
+    admitted = true;
     state.voice.configure({
       channelId: channel.id,
       mid: reply.mid,
@@ -3902,7 +4000,7 @@ async function joinVoice(channel, password) {
     // startMic is what asks. A no-op everywhere else.
     harmony.voiceService.start(`In ${channel.name}`, serverInfo.name || 'Harmony');
     // Tell the server the path is live, so other members know to subscribe.
-    await harmony.realtime.request('voice:publishing', {
+    await requestAgain('voice:publishing', {
       channelId: channel.id, kind: 'v', on: true,
     });
 
@@ -4025,6 +4123,10 @@ async function joinVoice(channel, password) {
   } catch (err) {
     showChannelsError(err.message);
     await leaveVoice({ silent: true }).catch(() => {});
+    // Silent leaves are the first half of a move and say nothing to the server;
+    // this one is a join that did not happen, and everybody else would
+    // otherwise see somebody in the room who is not.
+    if (admitted) await harmony.realtime.request('voice:leave', { channelId: channel.id }).catch(() => {});
   } finally {
     state.channels.joining = false;
   }
@@ -4345,9 +4447,13 @@ function statusKeys(member) {
   return keys;
 }
 
-/** Fill a container with the glyphs for this member, reusing it in place. */
-function renderStatus(container, member) {
-  const keys = statusKeys(member);
+/**
+ * Fill a container with the glyphs for this member, reusing it in place.
+ * `only` limits them to some kinds: a stream's caption has no use for "has a
+ * camera on" next to a picture of that camera.
+ */
+function renderStatus(container, member, only = null) {
+  const keys = statusKeys(member).filter((key) => !only || only.includes(key));
   container.replaceChildren(...keys.map((key) => {
     const { icon, title } = STATUS.find((x) => x.key === key);
     const span = document.createElement('span');
@@ -4731,6 +4837,8 @@ function playRosterCues(roster) {
 function renderVoiceRoster(roster) {
   playRosterCues(roster);
   state.channels.roster = roster;
+  // The streams' captions say who is muted, so a mute is theirs to follow too.
+  for (const figure of everyTile()) paintTileWho(figure);
   el.voiceCount.textContent = `${roster.length} ${roster.length === 1 ? 'person' : 'people'}`;
 
   // Rows are reused rather than rebuilt. A roster push arrives on every mute,
@@ -4794,6 +4902,10 @@ function renderSpeaking() {
   const speaking = state.voice.speakingMids();
   if (speaking.has(state.voice.mid)) selfSpokeAt = performance.now();
   syncVoiceTray();
+  refreshPip();
+  for (const figure of everyTile()) {
+    figure.toggleAttribute('data-speaking', speaking.has(Number(figure.dataset.mid)));
+  }
 
   for (const li of el.voiceRoster.children) {
     li.toggleAttribute('data-speaking', speaking.has(Number(li.dataset.mid)));
@@ -6033,6 +6145,401 @@ function fitChannelGrid() {
 // The stage is resized by the window, and by the member list opening.
 new ResizeObserver(() => fitChannelGrid()).observe(el.channelVideo);
 
+/*
+ * Picture in picture: the channel's streams as ONE small window that floats
+ * over the app, so you can keep reading and writing while you watch.
+ *
+ * Off until it is asked for in the settings, because it changes where every
+ * stream is. On, it takes somebody else's streams off the stage (yours stay
+ * there: a preview of what you are sending is not something to float) and
+ * shows one of them at a time:
+ *
+ *  - the one you picked, with the arrows to step to the next. With only
+ *    screen shares that is all there is to it.
+ *  - while somebody whose camera is on is TALKING, their camera instead --
+ *    for as long as they talk and a moment after, so a pause between two
+ *    sentences does not bounce the picture back and forth. The pick is not
+ *    forgotten: it is what comes back when the room goes quiet.
+ *  - a pick made by hand rests that, for a while. Stepping to a screen share
+ *    while somebody chats on is a decision, and snapping back to the talker
+ *    a second later would undo it.
+ *
+ * The window is dragged by its bar and resized by its corner, and where it
+ * was left is remembered (pipRect).
+ *
+ * Every stream's <video> keeps living in the stage's hidden strip when it is
+ * not the one showing, so that stepping to it is a move of a node and not a
+ * restart of a decoder -- the same reason the grid reuses its tiles.
+ */
+const PIP_HOLD_MS = 1500;
+const PIP_PICK_MS = 12000;
+const PIP_MIN_W = 220;
+const PIP_MIN_H = 150;
+const PIP_DEFAULT = { w: 380, h: 250 };
+
+const pip = {
+  figures: [],
+  /** The key the person picked. */
+  key: null,
+  /** The camera showing because its owner is talking, if one is. */
+  auto: null,
+  autoUntil: 0,
+  /** Until when a hand-made pick rests the automatic one. */
+  pickedUntil: 0,
+};
+
+const pipEnabled = () => state.settings?.pictureInPicture === true;
+
+/**
+ * Whether the streams are in the window rather than on the stage.
+ *
+ * Only while something else is on the stage: a text channel or a private
+ * conversation is open, so the streams would be out of sight, or the window has
+ * been popped out of Harmony. With the voice channel itself showing, the streams
+ * ARE the stage, as the grid -- a floating copy of one of them over the others
+ * would be the same picture twice.
+ */
+const pipWanted = () => pipEnabled() && pip.figures.length > 0
+  && (Boolean(state.chat.channelId) || Boolean(dmUi?.isOpen()) || pipDetached());
+/** What the window should show now: the camera of somebody talking, else the pick. */
+function pipChoice() {
+  const keys = pip.figures.map((f) => f.dataset.key);
+  if (!keys.length) return null;
+  if (!keys.includes(pip.key)) pip.key = keys[0];
+  if (pip.auto && !keys.includes(pip.auto)) pip.auto = null;
+
+  const now = performance.now();
+  // Not while it is fullscreen: moving the node would drop it out of that.
+  const full = el.pipBody.ownerDocument.fullscreenElement;
+  const frozen = full && el.pipBody.contains(full);
+  if (now < pip.pickedUntil) {
+    pip.auto = null;
+  } else if (!frozen) {
+    const speaking = state.voice.channelId ? state.voice.speakingMids() : new Set();
+    const talking = pip.figures.filter(
+      (f) => f.dataset.kind === 'c' && speaking.has(Number(f.dataset.mid)),
+    );
+    if (talking.length) {
+      pip.auto = (talking.find((f) => f.dataset.key === pip.auto) ?? talking[0]).dataset.key;
+      pip.autoUntil = now + PIP_HOLD_MS;
+    } else if (pip.auto && now > pip.autoUntil) {
+      pip.auto = null;
+    }
+  }
+  return pip.auto ?? pip.key;
+}
+
+/** Put one tile in the window, the one that was there back in the stage. */
+function showInPip(shown) {
+  el.pip.hidden = !shown;
+  const body = el.pipBody;
+  if (!shown) {
+    returnPip({ render: false });
+    body.replaceChildren();
+    return;
+  }
+  if (body.firstElementChild !== shown || body.childElementCount !== 1) {
+    const previous = body.firstElementChild;
+    if (previous && previous !== shown && previous.isConnected) {
+      channelVideoAreas().strip.append(previous);
+    }
+    body.replaceChildren(shown);
+  }
+
+  const index = pip.figures.indexOf(shown);
+  el.pipCount.textContent = `${index + 1}/${pip.figures.length}`;
+  el.pipPrev.disabled = pip.figures.length < 2;
+  el.pipNext.disabled = pip.figures.length < 2;
+  el.pipNote.textContent = pip.auto && pip.auto === shown.dataset.key
+    ? t('app.pip_talking', { name: nameOfMid(Number(shown.dataset.mid)) })
+    : '';
+  placePip();
+}
+
+/** The poll that follows the conversation; cheap when nothing changed. */
+function refreshPip() {
+  if (!pipWanted()) return;
+  const wanted = pip.figures.find((f) => f.dataset.key === pipChoice());
+  if (wanted) showInPip(wanted);
+}
+
+function pipRect() {
+  const saved = state.settings?.pipRect;
+  const w = Math.max(PIP_MIN_W, Math.min(window.innerWidth - 16, saved?.w ?? PIP_DEFAULT.w));
+  const h = Math.max(PIP_MIN_H, Math.min(window.innerHeight - 16, saved?.h ?? PIP_DEFAULT.h));
+  // Fully on screen whatever the window was when it was saved: a window that
+  // was shrunk since would otherwise leave this where nobody can reach it.
+  const x = Math.max(0, Math.min(window.innerWidth - w, saved?.x ?? window.innerWidth - w - 24));
+  const y = Math.max(0, Math.min(window.innerHeight - h, saved?.y ?? window.innerHeight - h - 24));
+  return { x, y, w, h };
+}
+
+function placePip(rect = pipRect()) {
+  // Popped out, the window is the operating system's to move and size.
+  if (pipDetached()) {
+    Object.assign(el.pip.style, { left: '', top: '', width: '', height: '' });
+    return;
+  }
+  Object.assign(el.pip.style, {
+    left: `${rect.x}px`,
+    top: `${rect.y}px`,
+    width: `${rect.w}px`,
+    height: `${rect.h}px`,
+  });
+}
+
+async function savePipRect() {
+  const box = el.pip.getBoundingClientRect();
+  const rect = { x: Math.round(box.left), y: Math.round(box.top), w: Math.round(box.width), h: Math.round(box.height) };
+  await harmony.settings.set({ pipRect: rect });
+  state.settings = await harmony.settings.get();
+}
+
+/** Drag the bar to move the window, its corner to resize it. */
+function dragPip(handle, change) {
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || event.target.closest('button') || pipDetached()) return;
+    event.preventDefault();
+    const start = pipRect();
+    const from = { x: event.clientX, y: event.clientY };
+    try { handle.setPointerCapture(event.pointerId); } catch { /* not an active pointer */ }
+    el.pip.toggleAttribute(change.flag, true);
+    const move = (e) => placePip(change.apply(start, e.clientX - from.x, e.clientY - from.y));
+    const end = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      el.pip.removeAttribute(change.flag);
+      savePipRect().catch(() => {});
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  });
+}
+
+// Growing past the edge of the window pushes the window back in rather than
+// stopping: a window docked in the corner is the usual place for it, and the
+// corner it is resized from is the one that cannot move.
+const clampPip = (r) => {
+  const w = Math.max(PIP_MIN_W, Math.min(window.innerWidth, r.w));
+  const h = Math.max(PIP_MIN_H, Math.min(window.innerHeight, r.h));
+  return { x: Math.min(r.x, window.innerWidth - w), y: Math.min(r.y, window.innerHeight - h), w, h };
+};
+dragPip(el.pipBar, {
+  flag: 'data-moving',
+  apply: (r, dx, dy) => ({
+    ...r,
+    x: Math.max(0, Math.min(window.innerWidth - r.w, r.x + dx)),
+    y: Math.max(0, Math.min(window.innerHeight - r.h, r.y + dy)),
+  }),
+});
+dragPip(el.pipResize, {
+  flag: 'data-resizing',
+  apply: (r, dx, dy) => clampPip({ ...r, w: r.w + dx, h: r.h + dy }),
+});
+window.addEventListener('resize', () => { if (!el.pip.hidden) placePip(); });
+
+/** Step to the next or previous stream. A step is a decision, so it rests the automatic one. */
+function stepPip(by) {
+  const count = pip.figures.length;
+  if (count < 2) return;
+  const shown = el.pipBody.firstElementChild?.dataset.key;
+  const at = Math.max(0, pip.figures.findIndex((f) => f.dataset.key === shown));
+  pip.key = pip.figures[(at + by + count) % count].dataset.key;
+  pip.auto = null;
+  pip.pickedUntil = performance.now() + PIP_PICK_MS;
+  refreshPip();
+}
+el.pipPrev.addEventListener('click', () => stepPip(-1));
+el.pipNext.addEventListener('click', () => stepPip(1));
+el.pipStage.addEventListener('click', async () => {
+  await harmony.settings.set({ pictureInPicture: false });
+  state.settings = await harmony.settings.get();
+  el.pictureInPicture.checked = false;
+  renderChannelVideo();
+});
+el.pictureInPicture.addEventListener('change', async () => {
+  await harmony.settings.set({ pictureInPicture: el.pictureInPicture.checked });
+  state.settings = await harmony.settings.get();
+  renderChannelVideo();
+});
+
+/*
+ * Popping the window out of Harmony.
+ *
+ * Inside the app the window goes when Harmony does: minimised, it is gone
+ * with everything else, which is exactly when somebody who is watching a
+ * stream while they work in another program wants it most. So it can leave:
+ * a window of its own, always on top, that the operating system moves and
+ * sizes.
+ *
+ * It is the same page's window, not a second renderer -- window.open on our
+ * own origin gives this page the other window to fill. The window's contents
+ * are moved in rather than copied, so the stream is still decoded once, in
+ * the place it always was, and stepping between streams and the talker taking
+ * over work exactly as they do in the app. (The browser's own Document
+ * Picture-in-Picture would be the obvious tool; Electron has the API and no
+ * window to give it.)
+ *
+ * Closing the window, or Harmony coming back, puts everything where it was.
+ * Popped out by hand it stays out until you bring it back; popped out
+ * because Harmony went out of sight it goes back when Harmony does.
+ */
+let pipWindow = null;
+let pipHome = null;
+let pipPoppedBy = null;
+let pipMirror = null;
+let pipAutoTimer = null;
+let pipAway = false;
+
+const pipDetached = () => Boolean(pipWindow && !pipWindow.closed);
+
+/** Every stream's tile, wherever it is showing at the moment. */
+const everyTile = () => [
+  ...document.querySelectorAll('.channel-tile[data-mid]'),
+  ...el.pipBody.querySelectorAll('.channel-tile[data-mid]'),
+];
+
+function popOutPip(by = 'user') {
+  if (!harmony.capabilities.popout || !pip.figures.length) return;
+  if (pipDetached()) {
+    pipWindow.focus();
+    return;
+  }
+  const rect = pipRect();
+  // The corner of the screen the window is on, as the in-app one starts in
+  // the corner of the app.
+  const left = (window.screen.availLeft ?? 0) + window.screen.availWidth - rect.w - 24;
+  const top = (window.screen.availTop ?? 0) + window.screen.availHeight - rect.h - 24;
+  const opened = window.open('pip.html', 'harmony-pip', `popup=yes,width=${rect.w},height=${rect.h},left=${left},top=${top}`);
+  if (!opened) return;
+  pipWindow = opened;
+  pipPoppedBy = by;
+}
+
+/** The window has loaded: move the player into it. */
+function fillPipWindow() {
+  const win = pipWindow;
+  const doc = win.document;
+  pipHome = { parent: el.pip.parentNode, next: el.pip.nextSibling };
+
+  // Its look is ours: every attribute on the root (theme, language, what this
+  // build lacks) and the custom properties set on it, kept in step.
+  const copy = () => {
+    const from = document.documentElement;
+    const to = doc.documentElement;
+    for (const { name, value } of [...from.attributes]) {
+      if (name !== 'style') to.setAttribute(name, value);
+    }
+    to.style.cssText = from.style.cssText;
+  };
+  copy();
+  pipMirror = new MutationObserver(copy);
+  pipMirror.observe(document.documentElement, { attributes: true });
+
+  doc.body.append(el.pip);
+  el.pip.toggleAttribute('data-detached', true);
+  win.addEventListener('pagehide', returnPip, { once: true });
+  paintPipDetach();
+  placePip();
+  for (const video of el.pip.querySelectorAll('video')) video.play().catch(() => {});
+  syncCameraWatching();
+  // Popped out, it is wanted whatever is on the stage.
+  renderChannelVideo();
+}
+
+/** Put the window back in the app, and close the one that was holding it. */
+function returnPip({ render = true } = {}) {
+  clearTimeout(pipAutoTimer);
+  pipAutoTimer = null;
+  if (!pipWindow) return;
+  const win = pipWindow;
+  pipWindow = null;
+  pipMirror?.disconnect();
+  pipMirror = null;
+  // Moved out before the other document goes: its elements would go with it.
+  if (el.pip.ownerDocument !== document || pipHome) {
+    const { parent, next } = pipHome ?? {};
+    el.pip.removeAttribute('data-detached');
+    if (parent?.isConnected) parent.insertBefore(el.pip, next?.parentNode === parent ? next : null);
+    for (const video of el.pip.querySelectorAll('video')) video.play().catch(() => {});
+  }
+  pipHome = null;
+  try { if (!win.closed) win.close(); } catch { /* already gone */ }
+  paintPipDetach();
+  placePip();
+  syncCameraWatching();
+  // Back in the app, the stage may want the streams again.
+  if (render) renderChannelVideo();
+}
+
+function paintPipDetach() {
+  const out = pipDetached();
+  setIcon(el.pipDetach, out ? 'arrow-square-in' : 'arrow-square-out');
+  el.pipDetach.title = out ? t('app.pip_bring_back') : t('app.pip_pop_out');
+}
+
+window.addEventListener('message', (event) => {
+  if (event.origin !== window.location.origin || event.data?.type !== 'harmony-pip-ready') return;
+  if (event.source === pipWindow) fillPipWindow();
+});
+
+el.pipDetach.addEventListener('click', () => {
+  if (pipDetached()) returnPip();
+  else popOutPip('user');
+});
+
+/**
+ * Out when Harmony goes out of sight, back when it returns.
+ *
+ * A little grace, like the cameras have, so a flick to another window and back
+ * does not throw the player up and down; and only for a window popped out
+ * for this reason, never one the person popped out themselves.
+ */
+function syncPipPopOut() {
+  if (!harmony.capabilities.popout) return;
+  const away = pipAway || document.hidden;
+  if (away) {
+    if (pipAutoTimer || !pipEnabled() || state.settings?.pipPopOut === false) return;
+    if (!pip.figures.length || pipDetached()) return;
+    pipAutoTimer = setTimeout(() => {
+      pipAutoTimer = null;
+      if (pipAway || document.hidden) popOutPip('auto');
+    }, 600);
+    return;
+  }
+  clearTimeout(pipAutoTimer);
+  pipAutoTimer = null;
+  if (pipDetached() && pipPoppedBy === 'auto') returnPip();
+}
+document.addEventListener('visibilitychange', syncPipPopOut);
+harmony.onWindowVisibility((visible) => {
+  pipAway = !visible;
+  syncPipPopOut();
+});
+el.pipPopOut.addEventListener('change', async () => {
+  await harmony.settings.set({ pipPopOut: el.pipPopOut.checked });
+  state.settings = await harmony.settings.get();
+  syncPipPopOut();
+});
+
+/** The picture and the mute / deafen glyphs on a stream's caption, from the roster. */
+const TILE_STATUS = ['forced', 'muted', 'deaf'];
+function paintTileWho(figure) {
+  const face = figure.querySelector('.tile-face');
+  const standing = figure.querySelector('.tile-standing');
+  if (!face || !standing) return;
+  const member = state.channels.roster.find((m) => m.mid === Number(figure.dataset.mid));
+  face.hidden = !member;
+  if (!member) {
+    standing.hidden = true;
+    return;
+  }
+  face.replaceChildren(...avatarEl(faceOf(member.userId, member.nickname)).childNodes);
+  renderStatus(standing, member, TILE_STATUS);
+}
+
 function renderChannelVideo() {
   const tiles = state.voice.channelId
     ? [...ownChannelTiles(), ...state.voice.videoTiles]
@@ -6043,7 +6550,7 @@ function renderChannelVideo() {
   if (ownMonitor && !tiles.some((t) => t.own && t.kind === 's')) stopOwnMonitor();
   const areas = channelVideoAreas();
   const existing = new Map(
-    [...el.channelVideo.querySelectorAll('.channel-tile[data-key]')]
+    [...el.channelVideo.querySelectorAll('.channel-tile[data-key]'), ...el.pipBody.querySelectorAll('.channel-tile[data-key]')]
       .map((node) => [node.dataset.key, node]),
   );
 
@@ -6054,6 +6561,7 @@ function renderChannelVideo() {
 
     const kept = existing.get(key);
     if (kept) {
+      kept.dataset.mid = String(mid);
       kept.querySelector('figcaption .tile-name').textContent = caption;
       const compose = kept.querySelector('.tile-btn[data-role="compose"]');
       if (compose) compose.hidden = !state.live.compositor;
@@ -6067,6 +6575,8 @@ function renderChannelVideo() {
     const figure = document.createElement('figure');
     figure.className = 'channel-tile';
     figure.dataset.key = key;
+    figure.dataset.mid = String(mid);
+    figure.dataset.kind = kind;
     if (own) figure.setAttribute('data-own', '');
 
     const video = document.createElement('video');
@@ -6186,10 +6696,15 @@ function renderChannelVideo() {
     }
 
     const label = document.createElement('figcaption');
+    // Whose it is, and whether they can hear and be heard: the two things
+    // you look for on somebody's stream before you speak to them about it.
+    const face = avatarEl(null, 'tile-face');
     const name = document.createElement('span');
     name.className = 'tile-name';
     name.textContent = caption;
-    label.append(name);
+    const standing = document.createElement('span');
+    standing.className = 'status tile-standing';
+    label.append(face, name, standing);
 
     /*
      * The same controls the flat mosaic has, because this IS a mosaic --
@@ -6306,7 +6821,7 @@ function renderChannelVideo() {
     figure.addEventListener('click', (event) => {
       const fromControl = pressedOnControl || onControl(event.target);
       pressedOnControl = false;
-      if (fromControl) return;
+      if (fromControl || el.channelVideo.dataset.layout === 'pip') return;
       focusChannelTile(figure.hasAttribute('data-focus') ? null : figure.dataset.key);
     });
     return figure;
@@ -6314,18 +6829,27 @@ function renderChannelVideo() {
 
   // The one in focus is what was clicked; with nothing clicked, or the
   // clicked stream gone, there is none and everything is in the grid.
-  const focused = channelFocusKey
+  // Picture in picture shows somebody else's stream in a window of its own and
+  // leaves the stage empty; with only your own to show there is no window, and
+  // the stage is where they are.
+  pip.figures = pipEnabled() ? figures.filter((f) => !f.hasAttribute('data-own')) : [];
+  const pipKey = pipWanted() ? pipChoice() : null;
+  const pipShown = pip.figures.find((f) => f.dataset.key === pipKey) ?? null;
+  const focused = !pipShown && channelFocusKey
     ? figures.find((f) => f.dataset.key === channelFocusKey) ?? null
     : null;
-  if (!focused) channelFocusKey = null;
-  el.channelVideo.dataset.layout = focused ? 'focus' : 'grid';
+  if (!focused && !pipShown) channelFocusKey = null;
+  el.channelVideo.dataset.layout = pipShown ? 'pip' : focused ? 'focus' : 'grid';
+  for (const figure of figures) paintTileWho(figure);
   for (const figure of figures) {
     const on = figure === focused;
     figure.toggleAttribute('data-focus', on);
-    figure.title = on ? t('app.back_to_the_grid') : t('app.show_this_one_big');
+    figure.title = pipShown ? '' : on ? t('app.back_to_the_grid') : t('app.show_this_one_big');
   }
   areas.focus.replaceChildren(...(focused ? [focused] : []));
-  areas.strip.replaceChildren(...figures.filter((f) => f !== focused));
+  areas.strip.replaceChildren(...figures.filter((f) => f !== focused && f !== pipShown));
+  showInPip(pipShown);
+  syncPipPopOut();
 
   /*
    * A square for every tile that is closed but still being published.
@@ -6373,6 +6897,8 @@ function renderChannelVideo() {
 // ---------------------------------------------------------------------------
 
 async function openTextChannel(channel) {
+  // The stage holds one thing: the conversation gives way to the channel.
+  dmUi?.closeConversation();
   // Before channelId changes and before anything is redrawn: the log still
   // shows the channel being left, and this is the only moment it can be read.
   rememberChatScroll();
@@ -9575,6 +10101,8 @@ async function stopCamera() {
  * unmutes ten minutes later is just another roster push.
  */
 function onRealtimeEvent(msg) {
+  // Private conversations and their keys are dm-ui's: nothing below knows them.
+  if (dmUi?.handleEvent(msg)) return;
   switch (msg.type) {
     case 'presence':
       state.channels.online = new Set(msg.online ?? []);
@@ -9681,6 +10209,7 @@ function onRealtimeEvent(msg) {
      * stop working, with every request failing and no explanation.
      */
     case 'kicked':
+      dmUi?.stop();
       state.auth.user = null;
       showView('view-connect');
       showError(msg.reason === 'account removed'
@@ -10298,7 +10827,7 @@ function audioPlan(forSource) {
     return { via: 'device', note: t('app.viewers_will_hear', { label }), warn: false };
   }
 
-  if (state.audioAvailable && kind === 'window') {
+  if (state.audioWindow && kind === 'window') {
     return { via: 'native', note: t('app.viewers_will_hear_only_this'), warn: false };
   }
 
@@ -10337,7 +10866,7 @@ function audioPlan(forSource) {
 function updateAudioNote() {
   const kind = state.selectedSource?.kind ?? state.activeKind;
 
-  el.fallbackField.hidden = state.audioAvailable || kind !== 'window';
+  el.fallbackField.hidden = state.audioWindow || kind !== 'window';
   // Excluding an app needs a native capture: the addon, or the platform's own.
   el.excludeField.hidden = !['screen', 'composite'].includes(kind) || !state.audioExclusion;
   el.audioInputField.hidden = kind !== 'camera';
@@ -11700,8 +12229,10 @@ async function leaveMosaic() {
 // ---------------------------------------------------------------------------
 
 function toggleFullscreen(element) {
-  if (document.fullscreenElement === element) {
-    document.exitFullscreen().catch(() => {});
+  // The popped-out window is a document of its own, with a fullscreen of its own.
+  const doc = element.ownerDocument;
+  if (doc.fullscreenElement === element) {
+    doc.exitFullscreen().catch(() => {});
   } else {
     element.requestFullscreen().catch((err) => console.warn('[fullscreen]', err.message));
   }
@@ -11902,6 +12433,25 @@ window.__harmony = () => ({
   channels: state.channels.list.map((c) => `${c.kind}:${c.id}:${c.name}`),
 });
 
+/** Why a join or leave tone might be silent: the playback context, the settings, the last room seen. */
+window.__harmonyCues = () => ({
+  ...cueStatus(),
+  voiceSounds: state.settings?.voiceSounds !== false,
+  customJoinSounds: state.settings?.customJoinSounds !== false,
+  settingsVolume: state.settings?.soundVolume ?? 100,
+  inRoom: lastCueRoster === null ? 'no roster seen yet' : lastCueRoster.size,
+  test: () => { playCue('join'); return 'played'; },
+});
+
+/** Where the picture-in-picture window is: in the app or popped out, and why. */
+window.__harmonyPip = () => ({
+  enabled: pipEnabled(),
+  streams: pip.figures.length,
+  poppedOut: pipDetached(),
+  poppedOutBy: pipDetached() ? pipPoppedBy : null,
+  harmonyAway: pipAway || document.hidden,
+});
+
 /** What our microphone is putting on the wire. Async; see publishStats. */
 window.__harmonyPublish = () => state.voice.publishStats();
 
@@ -11923,6 +12473,60 @@ window.__harmonyAudio = async () => ({
 el.continue.addEventListener('click', startSession);
 
 // --- channels and voice ---------------------------------------------------
+
+dmUi = createDmUi({
+  state,
+  harmony,
+  t,
+  displayOf,
+  faceOf,
+  avatarEl,
+  nameFont,
+  renderBody,
+  appendEmoji,
+  openEmojiPicker,
+  closeEmojiPicker,
+  ask,
+  askConfirm,
+  formatBytes,
+  playCue,
+  applyStage,
+  closeChat,
+  showError: showChannelsError,
+});
+
+securityUi = createSecurityUi({
+  harmony,
+  t,
+  server: () => state.server,
+  signedIn: () => Boolean(state.auth.user),
+  adoptSession,
+  rememberPassword: rememberAccountPassword,
+  note: profileNote,
+});
+
+/*
+ * Forgot the password: answer the three questions written while signed in,
+ * choose a new one, and be signed in with it. The server does the judging;
+ * see recovery-flow.js.
+ */
+el.forgotPassword.addEventListener('click', async () => {
+  const server = el.serverUrl.value.trim();
+  if (!server) return showError(t('connect.enter_address'));
+  showError('');
+  // The server's own door password, if it has one, comes first as always.
+  await harmony.api.setPassword(el.password.value);
+  const result = await recoverAccount({
+    ask, harmony, t, server, nickname: normalizeName(el.username.value),
+  });
+  if (!result) return undefined;
+  await adoptSession(result.token);
+  state.auth.user = result.user;
+  el.username.value = result.nickname;
+  el.accountPassword.value = '';
+  await rememberAccountPassword(result.password);
+  return startSession();
+});
 
 harmony.realtime.onEvent(onRealtimeEvent);
 
@@ -12143,6 +12747,7 @@ el.channelsMembers.addEventListener('click', async () => {
 
 
 el.channelsSignout.addEventListener('click', async () => {
+  dmUi?.stop();
   await leaveVoice({ silent: true }).catch(() => {});
   await harmony.realtime.disconnect();
   await harmony.api.logout(state.server).catch(() => {});
@@ -12409,6 +13014,8 @@ el.voiceConfig.addEventListener('click', () => {
   el.mentionSound.checked = state.settings?.mentionSound !== false;
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
   el.pauseHiddenCameras.checked = state.settings?.pauseHiddenCameras !== false;
+  el.pictureInPicture.checked = pipEnabled();
+  el.pipPopOut.checked = state.settings?.pipPopOut !== false;
   renderPttSettings();
   showVolume(el.soundVolume, el.soundVolumeLabel, state.settings?.soundVolume ?? 100);
   renderHotkeyList();
@@ -12426,6 +13033,7 @@ el.voiceConfig.addEventListener('click', () => {
   profileNote(el.profileFontNote, '');
   profileNote(el.profileSoundNote, '');
   openBackgroundSettings();
+  securityUi?.render();
   showSettingsTab(
     el.devicesDialog.querySelector('.settings-tab[aria-selected="true"]')?.dataset.tab ?? 'appearance',
   );
@@ -13061,6 +13669,7 @@ el.authModeToggle.addEventListener('click', async () => {
   // While a saved session is in force this button is the only way out of it,
   // because the account fields are hidden. Signing out puts the form back.
   if (state.auth.user) {
+    dmUi?.stop();
     await harmony.api.logout(state.server || el.serverUrl.value.trim()).catch(() => {});
     state.auth.user = null;
     await adoptSession('');
@@ -13248,7 +13857,8 @@ const CAMERAS_PAUSE_AFTER_MS = 5000;
 let camerasPauseTimer = null;
 
 function syncCameraWatching() {
-  const visible = state.settings?.pauseHiddenCameras === false
+  // A popped-out picture in picture is Harmony being watched, minimised or not.
+  const visible = state.settings?.pauseHiddenCameras === false || pipDetached()
     || (state.preview.windowVisible !== false && !document.hidden);
   clearTimeout(camerasPauseTimer);
   camerasPauseTimer = null;

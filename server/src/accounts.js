@@ -183,6 +183,22 @@ export class Accounts {
         )
       `),
       dropMessages: db.prepare('DELETE FROM messages WHERE user_id = ?'),
+      // Their private conversations go whole, both sides: the other person
+      // has nobody left to talk to there, and the sealed history is only
+      // ever readable with keys that are going too. The files are released
+      // one reference per message, as a channel's are; the rows themselves
+      // cascade from the conversation.
+      releaseDmAttachments: db.prepare(`
+        UPDATE uploads SET refs = MAX(0, refs - (
+          SELECT COUNT(*) FROM dm_messages m JOIN dm_conversations c ON c.id = m.conversation_id
+          WHERE (c.user_a = :user OR c.user_b = :user) AND m.attachment_hash = uploads.hash
+        ))
+        WHERE hash IN (
+          SELECT m.attachment_hash FROM dm_messages m JOIN dm_conversations c ON c.id = m.conversation_id
+          WHERE (c.user_a = :user OR c.user_b = :user) AND m.attachment_hash IS NOT NULL
+        )
+      `),
+      dropConversations: db.prepare('DELETE FROM dm_conversations WHERE user_a = ? OR user_b = ?'),
       releaseAvatar: db.prepare('UPDATE uploads SET refs = MAX(0, refs - 1) WHERE hash = ?'),
       // The clip and the emoji stay. They are server-wide things other
       // people are using; only the credit for them goes.
@@ -382,6 +398,10 @@ export class Accounts {
    *   uploads.refs                                 -- a count this module
    *       does not own, so every reference taken has to be given back or
    *       the files never become evictable.
+   *   dm_conversations and everything under them   -- would cascade on
+   *       their own, but their files hold upload references that a cascade
+   *       would never give back, so they are released and dropped here.
+   *       user_keys and dm_blocks cascade.
    *   soundpad_clips, emojis                       -- reference users(id)
    *       and would block the delete. The clip and the emoji are shared
    *       things other people use; only the credit is dropped.
@@ -402,6 +422,8 @@ export class Accounts {
       this.#q.releaseAttachments.run(userId, userId);
       this.#q.dropMessageFts.run(userId);
       this.#q.dropMessages.run(userId);
+      this.#q.releaseDmAttachments.run({ user: userId });
+      this.#q.dropConversations.run(userId, userId);
       if (user.avatar_hash) this.#q.releaseAvatar.run(user.avatar_hash);
       if (user.banner_hash) this.#q.releaseAvatar.run(user.banner_hash);
       if (user.join_sound_hash) this.#q.releaseAvatar.run(user.join_sound_hash);

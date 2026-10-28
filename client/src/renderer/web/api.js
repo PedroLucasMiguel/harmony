@@ -225,7 +225,84 @@ const uploadSession = {
   ).catch(() => null),
 };
 
+/**
+ * Private conversations: the paths they use, and nothing else. See main/api.js,
+ * which this mirrors: the same narrow door and the same answers as data.
+ */
+const DM_PATH = new RegExp(
+  '^/api/(keys(/wrap|/lookup)?|inbox'
+  + '|dms(/blocks|/\\d+(/(messages|read|clear))?)?'
+  + '|dm-messages/\\d+/(edit|edits|delete|react))(\\?[A-Za-z0-9=&,._-]*)?$',
+);
+
+async function dmRequest(serverUrl, method, pathname, body) {
+  if (!['GET', 'POST'].includes(method) || !DM_PATH.test(String(pathname))) {
+    throw new ApiError('Not a private-conversation request.', { code: 'bad_request' });
+  }
+  const url = `${normalizeBase(serverUrl)}${pathname}`;
+  let res;
+  try {
+    const headers = authHeaders();
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new ApiError(
+      timedOut(err)
+        ? 'The server did not respond in time.'
+        : `Could not reach ${url}. Check the server address and that Harmony is running.`,
+      { code: 'unreachable' },
+    );
+  }
+  const text = await res.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { /* non-JSON error body */ }
+  return { status: res.status, body: payload };
+}
+
+async function dmUpload(serverUrl, conversationId, bytes) {
+  if (!Number.isSafeInteger(Number(conversationId))) throw new ApiError('Bad conversation.', { code: 'bad_request' });
+  const url = `${normalizeBase(serverUrl)}/api/dms/${Number(conversationId)}/uploads`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(bytes),
+      signal: timeout(120_000),
+    });
+  } catch (err) {
+    throw new ApiError(`Upload failed: ${err.message}`, { code: 'unreachable' });
+  }
+  const text = await res.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { /* non-JSON error body */ }
+  return { status: res.status, body: payload };
+}
+
+async function dmDownload(serverUrl, conversationId, hash) {
+  if (!Number.isSafeInteger(Number(conversationId)) || !/^[0-9a-f]{64}$/.test(String(hash))) {
+    throw new ApiError('Bad file.', { code: 'bad_request' });
+  }
+  const url = `${normalizeBase(serverUrl)}/api/dms/${Number(conversationId)}/uploads/${hash}`;
+  let res;
+  try {
+    res = await fetch(url, { headers: authHeaders(), signal: timeout(120_000) });
+  } catch (err) {
+    throw new ApiError(`Could not download the file: ${err.message}`, { code: 'unreachable' });
+  }
+  if (!res.ok) return { status: res.status, bytes: null };
+  return { status: res.status, bytes: new Uint8Array(await res.arrayBuffer()) };
+}
+
 export const api = {
+  dmRequest,
+  dmUpload,
+  dmDownload,
   setPassword: (value) => {
     password = String(value ?? '');
     return { ok: true };
@@ -248,6 +325,20 @@ export const api = {
       method: 'POST', body: { nickname, password: password_, ...(ownerKey ? { ownerKey } : {}) },
     }),
   logout: (s) => requestJson(s, '/api/accounts/logout', { method: 'POST' }),
+
+  changePassword: (s, current, password_) =>
+    requestJson(s, '/api/accounts/password', { method: 'POST', body: { current, password: password_ } }),
+  recoveryStatus: (s) => requestJson(s, '/api/accounts/recovery'),
+  setRecovery: (s, current, items) =>
+    requestJson(s, '/api/accounts/recovery', { method: 'POST', body: { current, items } }),
+  clearRecovery: (s, current) =>
+    requestJson(s, '/api/accounts/recovery/clear', { method: 'POST', body: { current } }),
+  recoveryStart: (s, nickname) =>
+    requestJson(s, '/api/accounts/recovery/start', { method: 'POST', body: { nickname } }),
+  recoveryVerify: (s, nickname, answers) =>
+    requestJson(s, '/api/accounts/recovery/verify', { method: 'POST', body: { nickname, answers } }),
+  recoveryReset: (s, resetToken, password_) =>
+    requestJson(s, '/api/accounts/recovery/reset', { method: 'POST', body: { resetToken, password: password_ } }),
 
   channels: (s) => requestJson(s, '/api/channels'),
   createChannel: (s, body) => requestJson(s, '/api/channels', { method: 'POST', body }),

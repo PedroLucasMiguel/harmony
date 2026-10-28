@@ -29,6 +29,26 @@ never re-encodes it.
   in the member list and voice channels, a font for your name from ten that
   ship with the app, and a join sound of up to 10 seconds that plays for the
   room when you arrive.
+- **Private messages**: end-to-end encrypted conversations between two members
+  of a server, opened from the button in the top bar or by right-clicking
+  someone in the member list. Text, files, replies, edits and reactions are
+  sealed on your computer (X25519 and XChaCha20-Poly1305); the server stores and
+  forwards ciphertext and never holds a key that opens it. A recovery key brings
+  your history to another computer, and a safety number tells you when
+  somebody's key has changed. Compatible with [Ciranda](#credits).
+- **Picture in picture** (Settings, Voice & video; off by default): a channel's
+  streams in one small window that floats over the app, so you can keep
+  chatting while you watch. Step between streams with the arrows; when someone
+  with their camera on is talking, their camera takes the window until they
+  stop. Drag it by its bar, resize it by its corner. On the desktop app it can
+  pop out into a window of its own, always on top, so it keeps playing while
+  Harmony is minimised, and does so by itself when Harmony goes out of sight.
+- **Password recovery** (Settings, Security): write three questions and answers
+  while signed in; if you ever forget the password, answer all three from the
+  sign-in screen to choose a new one. Answers ignore capitals, accents,
+  punctuation and extra spaces, are stored scrambled like a password, and
+  guessing is rate-limited. An account with no questions cannot be recovered,
+  and the screen says so. The same tab changes your password.
 - **Languages**: English, Português (Brasil) and Español, picked in Settings or
   followed from the system; a new one is a single file (see
   [Translating](#translating)).
@@ -127,7 +147,18 @@ was missed.
 [Electron](https://www.electronjs.org/) ·
 [loopback-capture](https://www.npmjs.com/package/loopback-capture) ·
 [mp4-muxer](https://github.com/Vanilagy/mp4-muxer) ·
-[MediaPipe](https://ai.google.dev/edge/mediapipe) (camera background segmentation, Apache-2.0)
+[MediaPipe](https://ai.google.dev/edge/mediapipe) (camera background segmentation, Apache-2.0) ·
+[noble](https://github.com/paulmillr/noble-curves) (X25519, XChaCha20-Poly1305 and HKDF for private conversations, MIT)
+
+## Credits
+
+**[Ciranda](https://github.com/Brunovncs/ciranda)**, a fork of Harmony by
+[Bruno (Brunovncs)](https://github.com/Brunovncs), is where end-to-end encrypted
+private conversations were designed and first built. Harmony's version follows
+Ciranda's design, trust model and wire protocol (the routes, the message
+format, the key derivation and the recovery key), so a client of one can talk
+to a client of the other on the same server. Thank you for the work, and for
+the known-answer tests that make that checkable.
 
 ## License
 
