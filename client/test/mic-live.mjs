@@ -205,13 +205,13 @@ async function run() {
   check('Ana hears Pedro\'s microphone', base > 0.003, base.toFixed(4));
 
   // --- volume ------------------------------------------------------------------------------------------
-  // 25% against 200%, which is eight times apart whatever beat of the fake
-  // microphone's beep falls in the window.
+  // 25% against 200%: eight times apart in the gain, far less in what is heard of the fake
+  // microphone's loud beep (clipped at the top, levelled by automatic gain), so the bar is a clear step, not the ratio.
   await pedro.evaluate(`${setInput('mic-gain', '25')} return true;`);
   const quiet = await heard();
   await pedro.evaluate(`${setInput('mic-gain', '200')} return true;`);
   const loud = await heard();
-  check('turning the input volume from 25% to 200% is heard without leaving', loud > quiet * 3, `${quiet.toFixed(4)} -> ${loud.toFixed(4)}`);
+  check('turning the input volume from 25% to 200% is heard without leaving', loud > quiet * 1.4, `${quiet.toFixed(4)} -> ${loud.toFixed(4)}`);
   await pedro.evaluate(`${setInput('mic-gain', '100')} return true;`);
 
   // --- sensitivity (the gate) -----------------------------------------------------------------------------
@@ -252,7 +252,7 @@ async function run() {
   await pedro.evaluate(`${setInput('mic-gain', '200')} return true;`);
   const high = await heard();
   check('the call is still heard', low > 0.002, low.toFixed(4));
-  check('and volume still works on the reopened microphone', high > low * 3, `${low.toFixed(4)} -> ${high.toFixed(4)}`);
+  check('and volume still works on the reopened microphone', high > low * 1.4, `${low.toFixed(4)} -> ${high.toFixed(4)}`);
   check('and the call is still up', await pedro.evaluate("return !document.getElementById('voice-active').hidden"));
 }
 

@@ -2,6 +2,7 @@
 // Node's built-in WebSocket means no dependency for this.
 
 import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -42,7 +43,18 @@ export function launchApp({ port, userDataDir, onStderr, extraArgs = [] }) {
   // The tests read the interface in English whatever the machine's language is.
   // A test of another language passes its own --lang in extraArgs, which wins.
   args.push('--lang=en-US');
-  if (userDataDir) args.push(`--user-data-dir=${userDataDir}`);
+  if (userDataDir) {
+    args.push(`--user-data-dir=${userDataDir}`);
+    // Tests keep watching cameras whatever the state of the window: with a dozen
+    // windows open some are always covered, and a covered window is exactly what
+    // pauses them. A test of the pausing turns it back on.
+    try {
+      mkdirSync(userDataDir, { recursive: true });
+      if (!existsSync(join(userDataDir, 'settings.json'))) {
+        writeFileSync(join(userDataDir, 'settings.json'), JSON.stringify({ pauseHiddenCameras: false }));
+      }
+    } catch { /* the app makes its own */ }
+  }
   // Chromium switches a particular test wants, e.g. forcing software encoding
   // so a run can be compared against the hardware one.
   args.push(...extraArgs);

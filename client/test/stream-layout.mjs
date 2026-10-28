@@ -266,6 +266,27 @@ async function run() {
   l = await layout();
   check('clicking the other one in the strip moves the focus to it', l.layout === 'focus' && l.tiles.find((t) => t.key === mine).focus, JSON.stringify(l.tiles));
 
+  // --- other people's cameras are not watched while the window is out of sight ----------------------------------------------
+  const setHidden = (hidden) => ana.evaluate(`
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => ${hidden} });
+    document.dispatchEvent(new Event('visibilitychange')); return true;`);
+  const theirTiles = () => ana.evaluate("return document.querySelectorAll('#channel-video .channel-tile[data-key]:not([data-own]):not(.ghost-tile)').length");
+  const voices = () => ana.evaluate('return window.__harmony().voice.subs.filter((s) => s.tracks > 0).length');
+  // Tests run with the pausing off (see cdp.mjs); this one wants it on.
+  await ana.evaluate(`const i = document.getElementById('pause-hidden-cameras'); i.checked = true; i.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+  await sleep(500);
+  check('Pedro\'s camera is on screen to start with', (await theirTiles()) === 1, String(await theirTiles()));
+  await setHidden(true);
+  await sleep(2000);
+  check('a short alt-tab does not drop it', (await theirTiles()) === 1, String(await theirTiles()));
+  await sleep(4500);
+  check('hidden for a while, the camera is let go', (await theirTiles()) === 0, `${await theirTiles()} ${JSON.stringify(await ana.evaluate('const d = window.__harmony().voice; return { paused: d.camerasPaused, hidden: document.hidden, setting: document.getElementById("pause-hidden-cameras").checked }'))}`);
+  check('but his voice is still being heard', (await voices()) === 1, String(await voices()));
+  await setHidden(false);
+  await waitFor(ana, "document.querySelectorAll('#channel-video .channel-tile[data-key]:not([data-own]):not(.ghost-tile)').length === 1", { label: 'the camera coming back', timeoutMs: 20_000 });
+  check('shown again, the camera is back', (await theirTiles()) === 1, String(await theirTiles()));
+  await ana.evaluate("delete document.hidden; return true;");
+
   // --- the stream in focus ends: back to the grid, not to some other one ------------------------------------------------------------
   await click(theirs);
   await sleep(500);

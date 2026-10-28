@@ -33,6 +33,19 @@ const MIC_CONSTRAINTS = {
 const VOICE_BITRATE = 32_000;
 
 /**
+ * How much speech goes in each packet.
+ *
+ * 40 ms is twenty-five packets a second instead of fifty, which is the biggest
+ * single thing that can be done about what a relay spends -- see
+ * tuneOpusAnswer -- for twenty milliseconds more before a word leaves. That is
+ * under what anybody can hear, against the delay and stutter of a relay that is
+ * out of CPU, which they can. Opus's own error recovery rides along in each
+ * packet, so a lost one costs forty milliseconds of the previous one's guess
+ * rather than a hole.
+ */
+const VOICE_PTIME_MS = 40;
+
+/**
  * How long a subscription may deliver nothing before it is presumed dead.
  *
  * A quiet person is NOT quiet on the wire: Opus keeps sending, and a muted
@@ -95,6 +108,43 @@ export class VoiceSession {
   #micChain = null;
   #cam = null;
   #camStream = null;
+  /** True while a camera's publish is in flight, so a second start is refused. */
+  #camOpening = false;
+
+  /**
+   * Microphone work, one piece at a time.
+   *
+   * Starting, switching device, changing processing, restarting after a fault
+   * and stopping all touch the same capture, the same chain and the same
+   * sender, and each of them waits on the network or on the browser for a
+   * while. On a slow link that wait is seconds, which is long enough for
+   * another of them to begin in the middle -- a device-change event, the health
+   * check, a switch in Settings -- and two interleaved halves of different
+   * operations leave a capture running that nothing owns, or a chain feeding a
+   * track nothing sends. So they queue.
+   */
+  #micWork = Promise.resolve();
+
+  #serial(work) {
+    const run = this.#micWork.then(work, work);
+    // The queue goes on whether or not this piece failed; the caller sees the
+    // failure through `run`.
+    this.#micWork = run.catch(() => {});
+    return run;
+  }
+
+  /**
+   * What happened to the microphone and the camera, and when: the last few
+   * dozen events, in memory only. A fault that cannot be reproduced on demand
+   * -- and these are the ones that only show on a slow link -- can then be read
+   * off diagnostics() instead of guessed at.
+   */
+  #events = [];
+
+  note(what) {
+    this.#events.push({ at: Date.now(), what });
+    if (this.#events.length > 60) this.#events.shift();
+  }
 
   channelId = null;
   mid = null;
@@ -434,6 +484,8 @@ export class VoiceSession {
       muted: this.muted,
       deafened: this.deafened,
       micLive: this.micLive,
+      camerasPaused: this.#camerasPaused,
+      events: this.#events.map((e) => ({ ago: Date.now() - e.at, what: e.what })),
       // What our own microphone is producing. A live, unmuted microphone
       // reading zero is a dead input -- which is indistinguishable from a
       // broken publish from anywhere else in the system.
@@ -498,12 +550,20 @@ export class VoiceSession {
       && Boolean(noiseSuppression) === this.micNoiseSuppression;
     this.micEchoCancellation = Boolean(echoCancellation);
     this.micNoiseSuppression = Boolean(noiseSuppression);
-    if (same || !this.#mic) return true;
-    return this.switchMic(this.micDeviceId, { releaseFirst: true });
+    if (same) return true;
+    // Queued: the device is read when its turn comes, not now.
+    return this.#serial(() => (this.#mic
+      ? this.#switchMic(this.micDeviceId, { releaseFirst: true })
+      : true));
   }
 
-  async startMic(publishUrl, deviceId) {
+  startMic(publishUrl, deviceId) {
+    return this.#serial(() => this.#startMic(publishUrl, deviceId));
+  }
+
+  async #startMic(publishUrl, deviceId) {
     if (this.#mic) return;
+    this.note('mic: starting');
     this.#micStream = await navigator.mediaDevices.getUserMedia({
       audio: this.#micConstraints(deviceId),
     });
@@ -516,6 +576,8 @@ export class VoiceSession {
       url: publishUrl,
       stream: this.#processed(this.#micStream),
       iceServers: this.iceServers,
+      // Fewer, bigger packets, and none for silence: see tuneOpusAnswer.
+      audioTuning: { dtx: true, ptime: VOICE_PTIME_MS },
     });
 
     // Either of these is a microphone nobody can hear any more, and nothing
@@ -626,8 +688,13 @@ export class VoiceSession {
    *   with `releaseFirst` it has already been let go, and the health check
    *   sees it as lost and restarts it.
    */
-  async switchMic(deviceId, { releaseFirst = false } = {}) {
+  switchMic(deviceId, options) {
+    return this.#serial(() => this.#switchMic(deviceId, options));
+  }
+
+  async #switchMic(deviceId, { releaseFirst = false } = {}) {
     if (!this.#mic) return false;
+    this.note(`mic: switching${releaseFirst ? ' (processing)' : ''}`);
 
     const sender = this.#mic.pc.getSenders().find((s) => s.track?.kind === 'audio');
     if (!sender) return false;
@@ -704,12 +771,15 @@ export class VoiceSession {
    * should refresh the tokens first. Mute, input volume and the gate carry
    * over, because they live on the session rather than on the publish.
    */
-  async restartMic(deviceId) {
-    const url = this.publishUrls?.voice;
-    if (!url) throw new Error('no publish URL for the microphone');
-    await this.stopMic();
-    this.#micDisconnectedSince = null;
-    await this.startMic(url, deviceId);
+  restartMic(deviceId) {
+    return this.#serial(async () => {
+      const url = this.publishUrls?.voice;
+      if (!url) throw new Error('no publish URL for the microphone');
+      this.note('mic: restarting');
+      await this.#stopMic();
+      this.#micDisconnectedSince = null;
+      await this.#startMic(url, deviceId);
+    });
   }
 
   /** The device the microphone is actually on, as the browser reports it. */
@@ -717,7 +787,12 @@ export class VoiceSession {
     return this.#micStream?.getAudioTracks()[0]?.getSettings?.().deviceId ?? '';
   }
 
-  async stopMic() {
+  stopMic() {
+    return this.#serial(() => this.#stopMic());
+  }
+
+  async #stopMic() {
+    this.note('mic: stopping');
     const mic = this.#mic;
     this.#mic = null;
     this.#micMeter?.close();
@@ -849,21 +924,52 @@ export class VoiceSession {
    * adding video to the live audio session would mean tearing it down and
    * cutting everyone's audio to turn a camera on.
    */
+  /**
+   * @returns {Promise<boolean>} true once the camera is published. False when
+   *   one is already running or on its way -- the caller's own stream is then
+   *   spare and is the caller's to stop -- or when the call ended while the
+   *   publish was crossing the network, in which case it has been taken down
+   *   again.
+   */
   async startCam(stream, { bitrate = 400_000, framerate = 24 } = {}) {
-    if (this.#cam) return;
-    this.#camStream = stream;
-    this.#cam = await publish({
-      url: this.publishUrls.cam,
-      stream,
-      iceServers: this.iceServers,
-      codec: 'H264',
-      maxBitrate: bitrate,
-      maxFramerate: framerate,
-      contentHint: 'motion',
-    });
+    // A camera's publish takes a round trip or three, and until it finishes
+    // `#cam` is still empty: a second start in that time (a double click, a
+    // hotkey held a moment, impatience on a slow link) would publish to the
+    // same path and either be refused or take the first one down with it.
+    if (this.#cam || this.#camOpening) return false;
+    this.#camOpening = true;
+    const channelId = this.channelId;
+    this.note('cam: starting');
+    try {
+      const cam = await publish({
+        url: this.publishUrls.cam,
+        stream,
+        iceServers: this.iceServers,
+        codec: 'H264',
+        maxBitrate: bitrate,
+        maxFramerate: framerate,
+        contentHint: 'motion',
+      });
+      if (this.channelId !== channelId) {
+        cam.pc.close();
+        if (cam.resourceUrl) harmony.api.hangup(cam.resourceUrl).catch(() => {});
+        return false;
+      }
+      this.#cam = cam;
+      this.#camStream = stream;
+      return true;
+    } finally {
+      this.#camOpening = false;
+    }
+  }
+
+  /** A camera is being published right now. */
+  get camStarting() {
+    return this.#camOpening;
   }
 
   async stopCam() {
+    this.note('cam: stopping');
     const cam = this.#cam;
     this.#cam = null;
     this.#camStream?.getTracks().forEach((t) => t.stop());
@@ -1020,6 +1126,8 @@ export class VoiceSession {
     for (const member of current) {
       if (member.mid === this.mid) continue;
       for (const kind of ['c', 's']) {
+        // Cameras are not watched while nobody is looking: see setCamerasPaused.
+        if (kind === 'c' && this.#camerasPaused) continue;
         if (member.publishing?.includes(kind)) {
           wanted.set(`${member.mid}:${kind}`, { mid: member.mid, kind });
         }
@@ -1060,6 +1168,11 @@ export class VoiceSession {
         //
         // No keep-alive element is needed here: the tile IS one. See
         // #keepAlive for why voice subscriptions have to make their own.
+        // Paused while this was opening: it has arrived for nobody.
+        if (kind === 'c' && this.#camerasPaused) {
+          pc.close();
+          continue;
+        }
         const sink = createSink(stream);
         sink.set(this.#tileGains.get(key) ?? 1);
         this.#video.set(key, { pc, stream, sink, mid, kind });
@@ -1080,7 +1193,32 @@ export class VoiceSession {
   /** True while somebody is publishing video we have not managed to open. */
   get hasMissingVideo() {
     return (this.lastRoster ?? []).some((m) => m.mid !== this.mid
-      && ['c', 's'].some((k) => m.publishing?.includes(k) && !this.#video.has(`${m.mid}:${k}`)));
+      && ['c', 's'].some((k) => !(k === 'c' && this.#camerasPaused)
+        && m.publishing?.includes(k) && !this.#video.has(`${m.mid}:${k}`)));
+  }
+
+  /**
+   * Whether other people's cameras are being watched at all.
+   *
+   * Switched off while the window is out of sight. A camera is the biggest
+   * thing the relay sends after the voices, and on a machine where Harmony sits
+   * minimised behind a game it is decoded, relayed and drawn for nobody. Only
+   * cameras: a screen share's sound rides on the same connection as its
+   * picture, and somebody listening to a friend's stream with Harmony in the
+   * tray is exactly who must not lose it.
+   */
+  #camerasPaused = false;
+
+  setCamerasPaused(paused) {
+    this.#camerasPaused = Boolean(paused);
+    // Let go now, not at the next sync: one may be half way through opening.
+    if (this.#camerasPaused) {
+      for (const [key, sub] of [...this.#video]) if (sub.kind === 'c') this.unsubscribeVideo(key);
+    }
+  }
+
+  get camerasPaused() {
+    return this.#camerasPaused;
   }
 
   unsubscribeVideo(key) {

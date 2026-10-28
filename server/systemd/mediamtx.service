@@ -17,6 +17,11 @@ RestartSec=2
 # A relay handles a lot of concurrent sockets.
 LimitNOFILE=65536
 
+# The relay is what a call's quality depends on, and on a small machine it
+# shares the CPU with whatever else is running there. A little priority keeps a
+# busy afternoon elsewhere from turning into stutter in the room.
+Nice=-5
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

@@ -199,6 +199,7 @@ const el = {
   profileSoundFile: $('profile-sound-file'),
   profileSoundNote: $('profile-sound-note'),
   customJoinSounds: $('custom-join-sounds'),
+  pauseHiddenCameras: $('pause-hidden-cameras'),
   pttEnabled: $('ptt-enabled'),
   pttOptions: $('ptt-options'),
   pttKey: $('ptt-key'),
@@ -627,7 +628,7 @@ const state = {
    * other useful names. several: whether there is a second camera at all,
    * which is when the switch button appears.
    */
-  camera: { stream: null, publication: null, session: null, facing: 'user', several: false, effect: null },
+  camera: { stream: null, publication: null, session: null, facing: 'user', several: false, effect: null, starting: false },
   voice: new VoiceSession(),
   audioAvailable: false,
   audioUnavailableReason: null,
@@ -4174,8 +4175,17 @@ function applyVoiceButtons() {
   el.voiceMute.toggleAttribute('data-on', state.voice.muted);
   setButtonLabel(el.voiceDeafen, state.voice.deafened ? t('app.undeafen') : t('app.deafen'));
   el.voiceDeafen.toggleAttribute('data-on', state.voice.deafened);
-  setButtonLabel(el.voiceCam, state.voice.camLive ? t('app.stop_camera') : t('app.start_camera'));
-  el.voiceCam.toggleAttribute('data-on', state.voice.camLive);
+  // While it opens the button says so and does nothing: on a slow link that is
+  // several seconds in which pressing it again used to start a second camera.
+  const cameraOn = state.voice.camLive || Boolean(state.camera.publication);
+  setButtonLabel(
+    el.voiceCam,
+    state.camera.starting ? t('app.starting_camera')
+      : cameraOn ? t('app.stop_camera') : t('app.start_camera'),
+  );
+  el.voiceCam.toggleAttribute('data-on', cameraOn);
+  el.voiceCam.toggleAttribute('data-busy', Boolean(state.camera.starting));
+  el.voiceCam.disabled = Boolean(state.camera.starting);
   el.voiceFlip.hidden = !(state.voice.camLive && state.camera.several);
 
   // Both live on the strip at the bottom now, and both mean something only
@@ -5451,12 +5461,14 @@ harmony.hotkeys.onFired((id) => {
     // camera that includes opening it with the chosen quality and background,
     // and refusing when there is no call to put it in.
     const button = id === 'mute' ? el.voiceMute : id === 'deafen' ? el.voiceDeafen : el.voiceCam;
-    if (!state.voice.channelId || button.disabled) {
+    if (!state.voice.channelId) {
       // Said, not swallowed: a key that does nothing looks exactly like a key
       // that never arrived, and sends somebody off to debug the wrong thing.
       toast(t('hotkeys.join_first'));
       return;
     }
+    // The camera while it is still opening: the press is already being acted on.
+    if (button.disabled) return;
     button.click();
     return;
   }
@@ -9384,10 +9396,18 @@ async function flipCamera() {
 }
 
 async function startCamera() {
-  if (state.camera.publication || state.voice.camLive) return;
+  // `starting` covers the whole of it -- opening the camera, the token, the
+  // publish across the network -- not only the publish, so a second press in
+  // any of those moments is the same press, not a second camera.
+  if (state.camera.starting || state.camera.publication || state.voice.camLive) return undefined;
   const nickname = state.auth.user?.nickname;
   if (!nickname) return showChannelsError(t('app.sign_in_first'));
 
+  state.camera.starting = true;
+  applyVoiceButtons();
+  // What was opened so far, so a failure can let go of it. Whatever the
+  // camera's light says, it should not be on for a publish that never was.
+  let opened = null;
   try {
     const wanted = state.settings.voiceCameraId ?? '';
     let stream = wanted ? await openCamera(wanted).catch(() => null) : null;
@@ -9397,11 +9417,13 @@ async function startCamera() {
       // turning the camera off and on again should not flip it back.
       stream = await openCamera('', state.camera.facing);
     }
+    opened = stream;
     // Labels and the full device list exist only once a camera is open.
     await countCameras();
     // Behind the person, if that is what was chosen: from here on this is the
     // camera as far as the call is concerned.
     stream = await withBackground(stream);
+    opened = stream;
 
     /*
      * Inside a voice channel the camera goes to the CHANNEL path.
@@ -9421,12 +9443,18 @@ async function startCamera() {
       // A camera is usually started well into a call, which is exactly when
       // the join-time token has gone stale.
       await refreshVoiceTokens();
-      await state.voice.startCam(stream, cameraSend(stream));
+      if (!await state.voice.startCam(stream, cameraSend(stream))) {
+        // Not published: the call ended meanwhile, or a camera was already on.
+        // Either way this stream is spare.
+        stream.getTracks().forEach((track) => track.stop());
+        if (stream !== opened) opened?.getTracks().forEach((track) => track.stop());
+        opened = null;
+        return undefined;
+      }
+      opened = null;
       await harmony.realtime.request('voice:publishing', {
         channelId: state.voice.channelId, kind: 'c', on: true,
       });
-      applyVoiceButtons();
-      renderChannelVideo();
       return undefined;
     }
 
@@ -9462,7 +9490,12 @@ async function startCamera() {
     el.voiceCam.textContent = t('app.stop_camera');
   } catch (err) {
     showChannelsError(err.message);
+    opened?.getTracks().forEach((track) => track.stop());
     await stopCamera();
+  } finally {
+    state.camera.starting = false;
+    applyVoiceButtons();
+    renderChannelVideo();
   }
   return undefined;
 }
@@ -12202,6 +12235,11 @@ el.profileSoundFile.addEventListener('change', () => {
   el.profileSoundFile.value = '';
   if (file) setOwnJoinSound(file);
 });
+el.pauseHiddenCameras.addEventListener('change', async () => {
+  await harmony.settings.set({ pauseHiddenCameras: el.pauseHiddenCameras.checked });
+  state.settings = await harmony.settings.get();
+  syncCameraWatching();
+});
 el.customJoinSounds.addEventListener('change', async () => {
   await harmony.settings.set({ customJoinSounds: el.customJoinSounds.checked });
   state.settings = await harmony.settings.get();
@@ -12327,6 +12365,7 @@ el.voiceConfig.addEventListener('click', () => {
   el.voiceSounds.checked = state.settings?.voiceSounds !== false;
   el.mentionSound.checked = state.settings?.mentionSound !== false;
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
+  el.pauseHiddenCameras.checked = state.settings?.pauseHiddenCameras !== false;
   renderPttSettings();
   showVolume(el.soundVolume, el.soundVolumeLabel, state.settings?.soundVolume ?? 100);
   renderHotkeyList();
@@ -13154,9 +13193,38 @@ el.previewOff.addEventListener('click', () => {
 
 // Minimising is the automatic half: the window is gone, so painting it is pure
 // waste. Automatic, and it does not overwrite a deliberate choice.
+/*
+ * Other people's cameras are not watched while Harmony is out of sight.
+ *
+ * Five seconds of grace before they are let go, so a quick alt-tab does not
+ * cost a reconnect; on coming back they are subscribed again at once. The
+ * relay's biggest bill after the voices is video, and a minimised window is
+ * not showing any of it. See VoiceSession.setCamerasPaused.
+ */
+const CAMERAS_PAUSE_AFTER_MS = 5000;
+let camerasPauseTimer = null;
+
+function syncCameraWatching() {
+  const visible = state.settings?.pauseHiddenCameras === false
+    || (state.preview.windowVisible !== false && !document.hidden);
+  clearTimeout(camerasPauseTimer);
+  camerasPauseTimer = null;
+  const apply = (paused) => {
+    if (state.voice.camerasPaused === paused) return;
+    state.voice.setCamerasPaused(paused);
+    state.voice.syncVideo()
+      .then(() => renderChannelVideo())
+      .catch(() => { /* the reconciliation tick comes back */ });
+  };
+  if (visible) apply(false);
+  else camerasPauseTimer = setTimeout(() => apply(true), CAMERAS_PAUSE_AFTER_MS);
+}
+document.addEventListener('visibilitychange', syncCameraWatching);
+
 harmony.onWindowVisibility((visible) => {
   state.preview.windowVisible = visible;
   applyPreviewVisibility();
+  syncCameraWatching();
 
   // Mosaic tiles too. Each one is a decoder feeding a composited element, and a
   // minimised window shows none of it. Pausing leaves the connection up, so

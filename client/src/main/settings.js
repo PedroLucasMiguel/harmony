@@ -107,6 +107,13 @@ const DEFAULTS = {
    * accelerator as the hotkey recorder writes it ("V", "F13", "Ctrl+Space").
    */
   pushToTalk: false,
+  /*
+   * Stop watching other people's cameras while Harmony is out of sight
+   * (minimised, in the tray, or covered). The relay's biggest bill after the
+   * voices is video, and a window nobody can see is not showing it. On: it
+   * costs nothing to anybody who is looking, and they come back at once.
+   */
+  pauseHiddenCameras: true,
   pushToTalkKey: '',
   /*
    * The colour palette, by name. Purely local: it is never sent anywhere

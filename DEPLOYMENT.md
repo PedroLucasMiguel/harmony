@@ -66,11 +66,30 @@ and control server also run on x86-64 on every pass of the e2e suite, though
 another architecture it will be in the installer, not the software. A mini-PC, an
 old laptop, a NAS or a small VPS are all equally valid hosts.
 
-**Your upload bandwidth is the only resource this is ever short of.** Every
-viewer of every stream is a separate copy out of the server: one 8 Mbps
-broadcaster with three viewers is 24 Mbps up. Size the host on its network link,
-not its CPU — and if your home connection is thin, a cheap VPS with real upload
-will outperform better hardware behind it.
+**Your upload bandwidth is the first thing this runs short of.** Every viewer of
+every stream is a separate copy out of the server: one 8 Mbps broadcaster with
+three viewers is 24 Mbps up. Size the host on its network link first — and if
+your home connection is thin, a cheap VPS with real upload will outperform better
+hardware behind it.
+
+**The CPU matters too, and what it pays for is packets, not bits.** The relay
+does no encryption work worth mentioning; what it spends is one system call per
+packet per listener. Measured with ten people (four in a room with cameras,
+four muted in another, two talking in a third — 52 connections):
+
+| | Egress | Packets/s out | Packets/s in |
+| --- | --- | --- | --- |
+| Before (every audio stream 50 packets/s, silent or not) | 5.8 Mbit/s | 1915 | 713 |
+| With silence suppression (DTX) | 5.4 Mbit/s | 1320 | 510 |
+| And 40 ms audio frames | 5.6 Mbit/s | 1030 | 390 |
+
+Audio was two thirds of the packets even though it is a fraction of the
+bandwidth, and a muted person's microphone sent as many as a talking one's.
+Both are now cut, and the relay's CPU in the same run fell from about a quarter
+of a core to about a fifth (noisy: ten clients were running on the same
+machine, and a profile of the relay put 45% of its time in the kernel's
+send call and under 1% in encryption). Video is the rest, and scales with the
+camera's bitrate. `client/test/load.mjs` repeats the run on your own hardware.
 
 ## 1. Install
 
@@ -628,6 +647,8 @@ clears it for the processes it spawns.
 | Certificate stops renewing | DNS token expired | Replace it in `/etc/letsencrypt/cloudflare.ini`, then `sudo certbot renew --dry-run` |
 | Everything works, then breaks hours later | Public IP moved | Check `harmony-ip-watch.timer` is active and your DDNS is current |
 | Stream is 5–10 fps | Usually the client's bitrate ceiling, not the network | Raise the quality preset; read the ⚠ line in the client's stats for `bandwidth` vs `cpu` |
+| Calls stutter or freeze when several people are on, nothing in any log | The kernel dropped UDP packets: its default socket buffer is about 200 KB and a burst (a keyframe) overflows it | `install.sh` now raises it (`/etc/sysctl.d/90-harmony-udp.conf`); on Docker set the same `net.core.rmem_*` / `wmem_*` values on the **host**. `netstat -su` shows `receive buffer errors` climbing if this is it |
+| The relay's CPU is high with a handful of people | Per-packet work: see the table under Requirements | Fewer, lower-quality cameras (the largest packet source after audio); a faster single core helps more than more cores |
 
 ## When a client still cannot connect
 

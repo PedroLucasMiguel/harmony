@@ -90,13 +90,13 @@ function speechGate(analyser) {
  * reaches it.
  */
 export function createMeter(stream) {
-  const analyser = context().createAnalyser();
+  const analyser = captureContext().createAnalyser();
   analyser.fftSize = 2048;
   analyser.smoothingTimeConstant = 0.2;
 
   let source = null;
   try {
-    source = context().createMediaStreamSource(stream);
+    source = captureContext().createMediaStreamSource(stream);
     source.connect(analyser);
   } catch (err) {
     console.warn('[gain] could not meter stream:', err.message);
@@ -145,20 +145,21 @@ const GATE_HOLD_MS = 300;
 const GATE_RELEASE = 0.55;
 
 export function createMicChain(stream, { gain = 1, threshold = 0 } = {}) {
+  const capture = captureContext();
   let source;
   try {
-    source = context().createMediaStreamSource(stream);
+    source = capture.createMediaStreamSource(stream);
   } catch (err) {
     console.warn('[gain] could not process the microphone:', err.message);
     return null;
   }
 
-  const analyser = context().createAnalyser();
+  const analyser = capture.createAnalyser();
   analyser.fftSize = 1024;
   analyser.smoothingTimeConstant = 0.1;
-  const volume = context().createGain();
-  const gate = context().createGain();
-  const dest = context().createMediaStreamDestination();
+  const volume = capture.createGain();
+  const gate = capture.createGain();
+  const dest = capture.createMediaStreamDestination();
 
   // The analyser sits FIRST, so the meter shows what the microphone hears
   // rather than what survived the gate -- which is what you need to see in
@@ -187,7 +188,7 @@ export function createMicChain(stream, { gain = 1, threshold = 0 } = {}) {
     if (cutoff <= 0) {
       if (!open) {
         open = true;
-        gate.gain.setTargetAtTime(1, context().currentTime, 0.005);
+        gate.gain.setTargetAtTime(1, capture.currentTime, 0.005);
       }
       return;
     }
@@ -198,7 +199,7 @@ export function createMicChain(stream, { gain = 1, threshold = 0 } = {}) {
     if (shouldBeOpen === open) return;
     open = shouldBeOpen;
     // 5 ms to open, 120 ms to close.
-    gate.gain.setTargetAtTime(open ? 1 : 0, context().currentTime, open ? 0.005 : 0.04);
+    gate.gain.setTargetAtTime(open ? 1 : 0, capture.currentTime, open ? 0.005 : 0.04);
   }, GATE_POLL_MS);
   timer.unref?.();
 
@@ -411,6 +412,34 @@ export function monitorStream(stream, gain = 1) {
       try { node.disconnect(); } catch { /* already gone */ }
     },
   };
+}
+
+/**
+ * A second AudioContext, for the microphone only, with no output at all.
+ *
+ * The microphone chain and its meter used to live in the playback context
+ * below, and so shared its fate: that context is pointed at an output device
+ * and re-pointed whenever the devices change, and every re-point restarts its
+ * rendering -- under a MediaStreamAudioDestinationNode that is feeding the
+ * encoder. On a slow link the call's first seconds are exactly when a camera
+ * opens or a switch is flipped and the device list changes, with the publish
+ * still settling. A context with sinkId { type: 'none' } has no device to
+ * follow or lose, so what leaves for the encoder no longer depends on
+ * anything about the speakers. Engines that do not know the option get an
+ * ordinary context, which is what everything used to be.
+ */
+let captureCtx = null;
+
+function captureContext() {
+  if (!captureCtx) {
+    try {
+      captureCtx = new AudioContext({ latencyHint: 'interactive', sinkId: { type: 'none' } });
+    } catch {
+      captureCtx = new AudioContext({ latencyHint: 'interactive' });
+    }
+  }
+  if (captureCtx.state === 'suspended') captureCtx.resume().catch(() => {});
+  return captureCtx;
 }
 
 let ctx = null;
@@ -674,6 +703,10 @@ export function stopJoinSounds() {
 export async function setOutputDevice(deviceId) {
   const ctx = context();
   if (typeof ctx.setSinkId !== 'function') return false;
+  // Already there. Chromium rebuilds the context's output for a setSinkId even
+  // to the device it is on, and every devicechange used to ask for exactly
+  // that -- which is a restart of everything playing, for nothing.
+  if (typeof ctx.sinkId === 'string' && ctx.sinkId === (deviceId || '')) return true;
   try {
     // '' is the system default. setSinkId takes the empty string for that,
     // the same as an <audio> element does.

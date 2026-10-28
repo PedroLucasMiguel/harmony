@@ -156,6 +156,74 @@ export async function applySenderSettings(sender, { maxBitrate, maxFramerate, de
 }
 
 /**
+ * Tune the sender's Opus encoder through the answer it is about to be given.
+ *
+ *   dtx    silence costs one small packet every few hundred milliseconds
+ *          instead of fifty a second
+ *   ptime  audio goes out in frames of this many milliseconds, so 40 is
+ *          twenty-five packets a second where the default is fifty
+ *
+ * The sender's own settings come from what the OTHER side's description says
+ * it wants to receive (RFC 7587: `usedtx` and `ptime` are a receiver's
+ * requests), and the other side here is a relay that asks for neither, so the
+ * answer is edited on its way in. Nothing is renegotiated and the relay does
+ * not know the difference: it forwards RTP, and fewer packets is all it sees.
+ *
+ * Why it matters at all. What a relay costs is packets, not bits: every packet
+ * it forwards is a system call for each person listening, and measured on a
+ * ten-person server those calls were nearly half of all the CPU it used, with
+ * the encryption a rounding error. A voice channel is mostly silence -- one
+ * person talking and three of the four streams the sound of nothing, and a
+ * muted person's too, since muting keeps the stream and silences the track --
+ * and every audio stream is the same fifty packets a second whatever is in it.
+ *
+ * Done on the audio section only, only for the Opus line, and only where it is
+ * not already stated.
+ *
+ * @param {string} sdp the relay's answer
+ * @param {{dtx?: boolean, ptime?: number}} options
+ * @returns {string}
+ */
+export function tuneOpusAnswer(sdp, { dtx = true, ptime = 0 } = {}) {
+  const lines = sdp.split(/\r?\n/);
+  let audioStart = -1;
+  let audioEnd = lines.length;
+  let opus = null;
+  lines.forEach((line, i) => {
+    if (line.startsWith('m=')) {
+      if (audioStart >= 0 && audioEnd === lines.length) audioEnd = i;
+      if (line.startsWith('m=audio') && audioStart < 0) audioStart = i;
+    }
+    if (audioStart >= 0 && i > audioStart && i < audioEnd) {
+      const rtpmap = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
+      if (rtpmap) opus = rtpmap[1];
+    }
+  });
+  if (audioStart < 0 || !opus) return sdp;
+
+  const section = lines.slice(audioStart, audioEnd);
+  const fmtp = new RegExp(`^a=fmtp:${opus} (.*)$`);
+  let found = false;
+  const edited = section.map((line) => {
+    const m = fmtp.exec(line);
+    if (!m) return line;
+    found = true;
+    return !dtx || /(^|;)\s*usedtx=/.test(m[1]) ? line : `a=fmtp:${opus} ${m[1]};usedtx=1`;
+  });
+  if (!found && dtx) {
+    const at = edited.findIndex((l) => new RegExp(`^a=rtpmap:${opus} `).test(l));
+    edited.splice(at + 1, 0, `a=fmtp:${opus} usedtx=1`);
+  }
+  if (ptime > 0 && !edited.some((l) => l.startsWith('a=ptime:'))) {
+    // Before any trailing blank line: attributes belong inside the section.
+    let end = edited.length;
+    while (end > 0 && edited[end - 1] === '') end -= 1;
+    edited.splice(end, 0, `a=ptime:${ptime}`, `a=maxptime:${ptime}`);
+  }
+  return [...lines.slice(0, audioStart), ...edited, ...lines.slice(audioEnd)].join('\r\n');
+}
+
+/**
  * Publish a MediaStream to a WHIP endpoint.
  * @returns {Promise<{pc: RTCPeerConnection, resourceUrl: string|null}>}
  */
@@ -163,6 +231,7 @@ export async function publish({
   url,
   stream,
   iceServers,
+  audioTuning = null,
   codec = 'H264',
   maxBitrate,
   maxFramerate,
@@ -204,7 +273,7 @@ export async function publish({
     await waitForIceGathering(pc);
 
     const { answer, resourceUrl } = await harmony.api.sdp(url, pc.localDescription.sdp);
-    await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+    await pc.setRemoteDescription({ type: 'answer', sdp: audioTuning ? tuneOpusAnswer(answer, audioTuning) : answer });
 
     // Bitrate has to be set after the answer -- before it, the sender has no
     // negotiated encoding to configure.

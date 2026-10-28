@@ -144,6 +144,28 @@ else
   echo "    $(/usr/local/bin/mediamtx --version 2>&1 | head -n1)"
 fi
 
+# --- UDP socket buffers ------------------------------------------------------
+# Every voice and video stream a room has goes through this one host's UDP
+# socket, in bursts: a keyframe is dozens of packets at once. Linux's default
+# receive buffer is about 200 KB, and when the relay is a moment late reading
+# it the kernel drops the overflow silently -- which reaches the people in the
+# room as stutter and frozen pictures, with nothing in any log. A few megabytes
+# of headroom costs nothing; the settings are for sockets that do not ask for a
+# size themselves, which is how the relay opens its own.
+SYSCTL_FILE=/etc/sysctl.d/90-harmony-udp.conf
+if [[ -d /etc/sysctl.d ]]; then
+  cat > "$SYSCTL_FILE" <<'SYSCTL'
+# Written by Harmony's install.sh: room for bursts of media packets.
+net.core.rmem_default = 4194304
+net.core.rmem_max = 8388608
+net.core.wmem_default = 4194304
+net.core.wmem_max = 8388608
+SYSCTL
+  # A container or a locked-down host may refuse; the server works either way.
+  sysctl -q -p "$SYSCTL_FILE" >/dev/null 2>&1 \
+    || echo "    (could not apply the UDP buffer settings now; they apply at the next boot)"
+fi
+
 # --- update: a copy of the database --------------------------------------------
 # The new code may migrate the schema the moment it starts, and there is no
 # migrating back. VACUUM INTO takes a consistent copy of a live database, so
