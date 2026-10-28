@@ -9109,7 +9109,7 @@ function backgroundOptions() {
  */
 async function withBackground(raw) {
   const options = backgroundOptions();
-  if (options.mode === 'off') return raw;
+  if (options.mode === 'off' || backgroundTooSlow) return raw;
   try {
     const lib = await backgroundLib();
     if (!lib.backgroundSupported()) return raw;
@@ -9120,6 +9120,7 @@ async function withBackground(raw) {
     effect.onStop = () => {
       if (state.camera.effect === effect) state.camera.effect = null;
     };
+    effect.onOverload = (stats) => giveUpBackground(effect, stats);
     return effect.stream;
   } catch (err) {
     console.warn('[background] could not start:', err);
@@ -9131,8 +9132,42 @@ async function withBackground(raw) {
 // One change at a time: reopening the camera twice at once leaves one open.
 let backgroundWork = Promise.resolve();
 
+/**
+ * Set when the effect gave up on this computer. Until the person changes the
+ * background setting again, a camera is opened plain rather than tried again
+ * and found too slow again a few seconds into every call.
+ */
+let backgroundTooSlow = false;
+
+/**
+ * The effect could not keep up even after doing less -- see background-load.js.
+ * Put the plain camera back and say so: a picture without its background is a
+ * better call than a voice that crackles because the processor is at its limit.
+ * The setting itself is left as the person chose it.
+ */
+function giveUpBackground(effect, stats) {
+  backgroundWork = backgroundWork.then(async () => {
+    if (state.camera.effect !== effect || !state.voice.camLive) return;
+    console.warn('[background] too slow for this computer, switching it off for this call:', JSON.stringify(stats));
+    backgroundTooSlow = true;
+    const raw = await openCamera(state.voice.camDeviceId || '').catch(() => null);
+    if (!raw) {
+      deviceNote(t('app.the_camera_could_not_be_2'));
+      return;
+    }
+    if (!await state.voice.switchCam(raw)) {
+      raw.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    deviceNote(t('app.background_too_slow'));
+    renderChannelVideo();
+  }).catch((err) => console.warn('[background] could not switch off:', err));
+}
+
 /** Make a running camera match the setting, without a gap in the video. */
 function applyBackgroundLive() {
+  // A new choice deserves a new try.
+  backgroundTooSlow = false;
   backgroundWork = backgroundWork.then(async () => {
     if (!state.voice.camLive) return;
     const options = backgroundOptions();
@@ -11872,6 +11907,14 @@ window.__harmonyPublish = () => state.voice.publishStats();
 
 /** What each voice subscription is receiving. Async; see subscribeStats. */
 window.__harmonySubs = () => state.voice.subscribeStats();
+
+/** Loss, jitter and concealment for every voice we hear and for our own. Async; see audioQuality. */
+window.__harmonyAudio = async () => ({
+  ...await state.voice.audioQuality(),
+  // The camera's background effect, if one is running: frames per second, the
+  // milliseconds a frame costs, and whether it is on the GPU or the CPU.
+  background: state.camera.effect?.stats ?? null,
+});
 
 // ---------------------------------------------------------------------------
 // Wiring

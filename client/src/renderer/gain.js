@@ -144,8 +144,7 @@ const GATE_POLL_MS = 25;
 const GATE_HOLD_MS = 300;
 const GATE_RELEASE = 0.55;
 
-export function createMicChain(stream, { gain = 1, threshold = 0 } = {}) {
-  const capture = captureContext();
+function polledMicChain(stream, { gain = 1, threshold = 0 } = {}, capture = captureContext()) {
   let source;
   try {
     source = capture.createMediaStreamSource(stream);
@@ -204,6 +203,7 @@ export function createMicChain(stream, { gain = 1, threshold = 0 } = {}) {
   timer.unref?.();
 
   return {
+    kind: 'polled',
     track: dest.stream.getAudioTracks()[0] ?? null,
     setGain(value) {
       volume.gain.value = Math.max(0, Math.min(MAX_GAIN, Number(value) || 0));
@@ -224,6 +224,103 @@ export function createMicChain(stream, { gain = 1, threshold = 0 } = {}) {
       }
     },
   };
+}
+
+/** One load of the gate's code per context; a failure is remembered, not retried. */
+const gateModules = new WeakMap();
+
+function loadGate(capture) {
+  if (!gateModules.has(capture)) {
+    gateModules.set(capture, capture.audioWorklet.addModule('gate-worklet.js'));
+  }
+  return gateModules.get(capture);
+}
+
+/**
+ * The same chain with the gate on the audio thread -- see gate-worklet.js.
+ * Throws if the engine will not run it, and the caller falls back.
+ */
+function workletMicChain(stream, { gain = 1, threshold = 0 }, capture) {
+  const source = capture.createMediaStreamSource(stream);
+  let gate;
+  try {
+    gate = new AudioWorkletNode(capture, 'mic-gate', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+      channelCountMode: 'explicit',
+      outputChannelCount: [1],
+    });
+  } catch (err) {
+    source.disconnect();
+    throw err;
+  }
+  const volume = capture.createGain();
+  const dest = capture.createMediaStreamDestination();
+  const cutoff = gate.parameters.get('threshold');
+  cutoff.value = Math.max(0, threshold);
+  volume.gain.value = Math.max(0, Math.min(MAX_GAIN, gain));
+
+  // The gate looks at the signal BEFORE the volume, as the polled one did: the
+  // threshold is in terms of what the microphone hears, not of what is sent.
+  source.connect(gate);
+  gate.connect(volume);
+  volume.connect(dest);
+
+  let level = 0;
+  let open = true;
+  gate.port.onmessage = (event) => {
+    level = event.data.level;
+    open = event.data.open;
+  };
+
+  return {
+    kind: 'worklet',
+    track: dest.stream.getAudioTracks()[0] ?? null,
+    setGain(value) {
+      volume.gain.value = Math.max(0, Math.min(MAX_GAIN, Number(value) || 0));
+    },
+    setThreshold(value) {
+      cutoff.value = Math.max(0, Number(value) || 0);
+    },
+    get level() {
+      return level;
+    },
+    get open() {
+      return open;
+    },
+    close() {
+      gate.port.onmessage = null;
+      for (const node of [source, gate, volume, dest]) {
+        try { node.disconnect(); } catch { /* already gone */ }
+      }
+    },
+  };
+}
+
+let gateWarned = false;
+
+/**
+ * Input volume and the noise gate, between the microphone and the publish.
+ * See polledMicChain for what each is for; the gate runs on the audio thread
+ * where the engine allows it and on a timer where it does not.
+ *
+ * @returns {Promise<object|null>} null if Web Audio refuses the stream
+ */
+export async function createMicChain(stream, options = {}) {
+  const capture = captureContext();
+  try {
+    await loadGate(capture);
+    return workletMicChain(stream, options, capture);
+  } catch (err) {
+    if (!gateWarned) {
+      gateWarned = true;
+      console.warn('[gain] the gate could not run on the audio thread; using a timer:', err?.message ?? err);
+    }
+    const chain = polledMicChain(stream, options, capture);
+    if (chain) chain.kind = 'polled';
+    return chain;
+  }
 }
 
 /**

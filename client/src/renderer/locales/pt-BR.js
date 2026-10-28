@@ -40,6 +40,7 @@ export default {
   'app.back_to_an_ordinary_member': 'Voltar a ser um membro comum',
   'app.back_to_stream': 'Voltar à transmissão',
   'app.back_to_the_grid': 'Voltar à grade',
+  'app.background_too_slow': 'O efeito de fundo foi desativado nesta chamada: este computador não conseguiu acompanhá-lo.',
   'app.cancel': 'Cancelar',
   'app.cancelling': 'Cancelando…',
   'app.change': 'Alterar…',

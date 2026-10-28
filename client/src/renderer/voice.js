@@ -392,6 +392,80 @@ export class VoiceSession {
   }
 
   /**
+   * What the audio is going through, in the numbers that tell crackle apart.
+   *
+   *   receiving   per person: `lost` packets and `jitterMs` say the network;
+   *               `concealedPct` and `stretchedMs`/`squeezedMs` say what the
+   *               player did about it (made up, slowed down, sped up), which is
+   *               the sound of it; `bufferMs` is how far behind it is playing
+   *   sending     our own voice as the relay reports receiving it: loss and
+   *               jitter on the way up, and the round trip
+   *   camera      what is holding the picture back -- `limit` is 'cpu' when the
+   *               machine cannot encode it, 'bandwidth' when the line cannot
+   *               carry it
+   *
+   * Counters are totals since each connection opened; read it twice and subtract
+   * to see a stretch of time.
+   */
+  async audioQuality() {
+    const ms = (seconds) => (seconds == null ? null : Math.round(seconds * 1000));
+    const read = async (pc) => {
+      const rows = [];
+      (await pc.getStats()).forEach((r) => rows.push(r));
+      return rows;
+    };
+
+    const receiving = [];
+    for (const [mid, sub] of this.#subs) {
+      const r = (await read(sub.pc)).find((x) => x.type === 'inbound-rtp' && x.kind === 'audio');
+      if (!r) { receiving.push({ mid, pc: sub.pc.connectionState }); continue; }
+      const samples = r.totalSamplesReceived || 0;
+      receiving.push({
+        mid,
+        pc: sub.pc.connectionState,
+        packets: r.packetsReceived,
+        lost: r.packetsLost,
+        jitterMs: ms(r.jitter),
+        bufferMs: r.jitterBufferEmittedCount ? ms(r.jitterBufferDelay / r.jitterBufferEmittedCount) : null,
+        concealedPct: samples ? Number(((100 * (r.concealedSamples || 0)) / samples).toFixed(2)) : null,
+        concealmentEvents: r.concealmentEvents ?? null,
+        stretchedMs: r.insertedSamplesForDeceleration != null ? Math.round(r.insertedSamplesForDeceleration / 48) : null,
+        squeezedMs: r.removedSamplesForAcceleration != null ? Math.round(r.removedSamplesForAcceleration / 48) : null,
+      });
+    }
+
+    let sending = null;
+    if (this.#mic) {
+      const rows = await read(this.#mic.pc);
+      const out = rows.find((x) => x.type === 'outbound-rtp' && x.kind === 'audio');
+      const back = rows.find((x) => x.type === 'remote-inbound-rtp' && x.kind === 'audio');
+      sending = {
+        pc: this.#mic.pc.connectionState,
+        packets: out?.packetsSent ?? null,
+        lost: back?.packetsLost ?? null,
+        jitterMs: ms(back?.jitter),
+        rttMs: ms(back?.roundTripTime),
+      };
+    }
+
+    let camera = null;
+    if (this.#cam) {
+      const rows = await read(this.#cam.pc);
+      const out = rows.find((x) => x.type === 'outbound-rtp' && x.kind === 'video');
+      const back = rows.find((x) => x.type === 'remote-inbound-rtp' && x.kind === 'video');
+      camera = {
+        pc: this.#cam.pc.connectionState,
+        size: out ? `${out.frameWidth}x${out.frameHeight}` : null,
+        fps: out?.framesPerSecond ?? null,
+        limit: out?.qualityLimitationReason ?? null,
+        lost: back?.packetsLost ?? null,
+        rttMs: ms(back?.roundTripTime),
+      };
+    }
+    return { receiving, sending, camera };
+  }
+
+  /**
    * Round trip to the relay, in milliseconds.
    *
    * A real measurement over the live media path -- STUN consent checks on
@@ -502,6 +576,8 @@ export class VoiceSession {
       muted: this.muted,
       deafened: this.deafened,
       micLive: this.micLive,
+      // Where the noise gate runs: 'worklet' is the audio thread, 'polled' a timer.
+      micGate: this.#micChain?.kind ?? null,
       camerasPaused: this.#camerasPaused,
       events: this.#events.map((e) => ({ ago: Date.now() - e.at, what: e.what })),
       // What our own microphone is producing. A live, unmuted microphone
@@ -590,9 +666,10 @@ export class VoiceSession {
     // talk on the same goes for a key that is not held.
     for (const track of this.#micStream.getAudioTracks()) track.enabled = this.transmitting;
 
+    const processed = await this.#processed(this.#micStream);
     this.#mic = await publish({
       url: publishUrl,
-      stream: this.#processed(this.#micStream),
+      stream: processed,
       iceServers: this.iceServers,
       // Fewer, bigger packets, and none for silence: see tuneOpusAnswer.
       audioTuning: { dtx: true, ptime: VOICE_PTIME_MS },
@@ -636,9 +713,9 @@ export class VoiceSession {
    * deliberately: `enabled = false` collapses the bitrate on the wire,
    * while a gain of zero would go on encoding silence at full price.
    */
-  #processed(stream) {
+  async #processed(stream) {
     this.#micChain?.close();
-    this.#micChain = createMicChain(stream, {
+    this.#micChain = await createMicChain(stream, {
       gain: this.micGain,
       threshold: this.micThreshold,
     });
@@ -741,7 +818,7 @@ export class VoiceSession {
     // Through the chain again, or changing headset silently drops the input
     // volume and the gate -- which reads as "picking my headset breaks my
     // microphone settings" and is impossible to guess the cause of.
-    const processed = this.#processed(stream);
+    const processed = await this.#processed(stream);
     await sender.replaceTrack(processed.getAudioTracks()[0] ?? track);
 
     this.#micStream?.getTracks().forEach((t) => t.stop());

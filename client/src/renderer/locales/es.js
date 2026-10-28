@@ -40,6 +40,7 @@ export default {
   'app.back_to_an_ordinary_member': 'Volver a ser un miembro normal',
   'app.back_to_stream': 'Volver a la transmisión',
   'app.back_to_the_grid': 'Volver a la cuadrícula',
+  'app.background_too_slow': 'El efecto de fondo se desactivó en esta llamada: este equipo no pudo seguirle el ritmo.',
   'app.cancel': 'Cancelar',
   'app.cancelling': 'Cancelando…',
   'app.change': 'Cambiar…',

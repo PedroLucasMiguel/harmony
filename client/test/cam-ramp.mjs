@@ -186,6 +186,12 @@ async function run() {
   check('the voice sender is told it is the high priority one',
     audio.some((p) => p.priority === 'high' && p.networkPriority === 'high'), JSON.stringify(audio));
 
+  // The numbers a crackle report is read from.
+  const q = await pedro.evaluate('return await window.__harmonyAudio()');
+  check('the audio report covers our own voice going up',
+    q.sending?.pc === 'connected' && q.sending.packets > 0 && typeof q.sending.jitterMs === 'number', JSON.stringify(q.sending));
+  check('and has no camera while there is none', q.camera === null && Array.isArray(q.receiving), JSON.stringify(q));
+
   const camButton = "document.getElementById('voice-cam').click(); return true;";
   const ceilings = async () => (await params()).filter((p) => p.kind === 'video' && p.maxBitrate);
   const reset = () => pedro.evaluate('window.__params.length = 0; return true;');
@@ -194,6 +200,8 @@ async function run() {
   await pedro.evaluate(camButton);
   await waitFor(pedro, "document.getElementById('voice-cam').hasAttribute('data-on')", { label: 'the camera on', timeoutMs: 30_000 });
   await sleep(1000);
+  const camReport = (await pedro.evaluate('return await window.__harmonyAudio()')).camera;
+  check('and describes the camera once it runs', camReport?.pc === 'connected' && 'limit' in camReport, JSON.stringify(camReport));
   let video = await ceilings();
   const asked = Math.max(...(await (async () => { await sleep(5200); return (await ceilings()).map((p) => p.maxBitrate); })()));
   video = await ceilings();

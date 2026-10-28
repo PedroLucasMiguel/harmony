@@ -21,6 +21,7 @@
 
 import { FilesetResolver, ImageSegmenter } from './vendor/@mediapipe/tasks-vision/vision_bundle.mjs';
 import { t } from './i18n.js';
+import { LoadWatch, renderStride, segmentStride } from './background-load.js';
 
 // Relative, so the same code finds them under harmony://app/ on the desktop and
 // beside index.html in the web and Android builds.
@@ -368,8 +369,9 @@ function texture(gl, { filter = gl.LINEAR } = {}) {
 
 /** How much of the new mask is let in each frame; the rest is the last one. */
 const MASK_SMOOTHING = 0.65;
-/** Above this many ms per segmentation, every other frame reuses the last mask. */
-const SLOW_SEGMENT_MS = 28;
+
+/** Frames before the effect's own timings mean anything. */
+const WARM_UP_FRAMES = 10;
 
 export class BackgroundEffect {
   #raw;
@@ -394,12 +396,26 @@ export class BackgroundEffect {
   #out = null;
   #stopOutput = null;
   #frames = 0;
-  #skip = false;
+  #segCount = 0;
   #segMs = 0;
+  /** Milliseconds a frame costs the main thread in all, smoothed. */
+  #workMs = 0;
+  #seen = 0;
+  #dropped = 0;
+  #fps = 0;
+  #rateAt = 0;
+  #rateFrames = 0;
+  #watch = new LoadWatch();
   #reader = null;
   delegate = 'GPU';
   /** Called once when the effect has ended, however that came about. */
   onStop = null;
+  /**
+   * Called once, when this machine has not been able to keep up for several
+   * seconds even after doing less. The owner is expected to stop the effect and
+   * put the plain camera back; see background-load.js for why.
+   */
+  onOverload = null;
 
   /**
    * @param {MediaStream} raw  the camera; this takes it over and stops it with the result
@@ -440,7 +456,17 @@ export class BackgroundEffect {
   }
 
   get stats() {
-    return { frames: this.#frames, segmentMs: Number(this.#segMs.toFixed(1)), delegate: this.delegate };
+    return {
+      frames: this.#frames,
+      fps: Number(this.#fps.toFixed(1)),
+      delegate: this.delegate,
+      segmentMs: Number(this.#segMs.toFixed(1)),
+      workMs: Number(this.#workMs.toFixed(1)),
+      // 1 is every frame; 2 is every other, and so on.
+      segmentStride: segmentStride(this.#segMs),
+      renderStride: renderStride(this.#workMs),
+      dropped: this.#dropped,
+    };
   }
 
   async #init() {
@@ -600,8 +626,25 @@ export class BackgroundEffect {
         break;
       }
       const frame = result.value;
+      const now = performance.now();
+      this.#seen += 1;
+      // Frames this machine cannot afford are not drawn at all: a lower frame
+      // rate, for a main thread that is free for everything else.
+      if (this.#seen % renderStride(this.#workMs) !== 0) {
+        this.#dropped += 1;
+        frame.close();
+        continue;
+      }
       try {
         this.#render(frame);
+        this.#measureRate(now);
+        // Not the first frames: compiling the shaders and loading the model
+        // make them slow on every machine, and say nothing about the next.
+        if (this.#frames > WARM_UP_FRAMES) {
+          const took = performance.now() - now;
+          this.#workMs = this.#workMs ? this.#workMs * 0.9 + took * 0.1 : took;
+          if (this.#watch.update(this.#workMs, now) && !this.#stopped) this.onOverload?.(this.stats);
+        }
       } catch (err) {
         console.warn('[background] a frame failed:', err?.message ?? err);
         // A segmenter that dies on the GPU is worth one retry on the CPU, once.
@@ -609,6 +652,18 @@ export class BackgroundEffect {
       } finally {
         frame.close();
       }
+    }
+  }
+
+  /** Frames drawn per second, over the last second or so. */
+  #measureRate(now) {
+    if (!this.#rateAt) {
+      this.#rateAt = now;
+      this.#rateFrames = this.#frames;
+    } else if (now - this.#rateAt >= 1000) {
+      this.#fps = ((this.#frames - this.#rateFrames) * 1000) / (now - this.#rateAt);
+      this.#rateAt = now;
+      this.#rateFrames = this.#frames;
     }
   }
 
@@ -692,12 +747,10 @@ export class BackgroundEffect {
 
   /** Find the person in this frame, and keep the answer steady from one frame to the next. */
   #segment(frame) {
-    // Falling behind: segment every other frame and reuse the mask between.
-    // A slightly stale outline is better than a slideshow.
-    if (this.#segMs > SLOW_SEGMENT_MS) {
-      this.#skip = !this.#skip;
-      if (this.#skip && this.#mask) return;
-    }
+    // Falling behind: segment one frame in two, three or four and reuse the
+    // mask between. A slightly stale outline is better than a slideshow.
+    const stride = segmentStride(this.#segMs);
+    if (stride > 1 && this.#mask && this.#segCount++ % stride !== 0) return;
     const started = performance.now();
     this.#segmenter.segmentForVideo(frame, started, (result) => {
       const mask = result.confidenceMasks?.[this.#personIndex] ?? result.confidenceMasks?.[0];
@@ -721,8 +774,10 @@ export class BackgroundEffect {
       gl.bindTexture(gl.TEXTURE_2D, this.#tex.mask);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, this.#mask);
     });
-    const took = performance.now() - started;
-    this.#segMs = this.#segMs ? this.#segMs * 0.9 + took * 0.1 : took;
+    if (this.#frames > WARM_UP_FRAMES) {
+      const took = performance.now() - started;
+      this.#segMs = this.#segMs ? this.#segMs * 0.9 + took * 0.1 : took;
+    }
   }
 
   /**

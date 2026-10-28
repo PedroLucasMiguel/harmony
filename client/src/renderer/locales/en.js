@@ -50,6 +50,7 @@ export default {
   'app.back_to_an_ordinary_member': 'Back to an ordinary member',
   'app.back_to_stream': 'Back to stream',
   'app.back_to_the_grid': 'Back to the grid',
+  'app.background_too_slow': 'The background effect was switched off for this call: this computer could not keep up with it.',
   'app.cancel': 'Cancel',
   'app.cancelling': 'Cancelling…',
   'app.change': 'Change…',
