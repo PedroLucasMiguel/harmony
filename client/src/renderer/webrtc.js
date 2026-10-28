@@ -156,6 +156,29 @@ export async function applySenderSettings(sender, { maxBitrate, maxFramerate, de
 }
 
 /**
+ * Say how much a sender matters to the network: 'high' for the voice, 'low'
+ * for pictures.
+ *
+ * Voice and a camera are two connections that know nothing of each other, each
+ * probing for the uplink on its own, so nothing here decides who waits when
+ * they meet on one home line. `priority` is how the browser splits its own
+ * budget; `networkPriority` marks the packets (DSCP) for the routers that
+ * honour it. Many home routers do not, and then this changes nothing -- which
+ * is why it is best-effort and never worth failing a call over.
+ */
+export async function setSenderPriority(sender, level) {
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+    params.encodings[0].priority = level;
+    params.encodings[0].networkPriority = level;
+    await sender.setParameters(params);
+  } catch {
+    // An engine without these fields keeps its defaults.
+  }
+}
+
+/**
  * Tune the sender's Opus encoder through the answer it is about to be given.
  *
  *   dtx    silence costs one small packet every few hundred milliseconds
@@ -279,7 +302,10 @@ export async function publish({
     // negotiated encoding to configure.
     if (videoTrack) {
       const sender = pc.getSenders().find((s) => s.track === videoTrack);
-      if (sender) await applySenderSettings(sender, { maxBitrate, maxFramerate, degradationPreference });
+      if (sender) {
+        await applySenderSettings(sender, { maxBitrate, maxFramerate, degradationPreference });
+        await setSenderPriority(sender, 'low');
+      }
     }
 
     return { pc, resourceUrl };

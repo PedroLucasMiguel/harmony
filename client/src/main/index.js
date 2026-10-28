@@ -14,6 +14,7 @@ const clips = require('./clips');
 const gpu = require('./gpu');
 const hotkeys = require('./hotkeys');
 const ptt = require('./ptt');
+const { opensDevTools } = require('./devtools-keys');
 const updater = require('./updater');
 const voiceTray = require('./voice-tray');
 const strings = require('./strings');
@@ -307,6 +308,15 @@ function createWindow() {
   win.on('restore', () => sendVisibility(true));
   win.on('show', () => sendVisibility(true));
   win.on('hide', () => sendVisibility(false));
+
+  // The developer tools, on a key by its place on the keyboard -- see
+  // devtools-keys. Handled here, so the menu's own accelerator never also fires
+  // and shuts what this just opened.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (!opensDevTools(input, process.platform)) return;
+    event.preventDefault();
+    win.webContents.toggleDevTools();
+  });
 
   // In a dev run, renderer errors would otherwise vanish into DevTools nobody
   // has open. Warnings and errors only -- this is not a console mirror.

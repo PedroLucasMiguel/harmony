@@ -12,7 +12,7 @@
 // bandwidth, not this file.
 
 import { harmony } from './bridge.js';
-import { publish, watch, applySenderSettings } from './webrtc.js';
+import { publish, watch, applySenderSettings, setSenderPriority } from './webrtc.js';
 import { createSink, createMeter, createMicChain, MAX_GAIN } from './gain.js';
 
 /**
@@ -44,6 +44,23 @@ const VOICE_BITRATE = 32_000;
  * rather than a hole.
  */
 const VOICE_PTIME_MS = 40;
+
+/**
+ * What a camera may send while it is starting, and when it may send more.
+ *
+ * A camera that opens at its full rate starts with a keyframe and then climbs
+ * as fast as the line lets it, on the same home uplink the voice is using;
+ * the voice's packets wait behind that, arrive late and bunched, and sound
+ * crackly for the first seconds -- or for as long as a weak line stays
+ * saturated. Opening small and stepping up lets the line's bandwidth estimate
+ * settle before the picture asks for its full share. Each step is a ceiling
+ * for the encoder, not a target: a line that cannot carry it never gets there.
+ */
+const CAM_RAMP = [
+  { bitrate: 250_000, after: 0 },
+  { bitrate: 600_000, after: 2500 },
+  { bitrate: Infinity, after: 5000 },
+];
 
 /**
  * How long a subscription may deliver nothing before it is presumed dead.
@@ -110,6 +127,7 @@ export class VoiceSession {
   #camStream = null;
   /** True while a camera's publish is in flight, so a second start is refused. */
   #camOpening = false;
+  #camRamp = [];
 
   /**
    * Microphone work, one piece at a time.
@@ -602,6 +620,7 @@ export class VoiceSession {
       params.encodings = params.encodings?.length ? params.encodings : [{}];
       params.encodings[0].maxBitrate = VOICE_BITRATE;
       await sender.setParameters(params).catch(() => { /* not fatal */ });
+      await setSenderPriority(sender, 'high');
     }
   }
 
@@ -946,7 +965,7 @@ export class VoiceSession {
         stream,
         iceServers: this.iceServers,
         codec: 'H264',
-        maxBitrate: bitrate,
+        maxBitrate: Math.min(bitrate, CAM_RAMP[0].bitrate),
         maxFramerate: framerate,
         contentHint: 'motion',
       });
@@ -957,10 +976,36 @@ export class VoiceSession {
       }
       this.#cam = cam;
       this.#camStream = stream;
+      this.#rampCam(cam, bitrate, framerate);
       return true;
     } finally {
       this.#camOpening = false;
     }
+  }
+
+  /** Raise the camera's ceiling a step at a time, up to what was asked for. */
+  #rampCam(cam, bitrate, framerate) {
+    this.#cancelRamp();
+    for (const step of CAM_RAMP.slice(1)) {
+      if (step.bitrate !== Infinity && step.bitrate >= bitrate) continue;
+      const target = Math.min(step.bitrate, bitrate);
+      this.#camRamp.push(setTimeout(() => {
+        // The camera may have been stopped, replaced or retuned meanwhile.
+        if (this.#cam !== cam) return;
+        const sender = cam.pc.getSenders().find((s) => s.track?.kind === 'video');
+        if (!sender) return;
+        applySenderSettings(sender, {
+          maxBitrate: target,
+          maxFramerate: framerate,
+          degradationPreference: 'balanced',
+        }).catch(() => { /* the next step, or a retune, tries again */ });
+      }, step.after));
+    }
+  }
+
+  #cancelRamp() {
+    this.#camRamp.forEach(clearTimeout);
+    this.#camRamp = [];
   }
 
   /** A camera is being published right now. */
@@ -970,6 +1015,7 @@ export class VoiceSession {
 
   async stopCam() {
     this.note('cam: stopping');
+    this.#cancelRamp();
     const cam = this.#cam;
     this.#cam = null;
     this.#camStream?.getTracks().forEach((t) => t.stop());
@@ -1021,6 +1067,9 @@ export class VoiceSession {
   async retuneCam({ bitrate, framerate }) {
     const sender = this.#cam?.pc.getSenders().find((s) => s.track?.kind === 'video');
     if (!sender) return false;
+    // A deliberate setting: it replaces the climb, which would otherwise come
+    // along later and lower it again.
+    this.#cancelRamp();
     await applySenderSettings(sender, {
       maxBitrate: bitrate,
       maxFramerate: framerate,
