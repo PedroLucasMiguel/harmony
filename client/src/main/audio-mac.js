@@ -30,7 +30,7 @@ const READY_TIMEOUT_MS = 8000;
 
 /** Printed by the helper, keyed by its exit code. */
 const EXIT_NOTES = {
-  2: 'Allow Screen Recording for Harmony in System Settings > Privacy & Security, then share again.',
+  2: 'Screen Recording is not allowed for Harmony. Turn it on in System Settings > Privacy & Security; if it is already on, open the source picker and use "Reset and restart".',
   3: 'There is no display to capture audio from.',
 };
 

@@ -708,6 +708,22 @@
         </div>
       </div>
 
+      <!--
+        macOS only, and only when Screen Recording is refused. Above the
+        sources rather than instead of them: a camera or a capture card needs
+        no such permission, and stays shareable. See showScreenPermission.
+      -->
+      <div class="screen-permission" id="screen-permission" role="alert" hidden>
+        <strong data-i18n="screen_permission.title">Harmony cannot see your screen yet</strong>
+        <p data-i18n="screen_permission.body">macOS has not allowed Screen Recording for Harmony. Switch it on in System Settings, then restart Harmony. If it is already on and this keeps coming back, the switch belongs to an older copy of the app: use "Reset and restart", then allow it when macOS asks.</p>
+        <div class="profile-actions">
+          <button type="button" class="ghost" id="screen-permission-open" data-i18n="screen_permission.open_settings">Open System Settings</button>
+          <button type="button" class="primary" id="screen-permission-reset" data-i18n="screen_permission.reset">Reset and restart</button>
+          <button type="button" class="ghost" id="screen-permission-restart" data-i18n="screen_permission.restart">Restart Harmony</button>
+        </div>
+        <p class="setting-note profile-status" id="screen-permission-note" role="status"></p>
+      </div>
+
       <div class="picker-row">
         <span class="picker-label" data-i18n="picker.sources">Sources</span>
         <div class="source-grid" id="source-grid"></div>

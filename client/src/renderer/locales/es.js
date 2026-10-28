@@ -736,6 +736,12 @@ export default {
   'scale_reset.reset': 'Restablecer',
 
   // --- server
+  'screen_permission.body': 'macOS no ha permitido la grabación de pantalla para Harmony. Actívala en Ajustes del Sistema y reinicia Harmony. Si ya está activada y esto sigue apareciendo, el interruptor pertenece a una copia anterior de la app: usa "Restablecer y reiniciar" y permítelo cuando macOS te pregunte.',
+  'screen_permission.open_settings': 'Abrir Ajustes del Sistema',
+  'screen_permission.reset': 'Restablecer y reiniciar',
+  'screen_permission.reset_failed': 'No se pudo restablecer desde aquí. En Ajustes del Sistema, selecciona Harmony en la lista, pulsa el botón de menos, reinicia Harmony y vuelve a compartir.',
+  'screen_permission.restart': 'Reiniciar Harmony',
+  'screen_permission.title': 'Harmony aún no puede ver tu pantalla',
   'server.storage_note': '{used} usados · {free} libres en el disco del servidor. Los archivos antiguos que nadie usa se borran para hacer espacio.',
   'server.storage_note_short': '{used} usados. Los archivos antiguos que nadie usa se borran para hacer espacio.',
 
@@ -857,6 +863,7 @@ export default {
   'share.capture_blocked': 'Se bloqueó la captura de pantalla.',
 
   // --- soundpad
+  'share.capture_blocked_mac': 'macOS bloqueó la captura de pantalla. Abre el selector de fuentes y sigue el aviso de arriba: si Harmony ya está activado en Grabación de pantalla y audio del sistema, usa "Restablecer y reiniciar".',
   'soundpad.emoji_hint': 'El emoji es opcional, y es lo que permite encontrar un clip en una cuadrícula de veinte botones idénticos.',
   'soundpad.find_the_perfect_sound': 'Encuentra el sonido perfecto',
   'soundpad.how_loudly_soundpad_clips': 'Qué tan fuerte suenan para ti los clips del Soundpad',

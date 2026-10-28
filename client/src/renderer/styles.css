@@ -6320,3 +6320,19 @@ input[data-saved] {
 .ghost-tile.has-picture .ghost-hint {
   opacity: 0.85;
 }
+
+/* macOS: Screen Recording is refused. See checkScreenPermission. */
+.screen-permission {
+  margin: 0 0 0.8rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid rgb(var(--danger-rgb) / 0.45);
+  border-radius: 8px;
+  background: rgb(var(--danger-rgb) / 0.08);
+}
+.screen-permission[hidden] {
+  display: none;
+}
+.screen-permission p {
+  margin: 0.35rem 0 0.7rem;
+  font-size: 0.85rem;
+}

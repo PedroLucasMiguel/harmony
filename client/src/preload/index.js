@@ -101,6 +101,12 @@ contextBridge.exposeInMainWorld('harmony', {
     return () => ipcRenderer.removeListener('window:visibility', listener);
   },
 
+  permissions: {
+    screen: invoke('permissions:screen-status'),
+    openScreenSettings: invoke('permissions:screen-settings'),
+    resetScreen: invoke('permissions:screen-reset'),
+  },
+
   sources: {
     list: invoke('sources:list'),
     processes: invoke('sources:processes'),

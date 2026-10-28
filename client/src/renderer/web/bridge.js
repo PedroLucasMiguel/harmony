@@ -393,6 +393,12 @@ export const harmony = {
     return () => document.removeEventListener('visibilitychange', listener);
   },
 
+  permissions: {
+    screen: async () => 'granted',
+    openScreenSettings: async () => false,
+    resetScreen: async () => false,
+  },
+
   sources: {
     list: async () => [],
     processes: async () => [],

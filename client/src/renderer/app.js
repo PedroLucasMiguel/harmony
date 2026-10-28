@@ -393,6 +393,11 @@ const el = {
   pickerRefresh: $('picker-refresh'),
   tabs: document.querySelectorAll('.tab'),
   sourceGrid: $('source-grid'),
+  screenPermission: $('screen-permission'),
+  screenPermissionNote: $('screen-permission-note'),
+  screenPermissionOpen: $('screen-permission-open'),
+  screenPermissionReset: $('screen-permission-reset'),
+  screenPermissionRestart: $('screen-permission-restart'),
   resolution: $('resolution'),
   framerate: $('framerate'),
   fallbackField: $('fallback-field'),
@@ -9630,14 +9635,53 @@ harmony.screenShare?.onEnded((reason) => {
   stopNativeShare({ alreadyStopped: true });
 });
 
+/**
+ * Whether macOS lets Harmony record the screen, and the way out if not.
+ *
+ * With it refused the picker lists a blank desktop and no windows and says
+ * nothing about why, and System Settings can show Harmony switched ON the whole
+ * time: the switch belongs to an entry macOS made for an earlier copy of the
+ * app, which no longer matches this one (see main/screen-permission.js). So
+ * the reason is said here, with the two things that help: the pane, and a
+ * reset that makes macOS ask again.
+ *
+ * 'not-determined' is not refused: listing the sources is what makes macOS
+ * ask, and it asks once.
+ */
+async function checkScreenPermission() {
+  if (harmony.platform !== 'darwin') return true;
+  const status = await harmony.permissions.screen().catch(() => 'granted');
+  const refused = status === 'denied' || status === 'restricted';
+  el.screenPermission.hidden = !refused;
+  if (refused) profileNote(el.screenPermissionNote, '');
+  return !refused;
+}
+
+el.screenPermissionOpen.addEventListener('click', () => harmony.permissions.openScreenSettings());
+el.screenPermissionRestart.addEventListener('click', () => harmony.relaunch());
+el.screenPermissionReset.addEventListener('click', async () => {
+  const ok = await harmony.permissions.resetScreen().catch(() => false);
+  if (!ok) {
+    profileNote(el.screenPermissionNote, t('screen_permission.reset_failed'), true);
+    return;
+  }
+  // macOS reads the permission when an app starts; the ask comes with the
+  // first look at the screen after it.
+  harmony.relaunch();
+});
+
 async function loadSources() {
   el.sourceGrid.replaceChildren(message(t('picker.loading')));
+  await checkScreenPermission();
   try {
     state.sources = await harmony.sources.list();
   } catch (err) {
     el.sourceGrid.replaceChildren(message(err.message));
     return;
   }
+  // Listing is what makes macOS ask the first time: look again, now that it
+  // may have been answered.
+  await checkScreenPermission();
   await loadDevices();
   loadProcesses();
   renderSources();
@@ -10268,7 +10312,9 @@ async function startBroadcast() {
   } catch (err) {
     const wasChannel = Boolean(state.share.target);
     await teardown();
-    const text = err.name === 'NotAllowedError' ? t('share.capture_blocked') : err.message;
+    const text = err.name === 'NotAllowedError'
+      ? t(harmony.platform === 'darwin' ? 'share.capture_blocked_mac' : 'share.capture_blocked')
+      : err.message;
     if (wasChannel) {
       showChannelsError(text);
       showView('view-channels');
@@ -10471,7 +10517,9 @@ async function applySourceChange() {
     if (state.share.target) renderChannelVideo();
   } catch (err) {
     el.audioNote.textContent =
-      err.name === 'NotAllowedError' ? t('app.that_source_was_not_allowed') : err.message;
+      err.name === 'NotAllowedError'
+        ? t(harmony.platform === 'darwin' ? 'share.capture_blocked_mac' : 'app.that_source_was_not_allowed')
+        : err.message;
     el.audioNote.toggleAttribute('data-warn', true);
   } finally {
     el.startStream.disabled = false;

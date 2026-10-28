@@ -746,6 +746,12 @@ export default {
   'scale_reset.reset': 'Reset',
 
   // --- server
+  'screen_permission.body': 'macOS has not allowed Screen Recording for Harmony. Switch it on in System Settings, then restart Harmony. If it is already on and this keeps coming back, the switch belongs to an older copy of the app: use "Reset and restart", then allow it when macOS asks.',
+  'screen_permission.open_settings': 'Open System Settings',
+  'screen_permission.reset': 'Reset and restart',
+  'screen_permission.reset_failed': 'Could not reset it from here. In System Settings, select Harmony in the list, press the minus button, then restart Harmony and share again.',
+  'screen_permission.restart': 'Restart Harmony',
+  'screen_permission.title': 'Harmony cannot see your screen yet',
   'server.storage_note': '{used} used · {free} free on the server\'s disk. Old files nobody uses any more are cleared to make room.',
   'server.storage_note_short': '{used} used. Old files nobody uses any more are cleared to make room.',
 
@@ -867,6 +873,7 @@ export default {
   'share.capture_blocked': 'Screen capture was blocked.',
 
   // --- soundpad
+  'share.capture_blocked_mac': 'macOS blocked the screen capture. Open the source picker and follow the note at the top: if Harmony is already switched on in Screen & System Audio Recording, use "Reset and restart".',
   'soundpad.emoji_hint': 'The emoji is optional, and is what makes a clip findable in a grid of twenty identical buttons.',
   'soundpad.find_the_perfect_sound': 'Find the perfect sound',
   'soundpad.how_loudly_soundpad_clips': 'How loudly soundpad clips play for you',

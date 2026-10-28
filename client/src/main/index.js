@@ -7,6 +7,7 @@ const { pathToFileURL } = require('node:url');
 
 const settings = require('./settings');
 const sources = require('./sources');
+const screenPermission = require('./screen-permission');
 const appAudio = require('./app-audio');
 const api = require('./api');
 const clips = require('./clips');
@@ -440,6 +441,10 @@ const handle = (channel, fn) => {
 
 handle('settings:get', () => settings.read());
 handle('settings:set', (_e, patch) => settings.write(patch ?? {}));
+
+handle('permissions:screen-status', () => screenPermission.status());
+handle('permissions:screen-settings', () => screenPermission.openSettings());
+handle('permissions:screen-reset', () => screenPermission.reset());
 
 handle('sources:list', () => sources.list());
 handle('sources:processes', () => sources.listProcesses());

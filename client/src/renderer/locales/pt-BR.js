@@ -736,6 +736,12 @@ export default {
   'scale_reset.reset': 'Redefinir',
 
   // --- server
+  'screen_permission.body': 'O macOS não permitiu a Gravação de Tela para o Harmony. Ative-a em Ajustes do Sistema e reinicie o Harmony. Se já estiver ativada e isso continuar aparecendo, a chave pertence a uma cópia antiga do app: use "Redefinir e reiniciar" e depois permita quando o macOS perguntar.',
+  'screen_permission.open_settings': 'Abrir Ajustes do Sistema',
+  'screen_permission.reset': 'Redefinir e reiniciar',
+  'screen_permission.reset_failed': 'Não foi possível redefinir por aqui. Em Ajustes do Sistema, selecione o Harmony na lista, pressione o botão de menos, reinicie o Harmony e compartilhe de novo.',
+  'screen_permission.restart': 'Reiniciar o Harmony',
+  'screen_permission.title': 'O Harmony ainda não consegue ver a sua tela',
   'server.storage_note': '{used} em uso · {free} livres no disco do servidor. Arquivos antigos que ninguém mais usa são apagados para abrir espaço.',
   'server.storage_note_short': '{used} em uso. Arquivos antigos que ninguém mais usa são apagados para abrir espaço.',
 
@@ -857,6 +863,7 @@ export default {
   'share.capture_blocked': 'A captura de tela foi bloqueada.',
 
   // --- soundpad
+  'share.capture_blocked_mac': 'O macOS bloqueou a captura de tela. Abra o seletor de fontes e siga o aviso no topo: se o Harmony já estiver ativado em Gravação de Tela e Áudio do Sistema, use "Redefinir e reiniciar".',
   'soundpad.emoji_hint': 'O emoji é opcional, e é o que ajuda a achar um clipe numa grade de vinte botões idênticos.',
   'soundpad.find_the_perfect_sound': 'Encontre o som perfeito',
   'soundpad.how_loudly_soundpad_clips': 'Quão alto os clipes do Soundpad tocam para você',
