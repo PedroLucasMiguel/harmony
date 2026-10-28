@@ -5714,19 +5714,20 @@ function stopOwnMonitor() {
 }
 
 /*
- * The channel's streams: one in focus, the rest in a strip below it.
+ * The channel's streams: a square grid of all of them, or one in focus with
+ * the rest in a strip below it.
  *
- * There used to be a grid of equal tiles with a maximize button on each.
- * In use somebody is always watching ONE thing -- the share everybody is
- * there for -- and the grid gave it a quarter of the space until they went
- * looking for the button. Now one stream always has the space, and the
- * others wait underneath at thumbnail size, still live; clicking one brings
- * it up and sends the old one down.
+ * It opens as the grid, every stream the same size, because that is the one
+ * layout that needs nothing from you to be useful with two cameras and a
+ * screen. Clicking a stream gives it the space and sends the others down to
+ * a strip of thumbnails, still live; clicking the one in focus again goes
+ * back to the grid, and clicking another in the strip moves the focus.
  *
  * Which one is in focus is the key the person last clicked
- * (channelFocusKey). When that stream ends -- or before anything has been
- * clicked -- it falls to the first one that is not your own: what you came
- * to see is somebody else's screen, not the preview of yours.
+ * (channelFocusKey), and null is the grid. When the stream in focus ends it
+ * falls back to the grid rather than to some other stream they did not pick.
+ * An earlier version always had one in focus, which gave somebody a big
+ * tile of the first stream in the list before they had asked for anything.
  */
 let channelFocusKey = null;
 let channelFocusArea = null;
@@ -5743,10 +5744,12 @@ function channelVideoAreas() {
   return { focus: channelFocusArea, strip: channelStripArea };
 }
 
+/** Bring one stream into focus, or null for the grid. */
 function focusChannelTile(key) {
   if (channelFocusKey === key) return;
   channelFocusKey = key;
   renderChannelVideo();
+  if (!key) return;
   /*
    * Your own stream can be brought into focus like anyone else's. Its
    * preview is off until asked for (it costs GPU, see the tile's eye), and
@@ -5755,6 +5758,47 @@ function focusChannelTile(key) {
   const focused = channelFocusArea?.querySelector('.channel-tile[data-own][data-preview-off]');
   focused?.querySelector('.tile-btn[data-role="preview"]')?.click();
 }
+
+/**
+ * How many columns the grid has: whichever fills the stage best.
+ *
+ * Not simply the square root of the count. The stage is a column of the
+ * window, often taller than it is wide, and two 16:9 pictures side by side in
+ * it are two thin slivers where one above the other would each be twice the
+ * size. So every column count is tried against the stage's actual size and
+ * the one that gives the biggest pictures wins; with a wide stage that comes
+ * out as the familiar 2 side by side, 2x2 for 3 or 4, and 3x2 for 5 or 6.
+ * Ties go to fewer columns, which is the squarer grid.
+ */
+function fitChannelGrid() {
+  const strip = channelStripArea;
+  if (!strip || el.channelVideo.dataset.layout !== 'grid') return;
+  const count = strip.childElementCount;
+  const gap = 8;
+  const width = strip.clientWidth;
+  const height = strip.clientHeight || el.channelVideo.clientHeight;
+  let best = 1;
+  if (width > 0 && height > 0 && count > 1) {
+    let bestArea = -1;
+    for (let cols = 1; cols <= count; cols += 1) {
+      const rows = Math.ceil(count / cols);
+      const cellW = (width - gap * (cols - 1)) / cols;
+      const cellH = (height - gap * (rows - 1)) / rows;
+      const pictureW = Math.min(cellW, (cellH * 16) / 9);
+      const area = pictureW * ((pictureW * 9) / 16);
+      if (area > bestArea + 1) {
+        bestArea = area;
+        best = cols;
+      }
+    }
+  } else {
+    best = Math.max(1, Math.ceil(Math.sqrt(count)));
+  }
+  strip.style.setProperty('--cols', String(best));
+}
+
+// The stage is resized by the window, and by the member list opening.
+new ResizeObserver(() => fitChannelGrid()).observe(el.channelVideo);
 
 function renderChannelVideo() {
   const tiles = state.voice.channelId
@@ -6005,39 +6049,47 @@ function renderChannelVideo() {
     if (closeBtn) controls.append(closeBtn);
     label.append(controls);
 
-    /*
-     * The tile in focus does nothing when clicked: it is a live screen
-     * somebody is watching, and a stray click on it should not change what
-     * they are looking at. Only a tile in the strip is a click target --
-     * see below.
-     */
     figure.append(video, label);
 
     /*
-     * In the strip, the whole tile is the way to bring it into focus.
+     * The whole tile is the way to change layout: in the grid or the strip a
+     * click brings it into focus, and a click on the one in focus puts
+     * everything back in the grid.
      *
-     * A click that started on one of its own controls (mute, close) is that
-     * control's, not the tile's -- checked here rather than trusting every
-     * control to stop its event, which is the rule that broke the old
-     * click-to-maximize: the volume slider's clicks bubbled up and resized
-     * the video under the finger.
+     * A click that began on one of its own controls (mute, volume, close,
+     * fullscreen) is that control's, not the tile's -- checked here rather
+     * than trusting every control to stop its event, which is the rule that
+     * broke the old click-to-maximize: the volume slider's clicks bubbled up
+     * and resized the video under the finger.
+     *
+     * Where the PRESS began counts as well as where the click landed.
+     * Dragging the volume slider and letting go past its end gives a click
+     * whose target is the tile, and that would flip the layout under
+     * somebody adjusting the sound.
      */
+    const onControl = (node) => Boolean(node?.closest?.('button, input, .tile-controls, .tile-corner'));
+    let pressedOnControl = false;
+    figure.addEventListener('pointerdown', (event) => { pressedOnControl = onControl(event.target); });
     figure.addEventListener('click', (event) => {
-      if (figure.hasAttribute('data-focus')) return;
-      if (event.target.closest('button, input, .tile-controls, .tile-corner')) return;
-      focusChannelTile(figure.dataset.key);
+      const fromControl = pressedOnControl || onControl(event.target);
+      pressedOnControl = false;
+      if (fromControl) return;
+      focusChannelTile(figure.hasAttribute('data-focus') ? null : figure.dataset.key);
     });
     return figure;
   });
 
-  // The one in focus: what was clicked, else the first that is not yours.
-  const live = figures.filter((f) => !f.hasAttribute('data-own'));
-  const focused = figures.find((f) => f.dataset.key === channelFocusKey)
-    ?? live[0] ?? figures[0] ?? null;
+  // The one in focus is what was clicked; with nothing clicked, or the
+  // clicked stream gone, there is none and everything is in the grid.
+  const focused = channelFocusKey
+    ? figures.find((f) => f.dataset.key === channelFocusKey) ?? null
+    : null;
+  if (!focused) channelFocusKey = null;
+  el.channelVideo.dataset.layout = focused ? 'focus' : 'grid';
   for (const figure of figures) {
     const on = figure === focused;
     figure.toggleAttribute('data-focus', on);
-    figure.title = on ? '' : t('app.show_this_one_big');
+    figure.title = on ? t('app.back_to_the_grid') : t('app.show_this_one_big');
   }
   areas.focus.replaceChildren(...(focused ? [focused] : []));
   areas.strip.replaceChildren(...figures.filter((f) => f !== focused));
@@ -6076,6 +6128,7 @@ function renderChannelVideo() {
     areas.strip.append(node);
   }
   areas.strip.hidden = areas.strip.childElementCount === 0;
+  fitChannelGrid();
 
   // After the children exist, not before: applyStage counts them to decide
   // whether there is a stage at all.
