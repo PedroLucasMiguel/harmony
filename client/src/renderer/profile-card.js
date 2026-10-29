@@ -141,7 +141,11 @@ export function createProfileCard(deps) {
     status.className = 'profile-card-status';
     status.toggleAttribute('data-online', online().has(user.id));
     status.title = online().has(user.id) ? t('profile_card.online') : t('profile_card.offline');
-    face.append(status);
+    // The status dot sits on the picture's edge, so it cannot be a child of the
+    // picture (which clips to its circle): the two share a wrapper instead.
+    const faceWrap = document.createElement('div');
+    faceWrap.className = 'profile-card-face';
+    faceWrap.append(face, status);
 
     // ---- who
     const name = document.createElement('strong');
@@ -265,7 +269,7 @@ export function createProfileCard(deps) {
     section.append(note);
     body.append(section);
 
-    card.replaceChildren(banner, face, body);
+    card.replaceChildren(banner, faceWrap, body);
     place();
   }
 

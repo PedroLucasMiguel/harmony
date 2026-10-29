@@ -223,6 +223,16 @@ async function run() {
   check('with no empty "Online" heading in the way', !list.some(([h]) => h.startsWith('Online')), JSON.stringify(list.map(([h]) => h)));
   await shot(owner, 'members');
 
+  const scheme = await owner.evaluate(`{
+    const root = document.documentElement;
+    const dark = getComputedStyle(root).colorScheme;
+    root.dataset.theme = 'daylight';
+    const light = getComputedStyle(root).colorScheme;
+    delete root.dataset.theme;
+    return { dark, light };
+  }`);
+  check('native pickers follow the theme: dark on dark palettes, light on daylight', scheme.dark === 'dark' && scheme.light === 'light', JSON.stringify(scheme));
+
   // --- the card from the member list ---------------------------------------------------------------------------------
   await click(owner, `#member-items .member-row[data-user-id="${bob.id}"]`);
   await until(owner, "!document.querySelector('.profile-card').hidden", { label: 'the card' });
@@ -234,13 +244,14 @@ async function run() {
       removable: c.querySelectorAll('.profile-card-chip-x').length,
       banner: Boolean(c.querySelector('.profile-card-banner')),
       avatar: Boolean(c.querySelector('.profile-card-avatar')),
+      round: (() => { const a = getComputedStyle(c.querySelector('.profile-card-avatar')); return a.borderRadius === '50%' && a.overflow === 'hidden'; })(),
       buttons: [...c.querySelectorAll('.profile-card-actions button')].map((b) => b.getAttribute('aria-label')),
       inside: (() => { const r = c.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })(),
     };
   }`);
   await shot(owner, 'card');
   check('clicking a member opens a card with their name, picture, banner and both roles',
-    card.name === 'bob' && card.banner && card.avatar && card.chips.includes('Helper') && card.chips.includes('VIP'), JSON.stringify(card));
+    card.name === 'bob' && card.banner && card.avatar && card.round && card.chips.includes('Helper') && card.chips.includes('VIP'), JSON.stringify(card));
   check('with a shortcut to manage roles, and the card stays inside the window', card.buttons.some((b) => /manage/i.test(b)) && card.inside, JSON.stringify(card.buttons));
 
   // Roles taken off and put back from the card itself.

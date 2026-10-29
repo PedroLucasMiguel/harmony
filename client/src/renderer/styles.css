@@ -23,6 +23,12 @@
  */
 :root,
 :root[data-theme='midnight'] {
+  /*
+   * Tells the browser which kind of palette this is, so what it draws itself --
+   * the colour picker's popup, a drop-down's list, scrollbars, form controls --
+   * is dark on a dark theme instead of white. Light for daylight, below.
+   */
+  color-scheme: dark;
   --bg: #0f1116;
   --surface: #171a21;
   --surface-2: #1f232c;
@@ -188,6 +194,7 @@
  * against.
  */
 :root[data-theme='daylight'] {
+  color-scheme: light;
   --bg: #f2f3f5;
   --surface: #ffffff;
   --surface-2: #ebedef;
@@ -7153,17 +7160,29 @@ body.pip-window {
 .profile-card-actions .icon-only {
   background: rgba(0, 0, 0, 0.55);
 }
-.avatar.profile-card-avatar {
+.profile-card-face {
   position: absolute;
   top: 3.6rem;
   left: 0.9rem;
+  line-height: 0;
+}
+/* A circle: .avatar clips its picture to one, and this must not undo that. */
+.avatar.profile-card-avatar {
   font-size: 2.6em;
   margin: 0;
   border: 4px solid var(--surface);
   box-sizing: content-box;
-  overflow: visible;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.avatar.profile-card-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 .profile-card-status {
+  font-size: 2.6em;
   position: absolute;
   right: -0.15em;
   bottom: -0.1em;
@@ -7551,4 +7570,9 @@ body.pip-window {
 }
 #server-dialog .settings-pages {
   overflow-x: hidden;
+}
+
+/* The colour inputs sit on the app's own surfaces; the swatch is theirs to draw. */
+input[type='color'] {
+  accent-color: var(--accent);
 }
