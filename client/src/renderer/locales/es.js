@@ -188,6 +188,8 @@ export default {
   'app.nothing_matching': 'Nada coincide con "{value}".',
   'app.nothing_share_all_system_audio': 'Nada — compartir todo el audio del sistema',
   'app.nothing_to_monitor_this_source': 'Nada que monitorear: esta fuente no tiene audio',
+  'app.notifies_role': 'notifica a todos con el rol {name}',
+  'app.notifies_role_members': { one: 'notifica a {count} miembro', other: 'notifica a {count} miembros' },
   'app.notifies_the_whole_server': 'notifica a todo el servidor',
   'app.off': 'Desactivado',
   'app.off_encoding_on_the_cpu': 'Desactivado — se codifica con la CPU. Vuelve a activarlo a menos que los espectadores hayan visto la imagen dañada.',
@@ -427,6 +429,12 @@ export default {
 
   // --- chat_pending_clear
   'chat_pending_clear.remove': 'Quitar',
+
+  // --- chat_editing
+  'chat_editing.cancel': 'Cancelar edición',
+  'chat_editing.cancel_button': 'Cancelar edición',
+  'chat_editing.editing': 'Editando mensaje',
+  'chat_editing.hint': 'Esc para cancelar · Enter para guardar',
 
   // --- chat_reply
   'chat_reply.cancel_the_reply': 'Cancelar la respuesta',

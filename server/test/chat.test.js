@@ -1118,7 +1118,7 @@ describe('reading mentions out of a message', () => {
 
   it('finds the people named', () => {
     assert.deepEqual(mentionsIn('hey @boss and @member', idOf),
-      { userIds: [1, 2], everyone: false });
+      { userIds: [1, 2], roleIds: [], everyone: false });
   });
 
   it('counts a name written twice once', () => {
@@ -1138,6 +1138,14 @@ describe('reading mentions out of a message', () => {
     // The lookbehind, which is the whole reason there is one.
     assert.deepEqual(mentionsIn('write to me@boss.example', idOf).userIds, []);
     assert.deepEqual(mentionsIn('@@boss', idOf).userIds, []);
+  });
+
+  it('finds a role by its handle, and only where no person has the name', () => {
+    const roleOf = (handle) => ({ staff: 10, boss: 11 })[handle] ?? null;
+    const result = mentionsIn('@staff and @boss and @staff', idOf, roleOf);
+    assert.deepEqual(result.roleIds, [10], 'one ping, and a nickname is never taken over by a role');
+    assert.deepEqual(result.userIds, [1]);
+    assert.deepEqual(mentionsIn('@staff', idOf).roleIds, [], 'without roles to look in, nothing');
   });
 
   it('reports @everyone separately, and not as a person', () => {

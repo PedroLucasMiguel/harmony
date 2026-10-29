@@ -215,11 +215,14 @@ export const EVERYONE = 'everyone';
  * meaning somebody else later.
  *
  * `idOf` takes a folded nickname and returns a user id or null, so this
- * function needs no database of its own.
+ * function needs no database of its own. `roleOf` does the same for a role's
+ * handle and is only asked about what no nickname claimed: a person's name
+ * is an identity, and a role named like one must not take it over.
  */
-export function mentionsIn(body, idOf) {
+export function mentionsIn(body, idOf, roleOf = () => null) {
   const text = String(body ?? '');
   const userIds = [];
+  const roleIds = [];
   let everyone = false;
 
   MENTION_RE.lastIndex = 0;
@@ -231,9 +234,14 @@ export function mentionsIn(body, idOf) {
     }
     const id = idOf(name);
     // Deduped: writing somebody's name twice is emphasis, not two pings.
-    if (id && !userIds.includes(id)) userIds.push(id);
+    if (id) {
+      if (!userIds.includes(id)) userIds.push(id);
+      continue;
+    }
+    const role = roleOf(name);
+    if (role && !roleIds.includes(role)) roleIds.push(role);
   }
-  return { userIds, everyone };
+  return { userIds, roleIds, everyone };
 }
 
 export class Chat {
@@ -1177,6 +1185,8 @@ export const publicMessage = (m, reactions = [], mentions = null) => (m ? {
   // have to fold and match nicknames a second time to know whether one of
   // them is you.
   mentions: mentions?.userIds ?? [],
+  // Role ids: whoever holds one of them is addressed too.
+  mentionRoles: mentions?.roleIds ?? [],
   mentionsEveryone: Boolean(mentions?.everyone),
   createdAt: m.created_at,
 } : null);

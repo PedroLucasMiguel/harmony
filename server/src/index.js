@@ -29,7 +29,7 @@ import {
   MEDIA_KINDS,
 } from './channels.js';
 import { Realtime } from './realtime.js';
-import { Roles, channelViewFor } from './roles.js';
+import { Roles, channelViewFor, roleHandle } from './roles.js';
 import { mountBadges, mountRoles } from './roles-routes.js';
 import { Badges } from './badges.js';
 import { mintMediaKey, verifyMediaKey } from './media-keys.js';
@@ -1379,8 +1379,16 @@ function forClient(messages) {
   // is cheaper than the eleven-row query it replaces per message.
   const ids = new Map(accounts.list().map((u) => [u.nickname, u.id]));
   const idOf = (nickname) => ids.get(nickname) ?? null;
+  // Top of the hierarchy first, so when two names fold to the same handle
+  // the higher role is the one that gets it.
+  const handles = new Map();
+  for (const role of roles.list()) {
+    const handle = roleHandle(role.name);
+    if (handle && !handles.has(handle)) handles.set(handle, role.id);
+  }
+  const roleOf = (handle) => handles.get(handle) ?? null;
   return list.map(
-    (m) => publicMessage(m, byId.get(m.id) ?? [], mentionsIn(m.body, idOf)),
+    (m) => publicMessage(m, byId.get(m.id) ?? [], mentionsIn(m.body, idOf, roleOf)),
   );
 }
 

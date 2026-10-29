@@ -628,6 +628,12 @@
                   <button type="button" class="composer-btn" id="chat-reply-clear"
                           data-icon="x" title="Cancel the reply" data-i18n-title="chat_reply.cancel_the_reply" data-i18n="chat_reply_clear.cancel_reply">Cancel reply</button>
                 </div>
+                <!-- Your own message being rewritten in the box below. See setEditing. -->
+                <div class="composer-reply composer-editing" id="chat-editing" hidden>
+                  <span class="composer-reply-text"><strong data-i18n="chat_editing.editing">Editing message</strong> <span data-i18n="chat_editing.hint">Esc to cancel · Enter to save</span></span>
+                  <button type="button" class="composer-btn" id="chat-editing-clear"
+                          data-icon="x" title="Cancel editing" data-i18n-title="chat_editing.cancel" data-i18n="chat_editing.cancel_button">Cancel editing</button>
+                </div>
                 <!-- What is about to be sent with the message, if anything. -->
                 <div class="composer-file" id="chat-pending" hidden>
                   <img class="composer-thumb" id="chat-pending-thumb" alt="" hidden />

@@ -18,7 +18,7 @@ import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
 import {
-  canAdminister, contextOf, nameLookOf, roleIcon, rolesOf, roleLook, sortRoles,
+  canAdminister, contextOf, nameLookOf, roleByHandle, roleHandle, roleIcon, rolesOf, roleLook, sortRoles,
 } from './roles.js';
 import { createServerAdmin } from './server-admin.js';
 import { createProfileCard } from './profile-card.js';
@@ -316,6 +316,8 @@ const el = {
   chatReply: $('chat-reply'),
   chatReplyName: $('chat-reply-name'),
   chatReplyClear: $('chat-reply-clear'),
+  chatEditing: $('chat-editing'),
+  chatEditingClear: $('chat-editing-clear'),
   chatPendingThumb: $('chat-pending-thumb'),
   chatPendingName: $('chat-pending-name'),
   chatUpload: $('chat-upload'),
@@ -628,6 +630,8 @@ const state = {
   nativeShare: null,
   chat: {
     channelId: null, messages: [], pinned: [], searching: false, pendingFile: null, replyTo: null,
+    /** One of your own messages being rewritten in the composer, or null. See setEditing. */
+    editing: null,
     /** Where each channel was scrolled to when it was left, for this session. See rememberChatScroll. */
     scrolls: new Map(),
     /** Whether the log is showing a channel's history, which is the only thing worth remembering a position in. */
@@ -7302,6 +7306,8 @@ async function openTextChannel(channel) {
   state.chat.showsHistory = false;
   state.chat.channelId = channel.id;
   setReply(null);
+  // What was being rewritten is in the channel being left.
+  setEditing(null);
   // Whatever was waiting to be sent was waiting to be sent HERE. Carrying
   // it into the next channel is how a screenshot ends up in the wrong one.
   setPendingFile(null);
@@ -7465,6 +7471,12 @@ const userByNickname = (nickname) =>
   [...state.users.values()].find((u) => u.nickname === nickname) ?? null;
 
 /**
+ * A role, when the name is not a person's: a person's nickname is an identity
+ * and always wins, as it does on the server.
+ */
+const roleForMention = (name) => (userByNickname(name) ? null : roleByHandle(state.roles, name));
+
+/**
  * Draw one @name.
  *
  * Shows the display name while the text holds the nickname -- the same
@@ -7476,10 +7488,19 @@ const userByNickname = (nickname) =>
 function mentionNode(raw, name) {
   const everyone = name === EVERYONE;
   const user = everyone ? null : userByNickname(name);
-  if (!everyone && !user) return document.createTextNode(raw);
+  const role = everyone || user ? null : roleForMention(name);
+  if (!everyone && !user && !role) return document.createTextNode(raw);
 
   const span = document.createElement('span');
   span.className = 'mention';
+  if (role) {
+    span.textContent = `@${role.name}`;
+    span.setAttribute('data-role', '');
+    span.title = t('app.notifies_role', { name: role.name });
+    paintName(span, null, roleLook(role));
+    if (rolesOf(state.auth.user, state.roles).some((r) => r.id === role.id)) span.setAttribute('data-me', '');
+    return span;
+  }
   span.textContent = everyone ? '@everyone' : `@${displayOf(user.id, user.nickname)}`;
   if (everyone || user.id === state.auth.user?.id) span.setAttribute('data-me', '');
   if (user) span.title = `@${user.nickname}`;
@@ -7489,6 +7510,8 @@ function mentionNode(raw, name) {
 /** True if this message is addressed to the person reading it. */
 const mentionsMe = (message) => Boolean(
   message.mentionsEveryone || message.mentions?.includes(state.auth.user?.id)
+  // A role it names, and you hold it.
+  || (message.mentionRoles ?? []).some((id) => (state.auth.user?.roles ?? []).includes(id))
   // Answering somebody tells them, as Discord's replies do by default.
   || (message.reply?.userId && message.reply.userId === state.auth.user?.id),
 );
@@ -7555,6 +7578,18 @@ function mentionCandidates(query) {
     .slice(0, 8)
     .map((u) => ({ nickname: u.nickname, label: displayOf(u.id, u.nickname), user: u }));
 
+  // Roles after the people, and only while no person has the same name.
+  const named = new Set(people.map((p) => p.nickname));
+  const groups = sortRoles(state.roles)
+    .map((role) => ({ role, handle: roleHandle(role.name) }))
+    .filter(({ role, handle }) => handle && !userByNickname(handle)
+      && roleByHandle(state.roles, handle)?.id === role.id
+      && (handle.includes(q) || role.name.toLowerCase().includes(q)))
+    .filter(({ handle }) => !named.has(handle))
+    .slice(0, 5)
+    .map(({ role, handle }) => ({ nickname: handle, label: role.name, role }));
+  people.push(...groups);
+
   // Last, not first: it is the loudest thing on the list and should not be
   // what a blind Enter picks.
   if (EVERYONE.startsWith(q)) {
@@ -7569,7 +7604,20 @@ function renderMentionList() {
     if (index === mentionActive) li.setAttribute('data-active', '');
     li.dataset.nickname = match.nickname;
 
-    if (match.everyone) {
+    if (match.role) {
+      const dotEl = document.createElement('span');
+      dotEl.className = 'role-dot';
+      dotEl.style.setProperty('--role-color', match.role.color);
+      const name = document.createElement('span');
+      name.className = 'mention-name';
+      name.textContent = match.label;
+      paintName(name, null, roleLook(match.role));
+      const note = document.createElement('span');
+      note.className = 'mention-nick';
+      const count = [...state.users.values()].filter((u) => (u.roles ?? []).includes(match.role.id)).length;
+      note.textContent = t('app.notifies_role_members', { count });
+      li.append(dotEl, name, note);
+    } else if (match.everyone) {
       const all = document.createElement('span');
       all.className = 'mention-name mention-all';
       all.textContent = '@everyone';
@@ -8196,7 +8244,10 @@ let pendingPreview = null;
  * while you are reaching for it is worse than one that is briefly grey.
  */
 function applyComposer() {
-  el.chatSend.disabled = !el.chatInput.value.trim() && !state.chat.pendingFile;
+  const editing = state.chat.editing;
+  el.chatSend.disabled = editing
+    ? !el.chatInput.value.trim() && !editing.attachmentHash
+    : !el.chatInput.value.trim() && !state.chat.pendingFile;
 }
 
 function setPendingFile(file) {
@@ -9025,11 +9076,80 @@ function replyLine(reply) {
  * sent carries it. null puts the composer back to an ordinary message.
  */
 function setReply(message) {
+  // Answering and rewriting are two ways of using the same box.
+  if (message && state.chat.editing) setEditing(null);
   state.chat.replyTo = message ?? null;
   el.chatReply.hidden = !message;
   if (!message) return;
   el.chatReplyName.textContent = displayOf(message.userId, message.nickname);
   el.chatInput.focus();
+}
+
+/*
+ * Rewriting one of your own messages, in the composer.
+ *
+ * The box takes the message's words and the bar above it says it is an edit,
+ * so that Enter is plainly "save" and not "send". Whatever was half-typed is
+ * put back when it ends. Only reachable for your own messages, which is the
+ * rule the server enforces too.
+ */
+let editDraft = '';
+let mentionQuietUntil = 0;
+
+function setEditing(message) {
+  const was = state.chat.editing;
+  if (!message && !was) return;
+  if (message) {
+    if (!was) editDraft = el.chatInput.value;
+    setReply(null);
+  }
+  state.chat.editing = message ?? null;
+  el.chatEditing.hidden = !message;
+  el.chatForm.toggleAttribute('data-editing', Boolean(message));
+  el.chatSend.title = message ? t('app.save') : t('chat_form.send');
+  el.chatInput.value = message ? message.body : editDraft;
+  if (!message) editDraft = '';
+  for (const row of el.chatLog.children) {
+    row.toggleAttribute('data-editing', Boolean(message) && Number(row.dataset.id) === message.id);
+  }
+  closeMentions();
+  growChatInput();
+  applyComposer();
+  if (!message) return;
+  el.chatInput.focus();
+  const end = el.chatInput.value.length;
+  mentionQuietUntil = performance.now() + 150;
+  el.chatInput.setSelectionRange(end, end);
+  // The message being edited may be far up the log.
+  el.chatLog.querySelector('.chat-msg[data-editing]')?.scrollIntoView({ block: 'nearest' });
+}
+
+/** The message Up would edit: your latest in this channel, as far as it is loaded. */
+function lastOwnMessage() {
+  if (state.chat.searching) return null;
+  const me = state.auth.user?.id;
+  return [...state.chat.messages].reverse().find((m) => m.userId === me) ?? null;
+}
+
+async function saveEdit() {
+  const message = state.chat.editing;
+  if (!message) return;
+  const body = el.chatInput.value.trim();
+  // Words can go only if a file stays behind: the server's own rule.
+  if (!body && !message.attachmentHash) return;
+  if (body === message.body) {
+    setEditing(null);
+    return;
+  }
+  try {
+    await harmony.api.editMessage(state.server, message.id, body);
+    // The server pushes message:updated to everyone, us included.
+    // By id: the push may already have swapped in a fresher copy of it.
+    if (state.chat.editing?.id === message.id) setEditing(null);
+  } catch (err) {
+    // Stay in the edit: the words are still in the box.
+    el.chatNote.textContent = err.message;
+  }
 }
 
 /**
@@ -9065,6 +9185,7 @@ function messageRow(message, previous) {
   row.className = 'chat-msg';
   row.dataset.id = String(message.id);
   if (message.pinned) row.setAttribute('data-pinned', '');
+  if (state.chat.editing?.id === message.id) row.setAttribute('data-editing', '');
 
   const grouped = Boolean(previous)
     && previous.userId === message.userId
@@ -9218,27 +9339,7 @@ function messageRow(message, previous) {
     change.dataset.icon = 'pencil-simple';
     change.textContent = t('app.edit_2');
     change.title = t('app.edit_2');
-    change.addEventListener('click', async () => {
-      const answer = await ask({
-        title: t('app.edit_message'),
-        okLabel: t('app.save'),
-        fields: [{
-          name: 'body',
-          label: t('app.message'),
-          value: message.body,
-          multiline: true,
-          maxlength: 4000,
-          required: !message.attachmentHash,
-        }],
-      });
-      if (answer === null || answer.body === message.body) return;
-      try {
-        await harmony.api.editMessage(state.server, message.id, answer.body);
-        // The server pushes message:updated to everyone, us included.
-      } catch (err) {
-        showChannelsError(err.message);
-      }
-    });
+    change.addEventListener('click', () => setEditing(message));
     tools.append(change);
   }
   row.append(gutter, main, tools);
@@ -9448,6 +9549,7 @@ async function jumpToMessage(id) {
 }
 
 async function sendMessage() {
+  if (state.chat.editing) return saveEdit();
   const body = el.chatInput.value.trim();
   const file = state.chat.pendingFile;
   if (!body && !file) return;
@@ -10645,6 +10747,7 @@ function onRealtimeEvent(msg) {
       if (msg.message.channelId === state.chat.channelId) {
         const index = state.chat.messages.findIndex((m) => m.id === msg.message.id);
         if (index >= 0) state.chat.messages[index] = msg.message;
+        if (state.chat.editing?.id === msg.message.id) state.chat.editing = msg.message;
         state.chat.pinned = state.chat.pinned.filter((m) => m.id !== msg.message.id);
         if (msg.message.pinned) state.chat.pinned.unshift(msg.message);
         renderChat();
@@ -10655,6 +10758,8 @@ function onRealtimeEvent(msg) {
       if (msg.channelId === state.chat.channelId) {
         state.chat.messages = state.chat.messages.filter((m) => m.id !== msg.id);
         state.chat.pinned = state.chat.pinned.filter((m) => m.id !== msg.id);
+        // Nothing left to rewrite.
+        if (state.chat.editing?.id === msg.id) setEditing(null);
         renderChat();
       }
       break;
@@ -13781,6 +13886,9 @@ el.chatInput.addEventListener('input', () => {
   updateMentions();
 });
 document.addEventListener('selectionchange', () => {
+  // Not for a caret the app put there itself (starting an edit of a message
+  // that ends in a name): the list is for what somebody is typing.
+  if (performance.now() < mentionQuietUntil) return;
   if (document.activeElement === el.chatInput) updateMentions();
 });
 el.chatInput.addEventListener('blur', () => closeMentions());
@@ -13832,6 +13940,22 @@ el.chatInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     el.chatForm.requestSubmit();
+    return;
+  }
+
+  /*
+   * Up, in an empty box, rewrites your last message -- the way Discord does.
+   * Only when there is nothing else in progress, so it can never cost anybody
+   * a draft, a reply or a file that was on its way.
+   */
+  if (event.key === 'ArrowUp' && !event.shiftKey && !event.ctrlKey && !event.metaKey
+    && !event.altKey && !event.isComposing && !el.chatInput.value
+    && !state.chat.editing && !state.chat.replyTo && !state.chat.pendingFile) {
+    const last = lastOwnMessage();
+    if (last) {
+      event.preventDefault();
+      setEditing(last);
+    }
   }
 });
 
@@ -14387,10 +14511,15 @@ el.chatReplyClear.addEventListener('click', () => {
   setReply(null);
   el.chatInput.focus();
 });
+el.chatEditingClear.addEventListener('click', () => {
+  setEditing(null);
+  el.chatInput.focus();
+});
 el.chatInput.addEventListener('keydown', (event) => {
   // Escape lets go of a reply, the way it does in Discord -- but only when
   // nothing else (the mention list) wanted it first.
   if (event.key === 'Escape' && state.chat.replyTo && !event.defaultPrevented) setReply(null);
+  if (event.key === 'Escape' && state.chat.editing && !event.defaultPrevented) setEditing(null);
 });
 el.editComposition.addEventListener('click', () => editComposition());
 

@@ -1113,3 +1113,59 @@ describe('a role\'s name style', () => {
     assert.equal(seen.style.mode, 'rainbow');
   });
 });
+
+describe('mentioning a role', () => {
+  let text;
+  let tag;
+  before(async () => {
+    // Earlier suites have shut the first channel behind roles and groups: this one is open.
+    text = (await as('chief', '/api/channels', { name: 'mentions-room', kind: 'text' })).body.channel;
+    tag = (await as('chief', '/api/roles', { name: 'Night Owls' })).body.role;
+  });
+
+  it('is written as @ and the role\'s name, folded like a nickname', async () => {
+    const posted = await as('pleb', `/api/channels/${text.id}/messages`, { body: 'hey @night-owls, anyone up?' });
+    assert.equal(posted.status, 201, JSON.stringify(posted.body));
+    assert.deepEqual(posted.body.message.mentionRoles, [tag.id]);
+    assert.deepEqual(posted.body.message.mentions, []);
+    assert.equal(posted.body.message.mentionsEveryone, false);
+  });
+
+  it('still says so when the history is read back', async () => {
+    const list = (await get('pleb', `/api/channels/${text.id}/messages`)).body.messages;
+    const found = list.find((m) => m.body.startsWith('hey @night-owls'));
+    assert.deepEqual(found.mentionRoles, [tag.id]);
+  });
+
+  it('is pushed with the message, which names the role for whoever holds it', async () => {
+    const holder = connect(people.other.token);
+    await holder.hello();
+    const mark = holder.mark();
+    await as('chief', `/api/accounts/${people.other.id}/roles`, { roleIds: [tag.id] });
+    await as('pleb', `/api/channels/${text.id}/messages`, { body: '@Night-Owls again' });
+    await holder.next((m) => m.type === 'message' && m.message.body === '@Night-Owls again');
+    const got = holder.since(mark, 'message').find((m) => m.message.body === '@Night-Owls again');
+    assert.deepEqual(got.message.mentionRoles, [tag.id]);
+    holder.ws.close();
+  });
+
+  it('is nothing when no role has that name, and a person\'s nickname is never a role\'s', async () => {
+    const none = await as('pleb', `/api/channels/${text.id}/messages`, { body: '@nobody-here' });
+    assert.deepEqual(none.body.message.mentionRoles, []);
+
+    // A role called like somebody: the person is who is meant.
+    const clash = (await as('chief', '/api/roles', { name: 'target' })).body.role;
+    const posted = await as('pleb', `/api/channels/${text.id}/messages`, { body: 'psst @target' });
+    assert.deepEqual(posted.body.message.mentions, [people.target.id]);
+    assert.deepEqual(posted.body.message.mentionRoles, []);
+    await as('chief', `/api/roles/${clash.id}/delete`, {});
+  });
+
+  it('follows the role when it is renamed', async () => {
+    await as('chief', `/api/roles/${tag.id}`, { name: 'Early Birds' });
+    const old = await as('pleb', `/api/channels/${text.id}/messages`, { body: '@night-owls' });
+    assert.deepEqual(old.body.message.mentionRoles, []);
+    const fresh = await as('pleb', `/api/channels/${text.id}/messages`, { body: '@early-birds' });
+    assert.deepEqual(fresh.body.message.mentionRoles, [tag.id]);
+  });
+});

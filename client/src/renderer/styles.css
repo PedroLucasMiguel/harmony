@@ -1887,6 +1887,25 @@ button.danger {
   color: var(--warn);
 }
 /*
+ * A role: in its own colour (or gradient, or rainbow) rather than the accent,
+ * on a quiet tint. A gradient is clipped to the letters, which would take a
+ * tint along with it, so those go without one.
+ */
+.chat-msg .mention[data-role] {
+  background: color-mix(in srgb, var(--role-color, var(--accent)) 16%, transparent);
+  color: var(--role-color, var(--accent));
+}
+.chat-msg .mention[data-role][data-me] {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--role-color, var(--warn));
+}
+.chat-msg .mention[data-role][data-name-style] {
+  background: var(--name-gradient) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/*
  * The whole row, when it is addressed to you.
  *
  * A bar down the side rather than a background wash, so it survives the
@@ -6236,6 +6255,23 @@ input[data-saved] {
 }
 .composer-reply-text strong {
   color: var(--text);
+}
+
+/*
+ * Rewriting a message: the box takes on the accent so it cannot be mistaken
+ * for writing a new one, and the message being rewritten is marked in the log.
+ */
+.chat-form[data-editing] .composer,
+.chat-form[data-editing] .composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.45);
+}
+.composer-editing strong {
+  color: var(--accent);
+}
+.chat-msg[data-editing] {
+  background: rgb(var(--accent-rgb) / 0.1);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 /* ---------- what this build cannot do ---------- */

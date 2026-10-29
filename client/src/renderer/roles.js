@@ -62,6 +62,28 @@ export function contextOf(user, roles) {
   };
 }
 
+/**
+ * What to type after the @ to mention a role. THE SERVER HAS THE SAME FOLD
+ * (roleHandle in server/src/roles.js) and it is the one that decides who is
+ * notified; if one changes the other has to.
+ */
+export const roleHandle = (name) => {
+  const folded = String(name ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[-_]+|-+$/g, '')
+    .slice(0, 24)
+    .replace(/-+$/, '');
+  return folded || null;
+};
+
+/**
+ * The role a handle names, or null. The highest one wins when two names fold
+ * to the same handle, as on the server.
+ */
+export const roleByHandle = (roles, handle) => sortRoles(roles).find((r) => roleHandle(r.name) === handle) ?? null;
+
 export const roleRank = (role) => ROLE_BASE - role.position;
 
 /** The roles an account holds, top of the hierarchy first. */

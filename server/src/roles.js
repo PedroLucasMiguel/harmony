@@ -48,6 +48,24 @@ export const DEFAULT_ROLE_COLOR = '#99aab5';
 export const MAX_ROLE_NAME = 32;
 export const MAX_ROLES = 50;
 
+/**
+ * What to type after the @ to mention a role: its name folded the way a
+ * nickname is (lowercase, accents dropped, anything else a dash), because the
+ * mention syntax is a nickname's and a name like "Super Moderators" has
+ * spaces in it. null when nothing is left of it, which is a role that cannot
+ * be mentioned. THE CLIENT HAS A COPY, in roles.js.
+ */
+export const roleHandle = (name) => {
+  const folded = String(name ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[-_]+|-+$/g, '')
+    .slice(0, 24)
+    .replace(/-+$/, '');
+  return folded || null;
+};
+
 /** Above every position a role can have, so a role holder always ranks below a super admin. */
 const ROLE_BASE = 1_000_000;
 const RANK_SUPER_ADMIN = 10_000_000;

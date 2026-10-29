@@ -400,8 +400,11 @@ app.whenReady().then(() => {
   // 'fullscreen' belongs here too: Electron gates HTML fullscreen behind a
   // permission, and denying it makes element.requestFullscreen() hang forever
   // rather than reject -- a silent failure that looks like a broken button.
+  // 'clipboard-sanitized-write' is what navigator.clipboard.writeText asks for:
+  // without it every "Copy" button in the app silently does nothing. Reading
+  // the clipboard stays refused: pasting is the user's own Ctrl+V.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(['media', 'display-capture', 'audioCapture', 'fullscreen'].includes(permission));
+    callback(['media', 'display-capture', 'audioCapture', 'fullscreen', 'clipboard-sanitized-write'].includes(permission));
   });
 
   createWindow();

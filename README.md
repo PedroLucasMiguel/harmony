@@ -60,7 +60,9 @@ never re-encodes it.
 - **Camera quality**: 360p to 1080p, or the camera's native best, at 24, 30,
   60 fps or native, changeable while the camera is on.
 - **Text channels** with Markdown, attachments, reactions, custom emoji,
-  mentions, pins and search.
+  mentions (people, `@everyone`, or a role by its name, which notifies everyone
+  holding it), pins and search. Press Up in an empty box to edit your last
+  message in place.
 - **Accounts and roles**: the owner, "super admins" (an admin account with no
   role, made by the owner alone) and any number of roles you define under
   Server settings, each with a name, a colour and permissions: create, edit,

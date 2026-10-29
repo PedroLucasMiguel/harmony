@@ -198,6 +198,8 @@ export default {
   'app.nothing_matching': 'Nothing matching "{value}".',
   'app.nothing_share_all_system_audio': 'Nothing — share all system audio',
   'app.nothing_to_monitor_this_source': 'Nothing to monitor: this source has no audio',
+  'app.notifies_role': 'notifies everyone with the {name} role',
+  'app.notifies_role_members': { one: 'notifies {count} member', other: 'notifies {count} members' },
   'app.notifies_the_whole_server': 'notifies the whole server',
   'app.off': 'Off',
   'app.off_encoding_on_the_cpu': 'Off — encoding on the CPU. Turn this back on unless viewers saw a corrupt picture.',
@@ -437,6 +439,12 @@ export default {
 
   // --- chat_pending_clear
   'chat_pending_clear.remove': 'Remove',
+
+  // --- chat_editing
+  'chat_editing.cancel': 'Cancel editing',
+  'chat_editing.cancel_button': 'Cancel editing',
+  'chat_editing.editing': 'Editing message',
+  'chat_editing.hint': 'Esc to cancel · Enter to save',
 
   // --- chat_reply
   'chat_reply.cancel_the_reply': 'Cancel the reply',

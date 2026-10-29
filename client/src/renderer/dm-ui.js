@@ -899,6 +899,25 @@ export function createDmUi(deps) {
     el.input.style.height = 'auto';
     el.input.style.height = `${Math.min(el.input.scrollHeight, 160)}px`;
   });
+  /*
+   * Paste a file straight into the box -- a screenshot, or a file copied in
+   * the file manager -- as the channels' box does. Text is left alone: only a
+   * paste that carries a file is taken over. A pasted picture has no name of
+   * its own ("image.png", every time), so it gets a dated one.
+   */
+  el.input.addEventListener('paste', (event) => {
+    const file = [...(event.clipboardData?.files ?? [])][0];
+    if (!file) return;
+    event.preventDefault();
+    const generic = file.type.startsWith('image/') && (!file.name || /^image\.[a-z0-9]+$/i.test(file.name));
+    if (!generic) {
+      pickFile(file);
+      return;
+    }
+    const extension = file.type.split('/')[1]?.split('+')[0] ?? 'png';
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
+    pickFile(new File([file], `pasted-${stamp}.${extension}`, { type: file.type }));
+  });
   el.attach.addEventListener('click', () => el.file.click());
   el.file.addEventListener('change', () => {
     pickFile(el.file.files?.[0]);
