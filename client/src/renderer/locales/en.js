@@ -1295,4 +1295,6 @@ export default {
   "server_admin.new_channel_here": "New channel here…",
   "server_admin.new_channel_here_hint": "Makes a channel inside this group, with the group's password and roles.",
   "server_admin.new_channel_in": "New channel in {name}",
+  "channels.drop_out": "Drop here to take it out of its group",
+  "channels.drop_into": "Move into {name}",
 };

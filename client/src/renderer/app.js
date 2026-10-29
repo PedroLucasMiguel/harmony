@@ -273,6 +273,7 @@ const el = {
   channelsSignout: $('channels-signout'),
   channelAdd: $('channel-add'),
   channelItems: $('channel-items'),
+  channelDropout: $('channel-dropout'),
   channelsLayout: document.querySelector('.channels-layout'),
   channelsMenu: $('channels-menu'),
   channelList: document.querySelector('.channel-list'),
@@ -3067,6 +3068,7 @@ async function applyLayout(layout) {
  *   {groupId}        the end of that group
  *   {groupId: null}  the end of everything, ungrouped
  *   {beforeGroupId}  above a group's heading, ungrouped
+ *   {afterGroupId}   just below a group, ungrouped: where it was taken out of
  */
 function moveChannel(id, to) {
   const layout = editableLayout();
@@ -3086,6 +3088,10 @@ function moveChannel(id, to) {
     const at = layout.findIndex((item) => item.kind === 'group' && item.group.id === to.beforeGroupId);
     if (at < 0) return;
     layout.splice(at, 0, onTop());
+  } else if (to.afterGroupId != null) {
+    const at = layout.findIndex((item) => item.kind === 'group' && item.group.id === to.afterGroupId);
+    if (at < 0) layout.push(onTop());
+    else layout.splice(at + 1, 0, onTop());
   } else if (to.groupId != null) {
     const target = layout.find((item) => item.kind === 'group' && item.group.id === to.groupId);
     if (!target) return;
@@ -3177,6 +3183,8 @@ function channelNodes(channel) {
   // "every li in the sidebar" stopped meaning "every channel".
   li.className = 'channel-row';
   li.dataset.id = String(channel.id);
+  // So a drag over any of a group's rows can light the whole group up.
+  if (channel.groupId != null) li.dataset.groupId = String(channel.groupId);
   /*
    * Two different things, marked separately, the way Discord does it.
    *
@@ -3277,6 +3285,8 @@ function channelNodes(channel) {
     li.draggable = can('channels.edit');
     li.addEventListener('dragstart', (event) => {
       dragging = { kind: 'channel', id: channel.id };
+      // A channel in a group is offered the way out of it.
+      el.channelDropout.hidden = channel.groupId == null;
       event.dataTransfer.effectAllowed = 'move';
       // Firefox will not start a drag without data on the transfer, and
       // Chromium is happy to be given some anyway.
@@ -3293,6 +3303,8 @@ function channelNodes(channel) {
       event.preventDefault();
       clearDropMarks();
       li.setAttribute('data-drop-before', '');
+      // Dropped among a group's channels, it joins the group: say so.
+      if (channel.groupId != null) markDropGroup(channel.groupId);
     });
     li.addEventListener('drop', (event) => {
       if (dragging?.kind !== 'channel' || dragging.id === channel.id) return;
@@ -3459,10 +3471,33 @@ function moveMember(userId, toChannelId) {
 }
 
 function clearDropMarks() {
-  for (const node of el.channelItems.querySelectorAll('[data-drop-before], [data-drop-into]')) {
+  const marked = '[data-drop-before], [data-drop-into], [data-drop-in-group]';
+  for (const node of el.channelItems.querySelectorAll(marked)) {
     node.removeAttribute('data-drop-before');
     node.removeAttribute('data-drop-into');
+    node.removeAttribute('data-drop-in-group');
+    node.removeAttribute('data-drop-label');
   }
+}
+
+/**
+ * Light up a whole group -- its heading and every row in it -- as the place the
+ * dragged channel is about to land. Whatever the exact target (the heading, a
+ * row in it, the gap above one) the person sees the same thing: a tinted block
+ * with a bar down its edge, so "this goes in that group" is never a guess.
+ *
+ * @param {number} groupId
+ * @param {boolean} [labelled]  also name the group on its heading, for a drop on it
+ */
+function markDropGroup(groupId, labelled = false) {
+  for (const node of el.channelItems.querySelectorAll(`[data-group-id="${groupId}"]`)) {
+    node.setAttribute('data-drop-in-group', '');
+  }
+  if (!labelled) return;
+  const heading = el.channelItems.querySelector(`li.channel-group[data-group-id="${groupId}"]`);
+  const name = state.channels.groups.find((g) => g.id === groupId)?.name ?? '';
+  heading?.setAttribute('data-drop-into', '');
+  heading?.setAttribute('data-drop-label', t('channels.drop_into', { name }));
 }
 
 /** A group heading: a fold, a name, and somewhere to drop things. */
@@ -3568,16 +3603,20 @@ function groupNode(group) {
      * is how every other reorder in this sidebar works. Two marks, so the
      * difference is visible before the mouse is released rather than after.
      */
+    // Only the top edge means "above the group". Everything else on the heading
+    // -- right on top of its name included -- is "into the group", which is
+    // what dropping a channel on a folder means everywhere else.
     const upperHalf = (event) => {
       const box = li.getBoundingClientRect();
-      return event.clientY < box.top + box.height / 2;
+      return event.clientY < box.top + box.height * 0.25;
     };
     li.addEventListener('dragover', (event) => {
       if (dragging?.kind === 'channel') {
         event.preventDefault();
         event.stopPropagation();
         clearDropMarks();
-        li.setAttribute(upperHalf(event) ? 'data-drop-before' : 'data-drop-into', '');
+        if (upperHalf(event)) li.setAttribute('data-drop-before', '');
+        else markDropGroup(group.id, true);
         return;
       }
       if (dragging?.kind === 'group') {
@@ -14066,6 +14105,38 @@ el.chatSearchClear.addEventListener('click', () => {
  * last, the only way to reach the bottom -- there is no heading below the last
  * heading to drop above.
  */
+/*
+ * The way out of a group.
+ *
+ * The empty space under the list was the only target that meant "ungrouped",
+ * and on a long list there is none -- so a strip is shown for the length of
+ * the drag, saying what it is for, whenever the channel being dragged is in a
+ * group. It also goes away on any drop or drag end, anywhere: the row being
+ * dragged is often redrawn by the server's push before its own dragend.
+ */
+const hideDropout = () => {
+  el.channelDropout.hidden = true;
+  el.channelDropout.removeAttribute('data-over');
+};
+document.addEventListener('dragend', hideDropout, true);
+document.addEventListener('drop', hideDropout, true);
+el.channelDropout.addEventListener('dragover', (event) => {
+  if (dragging?.kind !== 'channel') return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  el.channelDropout.setAttribute('data-over', '');
+});
+el.channelDropout.addEventListener('dragleave', () => el.channelDropout.removeAttribute('data-over'));
+el.channelDropout.addEventListener('drop', (event) => {
+  if (dragging?.kind !== 'channel') return;
+  event.preventDefault();
+  const { id } = dragging;
+  dragging = null;
+  clearDropMarks();
+  // Just below the group it came out of, where you would look for it.
+  const from = state.channels.list.find((c) => c.id === id)?.groupId;
+  moveChannel(id, from != null ? { afterGroupId: from } : { groupId: null });
+});
 el.channelItems.addEventListener('dragover', (event) => {
   // A person dropped anywhere but a voice channel goes nowhere, and the
   // cursor should say so rather than promise a move.

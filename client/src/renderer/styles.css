@@ -7580,3 +7580,60 @@ input[type='color'] {
 .profile-card-handle .role-icon {
   vertical-align: middle;
 }
+
+/* The way out of a group, while a channel in one is being dragged. */
+.channel-dropout {
+  flex: 0 0 auto;
+  margin: 0.4rem 0;
+  padding: 0.7rem 0.6rem;
+  border: 2px dashed var(--border-strong, var(--border));
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+.channel-dropout[hidden] {
+  display: none;
+}
+.channel-dropout[data-over] {
+  border-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 0.12);
+  color: var(--text);
+}
+
+/*
+ * Dragging a channel into a group.
+ *
+ * Whatever is under the pointer -- the heading, a row in the group, the gap
+ * above one -- the whole group is tinted with a bar down its edge, so it is
+ * always clear what the channel is about to join. Dropped right on the
+ * heading, the heading itself is outlined and says so in words.
+ */
+.channel-group[data-drop-in-group],
+.channel-row[data-drop-in-group] {
+  background: rgb(var(--accent-rgb) / 0.1);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.channel-row[data-drop-in-group][data-drop-before] {
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 2px 0 var(--accent);
+}
+.channel-group[data-drop-into] {
+  background: rgb(var(--accent-rgb) / 0.26);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.channel-group[data-drop-label]::after {
+  content: attr(data-drop-label);
+  flex: none;
+  margin-left: auto;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}

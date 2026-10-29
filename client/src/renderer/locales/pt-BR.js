@@ -1285,4 +1285,6 @@ export default {
   "server_admin.new_channel_here": "Novo canal aqui…",
   "server_admin.new_channel_here_hint": "Cria um canal dentro deste grupo, com a senha e os cargos do grupo.",
   "server_admin.new_channel_in": "Novo canal em {name}",
+  "channels.drop_out": "Solte aqui para tirá-lo do grupo",
+  "channels.drop_into": "Mover para {name}",
 };

@@ -125,15 +125,17 @@ await step('a channel on the lower half of a heading goes into the group',
 await step('a group dropped on the empty space goes last',
   'voice [Alpha] a1 a2 [Gamma] c1 c2 [Beta] b1 b2 general',
   async () => realDrag(await G('Beta'), await end()));
-await step('a channel dropped on the empty space comes out of its group, at the end',
-  'voice [Alpha] a2 [Gamma] c1 c2 [Beta] b1 b2 general a1',
+// While a channel from a group is dragged, the strip "drop here to take it out"
+// fills the bottom of the list, so this lands on it: just below its own group.
+await step('a channel dropped on the way-out strip comes out of its group, just below it',
+  'voice [Alpha] a2 a1 [Gamma] c1 c2 [Beta] b1 b2 general',
   async () => realDrag(await C('a1'), await end()));
 check('and it is really ungrouped on the server', (await inGroupOf('a1')) === 'a1@-', await inGroupOf('a1'));
 await step('"Move up" in a group\'s menu moves it past what is above',
-  'voice [Gamma] c1 c2 [Alpha] a2 [Beta] b1 b2 general a1',
+  'voice [Alpha] a2 [Gamma] c1 c2 a1 [Beta] b1 b2 general',
   async () => menu('Gamma', 'Move up'));
 await step('"Move down" does the reverse',
-  'voice [Alpha] a2 [Gamma] c1 c2 [Beta] b1 b2 general a1',
+  'voice [Alpha] a2 a1 [Gamma] c1 c2 [Beta] b1 b2 general',
   async () => menu('Gamma', 'Move down'));
 app.kill();
 const failed = summary();
