@@ -236,6 +236,16 @@ function loadGate(capture) {
   return gateModules.get(capture);
 }
 
+function gateNode(capture) {
+  return new AudioWorkletNode(capture, 'mic-gate', {
+    numberOfInputs: 1,
+    numberOfOutputs: 1,
+    channelCount: 1,
+    channelCountMode: 'explicit',
+    outputChannelCount: [1],
+  });
+}
+
 /**
  * The same chain with the gate on the audio thread -- see gate-worklet.js.
  * Throws if the engine will not run it, and the caller falls back.
@@ -244,13 +254,7 @@ function workletMicChain(stream, { gain = 1, threshold = 0 }, capture) {
   const source = capture.createMediaStreamSource(stream);
   let gate;
   try {
-    gate = new AudioWorkletNode(capture, 'mic-gate', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: 1,
-      channelCountMode: 'explicit',
-      outputChannelCount: [1],
-    });
+    gate = gateNode(capture);
   } catch (err) {
     source.disconnect();
     throw err;
@@ -292,6 +296,78 @@ function workletMicChain(stream, { gain = 1, threshold = 0 }, capture) {
     close() {
       gate.port.onmessage = null;
       for (const node of [source, gate, volume, dest]) {
+        try { node.disconnect(); } catch { /* already gone */ }
+      }
+    },
+  };
+}
+
+/**
+ * The gate as a valve on the track that is published, not a stage in front of it.
+ *
+ * The chain above puts everything that is sent through an AudioContext, and
+ * that context is only as steady as the machine: with the page and the
+ * processor busy its audio thread falls behind, and what is sent has gaps in
+ * it -- the crackle a listener hears while the sender's computer is loaded.
+ * Taking the chain out of the path takes that away, but the gate needs the
+ * level of the microphone to decide with.
+ *
+ * So this listens on the side. The same worklet measures a clone of the
+ * microphone track, its output going nowhere (a gain of zero into the
+ * destination, which is what keeps the node running), and says when the gate
+ * would open or close; the caller switches the real track on and off. A
+ * context that falls behind now only makes the gate late, and never damages
+ * the sound that is sent.
+ *
+ * @param {MediaStream} stream a stream of a CLONE of the microphone track, kept
+ *   enabled: the real track is switched off when the gate shuts, and a meter on
+ *   that one could never see the sound that reopens it.
+ * @returns {Promise<{level: number, open: boolean, setThreshold: Function, close: Function}>}
+ *   rejects if the engine will not run the worklet, and the caller falls back to the chain
+ */
+export async function createMicValve(stream, { threshold = 0, onChange } = {}) {
+  const capture = captureContext();
+  await loadGate(capture);
+  const source = capture.createMediaStreamSource(stream);
+  let gate;
+  try {
+    gate = gateNode(capture);
+  } catch (err) {
+    source.disconnect();
+    throw err;
+  }
+  const silence = capture.createGain();
+  silence.gain.value = 0;
+  const cutoff = gate.parameters.get('threshold');
+  cutoff.value = Math.max(0, threshold);
+  source.connect(gate);
+  gate.connect(silence);
+  silence.connect(capture.destination);
+
+  let level = 0;
+  // Shut until the sound says otherwise, as the gate in the chain is: a room
+  // must not be broadcast for the length of one report.
+  let open = threshold <= 0;
+  gate.port.onmessage = (event) => {
+    level = event.data.level;
+    if (event.data.open === open) return;
+    open = event.data.open;
+    onChange?.(open);
+  };
+
+  return {
+    get level() {
+      return level;
+    },
+    get open() {
+      return open;
+    },
+    setThreshold(value) {
+      cutoff.value = Math.max(0, Number(value) || 0);
+    },
+    close() {
+      gate.port.onmessage = null;
+      for (const node of [source, gate, silence]) {
         try { node.disconnect(); } catch { /* already gone */ }
       }
     },

@@ -13,7 +13,7 @@
 
 import { harmony } from './bridge.js';
 import { publish, watch, applySenderSettings, setSenderPriority, describePc } from './webrtc.js';
-import { createSink, createMeter, createMicChain, MAX_GAIN, audioContextStats } from './gain.js';
+import { createSink, createMeter, createMicChain, createMicValve, MAX_GAIN, audioContextStats } from './gain.js';
 
 /**
  * Microphone constraints that do not depend on a setting.
@@ -127,6 +127,14 @@ export class VoiceSession {
    */
   #closedVideo = new Set();
   #micChain = null;
+  /**
+   * The noise gate, when the microphone goes out as it is: it listens on a
+   * clone of the track and switches the real one. See createMicValve.
+   */
+  #valve = null;
+  #valveTrack = null;
+  /** The valve could not run here, so the gate lives in the chain. */
+  #valveFailed = false;
   #cam = null;
   #camStream = null;
   /** True while a camera's publish is in flight, so a second start is refused. */
@@ -511,9 +519,9 @@ export class VoiceSession {
       room: {
         channel: this.channelId, mid: this.mid, muted: this.muted, deafened: this.deafened,
         transmitting: this.transmitting, camerasPaused: this.#camerasPaused,
-        micGate: this.#micChain?.kind ?? null,
+        micGate: this.#micGateKind,
         micLevel: Number((this.#micMeter?.read().level ?? 0).toFixed(4)),
-        gate: this.#micChain ? (this.#micChain.open ? 'open' : 'closed') : 'none',
+        gate: this.#micChain || this.#valve ? (this.micOpen ? 'open' : 'closed') : 'none',
       },
       micTrack: trackOf(this.#micStream, 'audio'),
       camTrack: trackOf(this.#camStream, 'video'),
@@ -637,7 +645,7 @@ export class VoiceSession {
       deafened: this.deafened,
       micLive: this.micLive,
       // Where the noise gate runs: 'worklet' is the audio thread, 'polled' a timer.
-      micGate: this.#micChain?.kind ?? null,
+      micGate: this.#micGateKind,
       camerasPaused: this.#camerasPaused,
       events: this.#events.map((e) => ({ ago: Date.now() - e.at, what: e.what })),
       // What our own microphone is producing. A live, unmuted microphone
@@ -784,6 +792,13 @@ export class VoiceSession {
    */
   async #processed(stream) {
     this.#micChain?.close();
+    this.#micChain = null;
+    this.#closeValve();
+    // Volume at 100% is no volume at all, and then the gate needs nothing in
+    // the path: the microphone goes out untouched and the gate switches it.
+    if (!this.#wantsChain()) {
+      if (await this.#openValve(stream)) return stream;
+    }
     this.#micChain = await createMicChain(stream, {
       gain: this.micGain,
       threshold: this.micThreshold,
@@ -796,6 +811,75 @@ export class VoiceSession {
     return new MediaStream([track]);
   }
 
+  /**
+   * Whether what is sent has to pass through Web Audio: only an input volume
+   * other than 100% needs it, or a gate that could not be run on the side.
+   * Everything that goes through that chain goes through an audio thread, and
+   * on a machine that is busy a thread like that leaves gaps in the sound.
+   */
+  #wantsChain() {
+    return this.micGain !== 1 || (this.micThreshold > 0 && this.#valveFailed);
+  }
+
+  /** @returns {Promise<boolean>} false if the gate was wanted and could not be run */
+  async #openValve(stream) {
+    if (this.micThreshold <= 0) return true;
+    const track = stream.getAudioTracks()[0];
+    if (!track) return true;
+    const tap = track.clone();
+    // Muting and push to talk are on the real track; this one must go on hearing.
+    tap.enabled = true;
+    try {
+      this.#valve = await createMicValve(new MediaStream([tap]), {
+        threshold: this.micThreshold,
+        onChange: () => this.#applyTransmit(),
+      });
+    } catch (err) {
+      tap.stop();
+      this.#valveFailed = true;
+      this.note(`mic: the gate could not run beside the microphone (${err?.message ?? err})`);
+      return false;
+    }
+    this.#valveTrack = tap;
+    this.#applyTransmit(stream);
+    return true;
+  }
+
+  #closeValve() {
+    this.#valve?.close();
+    this.#valve = null;
+    this.#valveTrack?.stop();
+    this.#valveTrack = null;
+    this.#applyTransmit();
+  }
+
+  get #micGateKind() {
+    return this.#micChain?.kind ?? (this.#valve ? 'valve' : null);
+  }
+
+  /** Whether volume and gate are wired the way the settings now ask. */
+  #micWiringStale() {
+    if (!this.#mic) return false;
+    const chain = this.#wantsChain();
+    if (chain !== Boolean(this.#micChain)) return true;
+    return !chain && (this.micThreshold > 0) !== Boolean(this.#valve);
+  }
+
+  /**
+   * Rewire to match the settings: volume crossing 100%, or the gate coming on or
+   * off, changes what sits between the microphone and the publish. The old
+   * track is replaced while it is still the one being sent, as for a device change.
+   */
+  async #rewireMic() {
+    if (!this.#micWiringStale() || !this.#micStream) return;
+    const sender = this.#mic.pc.getSenders().find((s) => s.track?.kind === 'audio');
+    if (!sender) return;
+    const processed = await this.#processed(this.#micStream);
+    const track = processed.getAudioTracks()[0];
+    if (track && sender.track !== track) await sender.replaceTrack(track);
+    this.#applyTransmit();
+  }
+
   /** Input volume, 0..MAX_GAIN. Kept on the session, so it survives a
    *  device switch and a rejoin. */
   micGain = 1;
@@ -806,12 +890,15 @@ export class VoiceSession {
   setMicGain(value) {
     this.micGain = Math.max(0, Math.min(MAX_GAIN, Number(value) || 0));
     this.#micChain?.setGain(this.micGain);
+    if (this.#micWiringStale()) void this.#serial(() => this.#rewireMic());
     return this.micGain;
   }
 
   setMicThreshold(value) {
     this.micThreshold = Math.max(0, Number(value) || 0);
     this.#micChain?.setThreshold(this.micThreshold);
+    if (this.#valve && this.micThreshold > 0) this.#valve.setThreshold(this.micThreshold);
+    else if (this.#micWiringStale()) void this.#serial(() => this.#rewireMic());
     return this.micThreshold;
   }
 
@@ -823,12 +910,15 @@ export class VoiceSession {
    * so it could never show you that the gate is shut too often.
    */
   get micLevel() {
+    // The valve listens to a clone that never goes quiet; what is shown is what
+    // is being sent, so nothing while muted, as with the meter on the track.
+    if (this.#valve) return this.transmitting ? this.#valve.level : 0;
     return this.#micChain?.level ?? this.#micMeter?.read().level ?? 0;
   }
 
   /** Whether the gate is currently letting sound through. */
   get micOpen() {
-    return this.#micChain ? this.#micChain.open : true;
+    return (this.#micChain ?? this.#valve)?.open ?? true;
   }
 
   /**
@@ -892,6 +982,7 @@ export class VoiceSession {
 
     this.#micStream?.getTracks().forEach((t) => t.stop());
     this.#micStream = stream;
+    this.#applyTransmit();
 
     this.#micMeter?.close();
     this.#micMeter = createMeter(stream);
@@ -962,6 +1053,7 @@ export class VoiceSession {
     this.#mic = null;
     this.#micMeter?.close();
     this.#micMeter = null;
+    this.#closeValve();
     this.#micStream?.getTracks().forEach((t) => t.stop());
     this.#micStream = null;
     if (!mic) return;
@@ -1011,9 +1103,10 @@ export class VoiceSession {
     this.#applyTransmit();
   }
 
-  #applyTransmit() {
-    const open = this.transmitting;
-    for (const track of this.#micStream?.getAudioTracks() ?? []) track.enabled = open;
+  #applyTransmit(stream = this.#micStream) {
+    // Muted, not pushing to talk, or a gate that is shut: the same switch.
+    const open = this.transmitting && (this.#valve?.open ?? true);
+    for (const track of stream?.getAudioTracks() ?? []) track.enabled = open;
   }
 
   // -------------------------------------------------------------- incoming
@@ -1524,6 +1617,7 @@ export class VoiceSession {
     await this.stopMic();
     this.#micChain?.close();
     this.#micChain = null;
+    this.#closeValve();
     this.#closedVideo.clear();
     this.#tileGains.clear();
     await this.stopCam();
