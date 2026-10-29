@@ -35,6 +35,8 @@ export function launchApp({ port, userDataDir, onStderr, extraArgs = [] }) {
   // Accessibility permission on whoever's machine this runs, and the tests drive
   // the in-window path with real key events instead.
   env.HARMONY_NO_KEY_HOOK = '1';
+  // Nor a file manager window: "open the log folder" is pressed in tests.
+  env.HARMONY_NO_OPEN = '1';
 
   const packaged = process.env.HARMONY_BIN;
   const bin = packaged || electronBin;

@@ -12,6 +12,7 @@ const appAudio = require('./app-audio');
 const api = require('./api');
 const clips = require('./clips');
 const gpu = require('./gpu');
+const debugLog = require('./debug-log');
 const hotkeys = require('./hotkeys');
 const ptt = require('./ptt');
 const { opensDevTools } = require('./devtools-keys');
@@ -431,7 +432,7 @@ app.whenReady().then(() => {
 
 // Registrations outlive the window otherwise, holding keys away from every
 // other application until the process is gone.
-app.on('will-quit', () => { hotkeys.clear(); ptt.stop(); });
+app.on('will-quit', () => { hotkeys.clear(); ptt.stop(); debugLog.stop(); });
 
 // A hotkey fired, wherever the focus was. The renderer decides what it means.
 hotkeys.onFire((id) => {
@@ -781,6 +782,14 @@ handle('media:save', async (_e, hash, suggestedName) => {
 });
 
 /** Show a saved file where it landed. */
+// The debug log. Only ever started by a click in Settings in THIS run: nothing
+// about it is remembered, so the app always opens with it off.
+handle('debug:start', (_e, extra) => debugLog.start(extra));
+handle('debug:stop', () => debugLog.stop());
+handle('debug:status', () => debugLog.status());
+handle('debug:event', (_e, kind, text) => debugLog.event(kind, text));
+handle('debug:open', () => debugLog.openFolder());
+
 handle('media:reveal', (_e, file) => {
   shell.showItemInFolder(String(file));
   return true;

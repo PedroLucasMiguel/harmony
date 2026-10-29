@@ -185,6 +185,12 @@ const DEFAULTS = {
    */
   mentionSound: true,
   /*
+   * Whether your own camera's tile shows your picture. Remembered because it is
+   * a choice about yourself rather than about one call; a screen share's
+   * preview is not, and starts hidden every time.
+   */
+  cameraPreview: false,
+  /*
    * How loud every cue is, as a percentage: joins, leaves, streams, mute,
    * mention. 100 is the designed level; up to 200 for a noisy room.
    */

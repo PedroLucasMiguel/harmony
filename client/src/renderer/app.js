@@ -22,6 +22,7 @@ import {
 } from './roles.js';
 import { createServerAdmin } from './server-admin.js';
 import { createProfileCard } from './profile-card.js';
+import { createDebugLog } from './debug-log.js';
 import { NAME_COLOR_SPEED, NAME_COLOR_STOPS, paintName, startingPoint } from './name-color.js';
 
 // ---------------------------------------------------------------------------
@@ -332,6 +333,10 @@ const el = {
   mentionPop: $('mention-pop'),
   mentionItems: $('mention-items'),
   mentionSound: $('mention-sound'),
+  debugLog: $('debug-log'),
+  debugLogFile: $('debug-log-file'),
+  debugLogError: $('debug-log-error'),
+  debugOpenFolder: $('debug-open-folder'),
   emojiPop: $('emoji-pop'),
   emojiSearch: $('emoji-search'),
   emojiGrid: $('emoji-grid'),
@@ -7015,15 +7020,9 @@ function renderChannelVideo() {
       eye.dataset.role = 'preview';
       setIcon(eye, 'eye');
       eye.title = t('app.show_a_preview_of_what');
-      eye.addEventListener('click', (event) => {
-        event.stopPropagation();
-        if (video.srcObject) {
-          video.srcObject = null;
-          video.hidden = true;
-          figure.setAttribute('data-preview-off', '');
-          eye.removeAttribute('data-on');
-          eye.title = t('app.show_a_preview_of_what');
-        } else {
+
+      const setPreview = (on) => {
+        if (on) {
           // Read now rather than captured at build time: the tile outlives
           // a change of source, and the stream with it.
           video.srcObject = ownChannelTiles().find((t) => t.kind === kind)?.stream ?? stream;
@@ -7032,8 +7031,27 @@ function renderChannelVideo() {
           figure.removeAttribute('data-preview-off');
           eye.setAttribute('data-on', '');
           eye.title = t('app.hide_the_preview');
+        } else {
+          video.srcObject = null;
+          video.hidden = true;
+          figure.setAttribute('data-preview-off', '');
+          eye.removeAttribute('data-on');
+          eye.title = t('app.show_a_preview_of_what');
+        }
+      };
+      eye.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const on = !video.srcObject;
+        setPreview(on);
+        // The camera's choice is remembered: it is a picture of yourself,
+        // which you either want to see while you are on camera or do not. A
+        // screen share's stays hidden every time, for the reason above.
+        if (kind === 'c') {
+          await harmony.settings.set({ cameraPreview: on });
+          state.settings = await harmony.settings.get();
         }
       });
+      if (kind === 'c' && state.settings?.cameraPreview === true) setPreview(true);
 
       const cornerEye = document.createElement('span');
       cornerEye.className = 'tile-corner';
@@ -10210,7 +10228,10 @@ async function withBackground(raw) {
     effect.onStop = () => {
       if (state.camera.effect === effect) state.camera.effect = null;
     };
-    effect.onOverload = (stats) => giveUpBackground(effect, stats);
+    effect.onOverload = (stats) => {
+      debugLog.event('EVENT', `camera effect gave up: ${JSON.stringify(stats)}`);
+      giveUpBackground(effect, stats);
+    };
     return effect.stream;
   } catch (err) {
     console.warn('[background] could not start:', err);
@@ -13673,8 +13694,60 @@ el.voiceSounds.addEventListener('change', async () => {
   if (el.voiceSounds.checked) playCue('join');
 });
 
+/*
+ * The debug log: a text file for working out why a call stutters.
+ *
+ * OFF whenever the app opens, on purpose and with nothing saved to say
+ * otherwise: the main process starts with it off, and the page asks it to stop
+ * once more at load, in case the page was reloaded while it was on. Turning it on
+ * is a choice made in this run of the app.
+ */
+const debugLog = createDebugLog({
+  harmony,
+  voice: () => state.voice,
+  effectStats: () => state.camera.effect?.stats ?? null,
+  settings: () => state.settings,
+});
+harmony.debug?.stop().catch(() => {});
+
+async function renderDebugLog() {
+  el.debugLog.checked = debugLog.enabled;
+  el.debugLogError.hidden = true;
+  el.debugLogFile.hidden = !debugLog.enabled;
+  if (!debugLog.enabled) return;
+  try {
+    const status = await harmony.debug.status();
+    el.debugLogFile.textContent = t('settings.debug.logging_to', { file: status.file });
+  } catch { /* the line is a courtesy */ }
+}
+
+el.debugLog.addEventListener('change', async () => {
+  const wanted = el.debugLog.checked;
+  try {
+    if (wanted) await debugLog.start();
+    else await debugLog.stop();
+  } catch (err) {
+    el.debugLogError.textContent = t('settings.debug.failed', { message: err.message });
+    el.debugLogError.hidden = false;
+    el.debugLog.checked = debugLog.enabled;
+    return;
+  }
+  renderDebugLog();
+});
+
+el.debugOpenFolder.addEventListener('click', async () => {
+  try {
+    await harmony.debug.open();
+    el.debugLogError.hidden = true;
+  } catch (err) {
+    el.debugLogError.textContent = err.message;
+    el.debugLogError.hidden = false;
+  }
+});
+
 el.voiceConfig.addEventListener('click', () => {
   el.devicesDialog.showModal();
+  renderDebugLog();
   renderThemes();
   el.voiceSounds.checked = state.settings?.voiceSounds !== false;
   el.mentionSound.checked = state.settings?.mentionSound !== false;
@@ -14118,17 +14191,29 @@ function chatAcceptsDrop() {
     && document.getElementById('view-channels')?.hasAttribute('data-active');
 }
 
+/** Where a dropped file would go: the open channel's chat, or the open private conversation. */
+function dropTarget() {
+  if (chatAcceptsDrop()) return 'chat';
+  if (document.getElementById('view-channels')?.hasAttribute('data-active') && dmUi?.acceptsFiles()) return 'dm';
+  return null;
+}
+
 function hideChatDrop() {
   el.chatDrop.hidden = true;
+  dmUi?.showDrop(false);
 }
 
 for (const type of ['dragenter', 'dragover']) {
   document.addEventListener(type, (event) => {
     if (!draggingFiles(event)) return;
     event.preventDefault();
-    const accepts = chatAcceptsDrop();
-    event.dataTransfer.dropEffect = accepts ? 'copy' : 'none';
-    if (!accepts) return;
+    const target = dropTarget();
+    event.dataTransfer.dropEffect = target ? 'copy' : 'none';
+    if (!target) return;
+    if (target === 'dm') {
+      dmUi.showDrop(true);
+      return;
+    }
     if (el.chatDrop.hidden) {
       const channel = state.channels.list.find((c) => c.id === state.chat.channelId);
       el.chatDropTitle.textContent = t('chat.drop_title', {
@@ -14148,8 +14233,9 @@ document.addEventListener('dragend', hideChatDrop);
 document.addEventListener('drop', (event) => {
   if (!draggingFiles(event)) return;
   event.preventDefault();
+  const target = dropTarget();
   hideChatDrop();
-  if (!chatAcceptsDrop()) return;
+  if (!target) return;
 
   // A folder arrives as a "file" with no type and no readable bytes; the
   // entry is the only thing that can tell them apart, and only now.
@@ -14160,6 +14246,10 @@ document.addEventListener('drop', (event) => {
   }
   const files = [...event.dataTransfer.files];
   if (!files.length) return;
+  if (target === 'dm') {
+    dmUi.dropFiles(files);
+    return;
+  }
   const [file] = files;
   if (!fitsUploadLimit(file)) return;
   setPendingFile(file);
@@ -14167,6 +14257,58 @@ document.addEventListener('drop', (event) => {
     ? t('app.one_file_per_message_is', { name: file.name })
     : '';
   el.chatInput.focus();
+});
+
+/*
+ * Right-click on a message: copy what was selected, the whole message as it
+ * was written, or a link in it.
+ *
+ * Electron draws no context menu of its own, so without this there is no way
+ * to copy anything out of the chat with the mouse. The same menu serves the
+ * channels' log and a private conversation's, which share their rows' classes.
+ */
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // The text is on screen to be selected by hand; nothing else to do.
+  }
+}
+
+/** The message a row shows, as it was written (not as it is drawn). */
+function messageBodyOf(row) {
+  const id = Number(row.dataset.id);
+  if (row.closest('#dm-log')) return dmUi?.bodyOf(id) ?? '';
+  return state.chat.messages.find((m) => m.id === id)?.body ?? '';
+}
+
+document.addEventListener('contextmenu', (event) => {
+  const row = event.target.closest?.('#chat-log .chat-msg, #dm-log .chat-msg');
+  if (!row || event.defaultPrevented) return;
+
+  const items = [];
+  const selection = window.getSelection();
+  const selected = selection && !selection.isCollapsed && selection.containsNode(row, true)
+    ? selection.toString() || selection.getRangeAt(0).toString()
+    : '';
+  if (selected.trim()) {
+    items.push({ label: t('chat_menu.copy'), icon: 'copy', run: () => copyToClipboard(selected) });
+  }
+  const link = event.target.closest('a[href]');
+  if (link) {
+    items.push(
+      { label: t('chat_menu.open_link'), icon: 'arrow-square-out', run: () => window.open(link.href, '_blank', 'noopener') },
+      { label: t('chat_menu.copy_link'), icon: 'copy', run: () => copyToClipboard(link.href) },
+    );
+  }
+  const body = messageBodyOf(row);
+  if (body.trim()) {
+    items.push({ label: t('chat_menu.copy_message'), icon: 'copy', run: () => copyToClipboard(body) });
+  }
+  if (!items.length) return;
+
+  event.preventDefault();
+  openRowMenu(t('app.message'), items, event);
 });
 
 el.chatPendingClear.addEventListener('click', () => {

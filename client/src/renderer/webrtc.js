@@ -554,3 +554,106 @@ export function createStatsReader(pc, direction /* 'outbound' | 'inbound' */) {
     return out;
   };
 }
+
+/**
+ * Everything about one connection that helps explain how a call sounds and
+ * looks, in a flat shape for the debug log: the state of the connection, the
+ * path it took (types and protocols only -- never an address), and for each
+ * direction the counters that tell loss, delay and the machine's own effort
+ * apart. Counters are running totals; the log turns them into changes.
+ *
+ * @param {RTCPeerConnection} pc
+ * @returns {Promise<object>}
+ */
+export async function describePc(pc) {
+  const out = {
+    state: pc.connectionState,
+    ice: pc.iceConnectionState,
+    signaling: pc.signalingState,
+  };
+  let reports;
+  try {
+    reports = await pc.getStats();
+  } catch {
+    return out;
+  }
+  const rows = [];
+  reports.forEach((r) => rows.push(r));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  const pick = (report, fields) => {
+    const o = {};
+    for (const field of fields) {
+      const v = report[field];
+      if (v === undefined) continue;
+      if (field === 'qualityLimitationDurations' && v) {
+        for (const [k, seconds] of Object.entries(v)) o[`limited_${k}_s`] = Number(seconds.toFixed(2));
+      } else {
+        o[field] = v;
+      }
+    }
+    return o;
+  };
+
+  const kindOf = (r) => (r.kind ?? r.mediaType);
+  const first = (type, kind) => rows.find((r) => r.type === type && kindOf(r) === kind);
+
+  const transport = rows.find((r) => r.type === 'transport');
+  const pair = (transport?.selectedCandidatePairId && byId.get(transport.selectedCandidatePairId))
+    ?? rows.find((r) => r.type === 'candidate-pair' && (r.nominated || r.selected) && r.state === 'succeeded')
+    ?? rows.find((r) => r.type === 'candidate-pair' && r.state === 'succeeded');
+  if (pair) {
+    const local = byId.get(pair.localCandidateId);
+    const remote = byId.get(pair.remoteCandidateId);
+    out.path = {
+      local: `${local?.candidateType ?? '?'}/${local?.protocol ?? '?'}${local?.networkType ? `/${local.networkType}` : ''}`,
+      remote: `${remote?.candidateType ?? '?'}/${remote?.protocol ?? '?'}`,
+      rtt_ms: pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
+      availableOut_kbps: pair.availableOutgoingBitrate != null ? Math.round(pair.availableOutgoingBitrate / 1000) : null,
+      availableIn_kbps: pair.availableIncomingBitrate != null ? Math.round(pair.availableIncomingBitrate / 1000) : null,
+      requestsSent: pair.requestsSent,
+      responsesReceived: pair.responsesReceived,
+      consentRequestsSent: pair.consentRequestsSent,
+    };
+  }
+  if (transport) out.dtls = transport.dtlsState;
+
+  const sections = {
+    outAudio: [first('outbound-rtp', 'audio'), ['packetsSent', 'bytesSent', 'targetBitrate', 'totalPacketSendDelay', 'nackCount', 'active']],
+    outVideo: [first('outbound-rtp', 'video'), [
+      'packetsSent', 'bytesSent', 'framesEncoded', 'framesSent', 'keyFramesEncoded', 'hugeFramesSent',
+      'totalEncodeTime', 'totalPacketSendDelay', 'frameWidth', 'frameHeight', 'framesPerSecond', 'targetBitrate',
+      'qualityLimitationReason', 'qualityLimitationDurations', 'nackCount', 'pliCount', 'firCount',
+      'retransmittedPacketsSent', 'encoderImplementation', 'powerEfficientEncoder', 'scalabilityMode', 'active',
+    ]],
+    remoteOutAudio: [first('remote-inbound-rtp', 'audio'), ['packetsLost', 'jitter', 'roundTripTime', 'fractionLost']],
+    remoteOutVideo: [first('remote-inbound-rtp', 'video'), ['packetsLost', 'jitter', 'roundTripTime', 'fractionLost']],
+    srcAudio: [first('media-source', 'audio'), ['audioLevel', 'totalAudioEnergy', 'totalSamplesDuration', 'echoReturnLoss', 'echoReturnLossEnhancement']],
+    srcVideo: [first('media-source', 'video'), ['width', 'height', 'framesPerSecond', 'frames']],
+    inAudio: [first('inbound-rtp', 'audio'), [
+      'packetsReceived', 'packetsLost', 'packetsDiscarded', 'bytesReceived', 'jitter',
+      'jitterBufferDelay', 'jitterBufferEmittedCount', 'jitterBufferTargetDelay', 'jitterBufferMinimumDelay',
+      'totalSamplesReceived', 'concealedSamples', 'silentConcealedSamples', 'concealmentEvents',
+      'insertedSamplesForDeceleration', 'removedSamplesForAcceleration',
+      'interruptionCount', 'totalInterruptionDuration', 'audioLevel', 'decoderImplementation',
+    ]],
+    inVideo: [first('inbound-rtp', 'video'), [
+      'packetsReceived', 'packetsLost', 'jitter', 'framesReceived', 'framesDecoded', 'framesDropped',
+      'freezeCount', 'totalFreezesDuration', 'pauseCount', 'totalDecodeTime', 'frameWidth', 'frameHeight',
+      'framesPerSecond', 'nackCount', 'pliCount', 'decoderImplementation', 'powerEfficientDecoder',
+    ]],
+  };
+  for (const [name, [report, fields]] of Object.entries(sections)) {
+    if (report) out[name] = pick(report, fields);
+  }
+  const codec = (report) => byId.get(report?.codecId)?.mimeType;
+  const profile = (report) => byId.get(report?.codecId)?.sdpFmtpLine;
+  if (out.outVideo) {
+    out.outVideo.codec = codec(first('outbound-rtp', 'video'));
+    const fmtp = profile(first('outbound-rtp', 'video'));
+    const id = /profile-level-id=([0-9a-fA-F]{6})/.exec(fmtp ?? '');
+    if (id) out.outVideo.h264 = id[1];
+  }
+  if (out.outAudio) out.outAudio.codec = codec(first('outbound-rtp', 'audio'));
+  return out;
+}

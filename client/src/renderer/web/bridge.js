@@ -325,6 +325,8 @@ export const harmony = {
     scale: NATIVE,
     updates: NATIVE,
     reveal: false,
+    // A debug log is a file and a folder on a computer, neither of which a page has.
+    debugLog: false,
     // Android has its notification for the call instead; a page has neither.
     tray: false,
   },
@@ -336,6 +338,14 @@ export const harmony = {
 
   gpu: {
     status: async () => { throw unsupported('GPU settings'); },
+  },
+
+  debug: {
+    start: async () => { throw unsupported('the debug log'); },
+    stop: async () => ({ enabled: false }),
+    status: async () => ({ enabled: false, file: null, dir: null }),
+    event: async () => false,
+    open: async () => { throw unsupported('the debug log'); },
   },
 
   relaunch: async () => {

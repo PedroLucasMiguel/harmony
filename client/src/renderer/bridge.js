@@ -42,6 +42,8 @@ const desktop = () => ({
     scale: true,
     updates: true,
     reveal: true,
+    // The debug log is a file on this computer, and a folder to open.
+    debugLog: true,
     tray: true,
     // A window of its own for the picture in picture; see popOutPip.
     popout: true,
@@ -54,6 +56,14 @@ const desktop = () => ({
 
   gpu: {
     status: lift(raw.gpu.status),
+  },
+
+  debug: {
+    start: lift(raw.debug.start),
+    stop: lift(raw.debug.stop),
+    status: lift(raw.debug.status),
+    event: lift(raw.debug.event),
+    open: lift(raw.debug.open),
   },
 
   relaunch: lift(raw.relaunch),

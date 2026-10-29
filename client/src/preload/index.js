@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld('harmony', {
     status: invoke('gpu:status'),
   },
 
+  /** The debug log: a text file for working out why a call stutters. See main/debug-log.js. */
+  debug: {
+    start: invoke('debug:start'),
+    stop: invoke('debug:stop'),
+    status: invoke('debug:status'),
+    event: invoke('debug:event'),
+    open: invoke('debug:open'),
+  },
+
   relaunch: invoke('app:relaunch'),
   setScale: invoke('app:scale'),
 

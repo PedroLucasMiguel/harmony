@@ -1822,6 +1822,14 @@ button.danger {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
+  /* The page as a whole is not selectable, which is right for buttons and
+     lists; the words people wrote are the exception. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.chat-msg .text a {
+  cursor: pointer;
 }
 
 /* ---------- emoji in a message ---------- */
@@ -5421,6 +5429,18 @@ button.tiny:disabled {
   align-items: center;
   gap: 10px;
 }
+.setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-top: 0.4rem;
+}
+#debug-log-file {
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+  margin: 0.4rem 0 0;
+  user-select: text;
+}
 .update-text {
   flex: 1;
   min-width: 0;
@@ -6287,6 +6307,7 @@ input[data-saved] {
 :root[data-lacks~='gpu'] [data-cap~='gpu'],
 :root[data-lacks~='hotkeys'] [data-cap~='hotkeys'],
 :root[data-lacks~='scale'] [data-cap~='scale'],
+:root[data-lacks~='debuglog'] [data-cap~='debuglog'],
 :root[data-lacks~='updates'] [data-cap~='updates'] {
   display: none !important;
 }

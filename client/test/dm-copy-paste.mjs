@@ -1,4 +1,5 @@
-// Private conversations: copying the recovery key, and pasting a picture into the box.
+// Private conversations: copying the recovery key, pasting and dropping a file into the box; and
+// selecting and copying text, and links, out of the chat.
 //
 //   node client/test/dm-copy-paste.mjs
 
@@ -235,10 +236,12 @@ async function run() {
   }`;
   const png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82];
   const taken = await alice.evaluate(`return ${paste('image.png', 'image/png', png).replace(/^\{/, '(() => {').replace(/\}$/, '})()')}`);
+  await sleep(300);
   const chip = await alice.evaluate("return { shown: !document.getElementById('dm-pending').hidden, name: document.getElementById('dm-pending-name').textContent }");
   check('pasting a picture into the conversation attaches it, with a dated name', taken && chip.shown && /^pasted-\d{8}T\d{6}\.png/.test(chip.name), JSON.stringify(chip));
   await alice.evaluate("document.getElementById('dm-pending-clear').click(); return true;");
   const named = await alice.evaluate(`return ${paste('notes.txt', 'text/plain', [104, 105]).replace(/^\{/, '(() => {').replace(/\}$/, '})()')}`);
+  await sleep(300);
   const kept = await alice.evaluate("return document.getElementById('dm-pending-name').textContent");
   check('a file that has a name keeps it', named && /^notes\.txt/.test(kept), kept);
   await alice.evaluate("document.getElementById('dm-pending-clear').click(); return true;");
@@ -251,6 +254,92 @@ async function run() {
     return event.defaultPrevented;
   }`);
   check('pasting only text is left to the box', plain === false, String(plain));
+
+  // --- dropping a file on a conversation ----------------------------------------------------------------------------------------
+  const drag = (type, name = 'dropped.txt') => `{
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array([104, 105])], ${JSON.stringify(name)}, { type: 'text/plain' }));
+    const event = new DragEvent(${JSON.stringify(type)}, { dataTransfer: dt, bubbles: true, cancelable: true });
+    document.getElementById('dm-title-anchor')?.remove();
+    (document.getElementById('dm-log')).dispatchEvent(event);
+    return event.defaultPrevented ? event.dataTransfer.dropEffect : 'ignored';
+  }`;
+  const effect = await alice.evaluate(`return (() => ${drag('dragover')})()`);
+  const cover = await alice.evaluate("return { dm: !document.getElementById('dm-drop').hidden, chat: !document.getElementById('chat-drop').hidden, title: document.getElementById('dm-drop-title').textContent }");
+  check('dragging a file over a conversation offers to take it', effect !== 'ignored' && cover.dm && !cover.chat && /bob/i.test(cover.title), JSON.stringify({ effect, cover }));
+  await alice.evaluate(`return (() => ${drag('drop')})()`);
+  await sleep(500);
+  const dropped = await alice.evaluate("return { cover: !document.getElementById('dm-drop').hidden, shown: !document.getElementById('dm-pending').hidden, name: document.getElementById('dm-pending-name').textContent }");
+  check('dropping it attaches the file and takes the cover away', !dropped.cover && dropped.shown && /^dropped\.txt/.test(dropped.name), JSON.stringify(dropped));
+  await alice.evaluate("document.getElementById('dm-pending-clear').click(); return true;");
+
+  // --- copying out of the chat -------------------------------------------------------------------------------------------------
+  // The first conversation shows the recovery key again: put it away, it is not what this is about.
+  await alice.evaluate("document.querySelectorAll('dialog[open]').forEach((d) => d.close()); return true;");
+  const text = (await rest('alice', '/api/channels')).body.channels.find((c) => c.kind === 'text');
+  await rest('bob', `/api/channels/${text.id}/messages`, { body: 'read https://example.com/some/page and **this** too' });
+  await alice.evaluate(`[...document.querySelectorAll('#channel-items .channel-row')].find((r) => r.textContent.includes(${JSON.stringify(text.name)})).click(); return true;`);
+  await until(alice, "[...document.querySelectorAll('#chat-log .chat-msg .text')].some((t) => t.textContent.includes('this too'))", { label: 'the message' });
+  const selectable = await alice.evaluate("return getComputedStyle(document.querySelector('#chat-log .chat-msg .text')).userSelect");
+  check('the words of a message can be selected', selectable === 'text', selectable);
+
+  const menu = () => alice.evaluate("return [...document.querySelectorAll('#row-menu-body button')].map((b) => b.textContent)");
+  // A real click: the clipboard wants the user gesture a person's click carries.
+  const clickItem = async (label) => {
+    const at = await alice.evaluate(`{
+      const b = [...document.querySelectorAll('#row-menu-body button')].find((x) => x.textContent === ${JSON.stringify(label)});
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }`);
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await alice.send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 });
+    }
+    await sleep(300);
+  };
+  const pasteIntoProbe = async () => {
+    await alice.evaluate("document.getElementById('probe')?.remove(); const i = document.createElement('input'); i.id = 'probe'; document.body.append(i); i.focus(); return true;");
+    await alice.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'v', code: 'KeyV', commands: ['paste'] });
+    await sleep(300);
+    return alice.evaluate("return document.getElementById('probe').value");
+  };
+  const rightClick = (selector) => alice.evaluate(`{
+    const row = [...document.querySelectorAll('#chat-log .chat-msg')].find((r) => r.textContent.includes('this too'));
+    const target = row.querySelector(${JSON.stringify(selector)});
+    const r = target.getBoundingClientRect();
+    target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 4, clientY: r.top + 4 }));
+    return true;
+  }`);
+
+  // the whole message, as it was written (not as it is drawn)
+  await rightClick('.text');
+  const plainMenu = await menu();
+  check('right-clicking a message offers to copy it', plainMenu.includes('Copy message text') && !plainMenu.includes('Copy link address'), JSON.stringify(plainMenu));
+  await clickItem('Copy message text');
+  const copiedWhole = await pasteIntoProbe();
+  check('and copies it exactly as written, markdown and all', copiedWhole === 'read https://example.com/some/page and **this** too', JSON.stringify(copiedWhole));
+
+  // a selection
+  await alice.evaluate(`{
+    const t = [...document.querySelectorAll('#chat-log .chat-msg .text')].find((x) => x.textContent.includes('this too'));
+    const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
+    let first = null; let last = null;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) { first ??= n; last = n; }
+    const range = document.createRange(); range.setStart(first, 0); range.setEnd(last, last.length);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range); return true;
+  }`);
+  await rightClick('.text');
+  const withSelection = await menu();
+  check('with something selected, it offers to copy the selection', withSelection[0] === 'Copy', JSON.stringify(withSelection));
+  await clickItem('Copy');
+  check('and copies what is selected', (await pasteIntoProbe()).startsWith('read https://example.com/some/page and this too'), '');
+  await alice.evaluate('getSelection().removeAllRanges(); return true;');
+
+  // a link
+  await rightClick('.text a');
+  const linkMenu = await menu();
+  check('right-clicking a link offers to open it and to copy its address', linkMenu.includes('Open link') && linkMenu.includes('Copy link address'), JSON.stringify(linkMenu));
+  await clickItem('Copy link address');
+  check('and copies the address', await pasteIntoProbe() === 'https://example.com/some/page', '');
 }
 
 try {

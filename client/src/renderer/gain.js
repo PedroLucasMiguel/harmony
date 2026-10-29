@@ -542,6 +542,34 @@ function captureContext() {
 let ctx = null;
 
 /**
+ * What the two audio contexts are doing, for the debug log: whether they are
+ * running, how much they add, and -- where the engine reports it -- how often
+ * playback ran dry, which is what a crackle is.
+ */
+export function audioContextStats() {
+  const one = (c) => {
+    if (!c) return null;
+    const o = {
+      state: c.state,
+      sampleRate: c.sampleRate,
+      baseLatency_ms: c.baseLatency != null ? Number((c.baseLatency * 1000).toFixed(1)) : null,
+      outputLatency_ms: c.outputLatency != null ? Number((c.outputLatency * 1000).toFixed(1)) : null,
+    };
+    try {
+      const p = c.playbackStats;
+      if (p) {
+        o.underrunEvents = p.underrunEvents;
+        o.underrun_ms = p.underrunDuration != null ? Math.round(p.underrunDuration * 1000) : undefined;
+        o.avgLatency_ms = p.averageLatency != null ? Math.round(p.averageLatency * 1000) : undefined;
+        o.maxLatency_ms = p.maximumLatency != null ? Math.round(p.maximumLatency * 1000) : undefined;
+      }
+    } catch { /* an engine without playback stats */ }
+    return o;
+  };
+  return { capture: one(captureCtx), playback: one(ctx) };
+}
+
+/**
  * One AudioContext for every stream being played.
  *
  * Created on first use rather than at load: a context made before any user

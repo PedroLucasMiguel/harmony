@@ -446,6 +446,12 @@ export default {
   'chat_editing.editing': 'Editing message',
   'chat_editing.hint': 'Esc to cancel · Enter to save',
 
+  // --- chat_menu
+  'chat_menu.copy': 'Copy',
+  'chat_menu.copy_link': 'Copy link address',
+  'chat_menu.copy_message': 'Copy message text',
+  'chat_menu.open_link': 'Open link',
+
   // --- chat_reply
   'chat_reply.cancel_the_reply': 'Cancel the reply',
   'chat_reply.replying_to': 'Replying to',
@@ -563,6 +569,7 @@ export default {
   'dm.close': 'Close',
   'dm.edited': ' (edited)',
   'dm.empty': 'No private conversations yet. Right-click someone in the member list and choose “Send a private message”.',
+  'dm.drop_title': 'Drop to send to {name}',
   'dm.encrypted': 'End-to-end encrypted: only the two of you can read this.',
   'dm.error.blocked': 'You cannot send messages in this conversation.',
   'dm.error.file_too_large': 'That file is too large to send.',
@@ -946,6 +953,13 @@ export default {
   'settings.sounds.three_rising_notes_when': 'Three rising notes when somebody writes your name, and the only cue that fires for a channel you are not looking at.',
   'settings.sounds.voice_channel_sounds': 'Voice channel sounds',
   'settings.sounds.when_you_or_somebody': 'When you or somebody else joins or leaves, a stream starts or stops, and when you mute or deafen. Rising means on, falling means off.',
+  'settings.debug': 'Debug',
+  'settings.debug.debug': 'Debug',
+  'settings.debug.dump_to_log': 'Dump to log',
+  'settings.debug.dump_to_log_hint': 'Writes what is happening to a text file while it is on: how the voice and video connections are doing, what your microphone and camera deliver, how busy the computer and each part of Harmony are, and which other programs are using the processor. It holds no messages, passwords, addresses or account names. It turns itself off every time Harmony opens.',
+  'settings.debug.open_folder': 'Open log folder',
+  'settings.debug.logging_to': 'Logging to {file}',
+  'settings.debug.failed': 'The log could not be started: {message}',
   'settings.updates': 'Updates',
   'settings.updates.updates': 'Updates',
   'settings.voice.camera': 'Camera',

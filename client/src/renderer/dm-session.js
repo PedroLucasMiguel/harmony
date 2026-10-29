@@ -628,6 +628,11 @@ export class DmSession {
     }
   }
 
+  /** An opened message by id, or null. */
+  messageById(messageId) {
+    return this.#find(messageId)?.message ?? null;
+  }
+
   #find(messageId) {
     for (const [id, t] of this.#threads) {
       const message = t.messages.find((m) => m.id === messageId);

@@ -65,6 +65,8 @@ export function createDmUi(deps) {
     close: $('dm-close'),
     banner: $('dm-banner'),
     log: $('dm-log'),
+    drop: $('dm-drop'),
+    dropTitle: $('dm-drop-title'),
     more: $('dm-more'),
     form: $('dm-form'),
     reply: $('dm-reply'),
@@ -933,8 +935,36 @@ export function createDmUi(deps) {
     el.input.focus();
   }));
 
+  /** Whether a file dropped on the window would go into this conversation. */
+  const acceptsFiles = () => currentId !== null && !el.active.hidden && !el.input.disabled;
+
+  /** The "drop it here" cover over the conversation, while a file is dragged over the window. */
+  function showDrop(on) {
+    if (!on) {
+      el.drop.hidden = true;
+      return;
+    }
+    if (!el.drop.hidden) return;
+    const c = session?.conversations.get(currentId);
+    el.dropTitle.textContent = t('dm.drop_title', { name: c ? peerName(c.peer) : '' });
+    el.drop.hidden = false;
+  }
+
+  /** Files dropped on it: the first is attached, as the channels' box does. */
+  function dropFiles(files) {
+    const [file] = files;
+    if (!file) return;
+    el.note.textContent = files.length > 1 ? t('app.one_file_per_message_is', { name: file.name }) : '';
+    pickFile(file);
+    el.input.focus();
+  }
+
+  /** What a message says, as it was written, for copying. */
+  const bodyOf = (id) => session?.messageById(Number(id))?.body ?? null;
+
   return {
     start, stop, openWith, handleEvent, closeConversation, isOpen,
+    acceptsFiles, showDrop, dropFiles, bodyOf,
     get session() { return session; },
     /** Whether somebody can be written to from here at all. */
     get available() { return Boolean(session) && session.state !== KeyState.Unsupported; },

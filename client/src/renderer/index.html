@@ -711,6 +711,14 @@
             same look.
           -->
           <div id="dm-active" hidden>
+            <!-- Over the conversation while a file is dragged onto the window. See showDrop. -->
+            <div class="chat-drop" id="dm-drop" hidden aria-hidden="true">
+              <div class="chat-drop-box">
+                <span class="chat-drop-icon" data-icon="plus-circle"></span>
+                <strong id="dm-drop-title"></strong>
+                <small data-i18n="chat_drop.one_file_per_message">One file per message. It is attached, ready to send.</small>
+              </div>
+            </div>
             <header class="voice-head dm-head">
               <span class="avatar dm-head-avatar" id="dm-head-avatar"></span>
               <h2 id="dm-name"></h2>
@@ -1474,6 +1482,9 @@
           <button type="button" role="tab" class="settings-tab" data-tab="updates" data-cap="updates" aria-selected="false">
             <span class="settings-tab-icon" data-icon="download-simple" aria-hidden="true"></span><span data-i18n="settings.updates">Updates</span>
           </button>
+          <button type="button" role="tab" class="settings-tab" data-tab="debug" data-cap="debuglog" aria-selected="false">
+            <span class="settings-tab-icon" data-icon="bug" aria-hidden="true"></span><span data-i18n="settings.debug">Debug</span>
+          </button>
         </nav>
 
         <div class="settings-main">
@@ -2057,6 +2068,35 @@
               opens the release page instead, since an unsigned Mac app cannot
               install its own update.
             -->
+            <!--
+              A text file for working out why a call crackles or a connection
+              stutters on somebody's computer. Always OFF when the app opens:
+              nothing about it is saved, so it cannot be left on by accident.
+            -->
+            <section class="settings-page" role="tabpanel" data-page="debug" data-cap="debuglog" hidden>
+              <h3 class="settings-page-title" data-i18n="settings.debug.debug">Debug</h3>
+
+              <div class="setting-group">
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.debug.dump_to_log">Dump to log</span>
+                    <small data-i18n="settings.debug.dump_to_log_hint">Writes what is happening to a text file while it is on: how the
+                      voice and video connections are doing, what your microphone and
+                      camera deliver, how busy the computer and each part of Harmony are,
+                      and which other programs are using the processor. It holds no
+                      messages, passwords, addresses or account names. It turns itself
+                      off every time Harmony opens.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="debug-log" />
+                </label>
+                <p class="muted" id="debug-log-file" hidden></p>
+                <p class="error" id="debug-log-error" hidden></p>
+                <div class="setting-actions">
+                  <button type="button" class="ghost" id="debug-open-folder" data-icon="folder-open" data-i18n="settings.debug.open_folder">Open log folder</button>
+                </div>
+              </div>
+            </section>
+
             <section class="settings-page" role="tabpanel" data-page="updates" data-cap="updates" hidden>
               <h3 class="settings-page-title" data-i18n="settings.updates.updates">Updates</h3>
               <div class="setting-group">

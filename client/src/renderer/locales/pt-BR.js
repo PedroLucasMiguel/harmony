@@ -436,6 +436,12 @@ export default {
   'chat_editing.editing': 'Editando mensagem',
   'chat_editing.hint': 'Esc para cancelar · Enter para salvar',
 
+  // --- chat_menu
+  'chat_menu.copy': 'Copiar',
+  'chat_menu.copy_link': 'Copiar endereço do link',
+  'chat_menu.copy_message': 'Copiar o texto da mensagem',
+  'chat_menu.open_link': 'Abrir link',
+
   // --- chat_reply
   'chat_reply.cancel_the_reply': 'Cancelar a resposta',
   'chat_reply.replying_to': 'Respondendo a',
@@ -553,6 +559,7 @@ export default {
   'dm.close': 'Fechar',
   'dm.edited': ' (editada)',
   'dm.empty': 'Nenhuma conversa privada ainda. Clique com o botão direito em alguém na lista de membros e escolha “Enviar mensagem privada”.',
+  'dm.drop_title': 'Solte para enviar para {name}',
   'dm.encrypted': 'Criptografia de ponta a ponta: só vocês dois podem ler isto.',
   'dm.error.blocked': 'Você não pode enviar mensagens nesta conversa.',
   'dm.error.file_too_large': 'Esse arquivo é grande demais para enviar.',
@@ -936,6 +943,13 @@ export default {
   'settings.sounds.three_rising_notes_when': 'Três notas ascendentes quando alguém escreve seu nome, e o único aviso que toca para um canal que você não está vendo.',
   'settings.sounds.voice_channel_sounds': 'Sons do canal de voz',
   'settings.sounds.when_you_or_somebody': 'Quando você ou outra pessoa entra ou sai, uma transmissão começa ou termina, e quando você silencia ou ensurdece. Ascendente significa ligado, descendente significa desligado.',
+  'settings.debug': 'Depuração',
+  'settings.debug.debug': 'Depuração',
+  'settings.debug.dump_to_log': 'Despejar em log',
+  'settings.debug.dump_to_log_hint': 'Escreve o que está acontecendo em um arquivo de texto enquanto estiver ligado: como estão as conexões de voz e vídeo, o que o microfone e a câmera entregam, o quanto o computador e cada parte do Harmony estão trabalhando e quais outros programas usam o processador. Não contém mensagens, senhas, endereços nem nomes de conta. Desliga sozinho toda vez que o Harmony abre.',
+  'settings.debug.open_folder': 'Abrir a pasta do log',
+  'settings.debug.logging_to': 'Gravando em {file}',
+  'settings.debug.failed': 'Não foi possível iniciar o log: {message}',
   'settings.updates': 'Atualizações',
   'settings.updates.updates': 'Atualizações',
   'settings.voice.camera': 'Câmera',

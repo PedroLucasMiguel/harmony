@@ -436,6 +436,12 @@ export default {
   'chat_editing.editing': 'Editando mensaje',
   'chat_editing.hint': 'Esc para cancelar · Enter para guardar',
 
+  // --- chat_menu
+  'chat_menu.copy': 'Copiar',
+  'chat_menu.copy_link': 'Copiar dirección del enlace',
+  'chat_menu.copy_message': 'Copiar el texto del mensaje',
+  'chat_menu.open_link': 'Abrir enlace',
+
   // --- chat_reply
   'chat_reply.cancel_the_reply': 'Cancelar la respuesta',
   'chat_reply.replying_to': 'Respondiendo a',
@@ -553,6 +559,7 @@ export default {
   'dm.close': 'Cerrar',
   'dm.edited': ' (editado)',
   'dm.empty': 'Aún no hay conversaciones privadas. Haz clic derecho en alguien de la lista de miembros y elige “Enviar un mensaje privado”.',
+  'dm.drop_title': 'Suelta para enviar a {name}',
   'dm.encrypted': 'Cifrado de extremo a extremo: solo ustedes dos pueden leer esto.',
   'dm.error.blocked': 'No puedes enviar mensajes en esta conversación.',
   'dm.error.file_too_large': 'Ese archivo es demasiado grande para enviarlo.',
@@ -936,6 +943,13 @@ export default {
   'settings.sounds.three_rising_notes_when': 'Tres notas ascendentes cuando alguien escribe tu nombre, y el único aviso que suena en un canal que no estás mirando.',
   'settings.sounds.voice_channel_sounds': 'Sonidos del canal de voz',
   'settings.sounds.when_you_or_somebody': 'Cuando tú u otra persona entra o sale, empieza o termina una transmisión, y cuando silencias o ensordeces. Ascendente significa activado, descendente significa desactivado.',
+  'settings.debug': 'Depuración',
+  'settings.debug.debug': 'Depuración',
+  'settings.debug.dump_to_log': 'Volcar a un registro',
+  'settings.debug.dump_to_log_hint': 'Escribe lo que ocurre en un archivo de texto mientras está activado: cómo van las conexiones de voz y vídeo, lo que entregan el micrófono y la cámara, cuánto trabajan el ordenador y cada parte de Harmony, y qué otros programas usan el procesador. No contiene mensajes, contraseñas, direcciones ni nombres de cuenta. Se desactiva solo cada vez que Harmony se abre.',
+  'settings.debug.open_folder': 'Abrir la carpeta del registro',
+  'settings.debug.logging_to': 'Escribiendo en {file}',
+  'settings.debug.failed': 'No se pudo iniciar el registro: {message}',
   'settings.updates': 'Actualizaciones',
   'settings.updates.updates': 'Actualizaciones',
   'settings.voice.camera': 'Cámara',

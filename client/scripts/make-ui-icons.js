@@ -44,6 +44,8 @@ const ICONS = [
   'medal',
   // the owner and the super admins
   'crown-simple', 'shield-star',
+  // the debug page
+  'bug', 'folder-open',
 ];
 
 // By path: the package's exports map hides package.json.

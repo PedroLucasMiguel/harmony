@@ -12,8 +12,8 @@
 // bandwidth, not this file.
 
 import { harmony } from './bridge.js';
-import { publish, watch, applySenderSettings, setSenderPriority } from './webrtc.js';
-import { createSink, createMeter, createMicChain, MAX_GAIN } from './gain.js';
+import { publish, watch, applySenderSettings, setSenderPriority, describePc } from './webrtc.js';
+import { createSink, createMeter, createMicChain, MAX_GAIN, audioContextStats } from './gain.js';
 
 /**
  * Microphone constraints that do not depend on a setting.
@@ -166,7 +166,11 @@ export class VoiceSession {
   note(what) {
     this.#events.push({ at: Date.now(), what });
     if (this.#events.length > 60) this.#events.shift();
+    this.onNote?.(what);
   }
+
+  /** Told of every note as it is made; the debug log hangs off this. */
+  onNote = null;
 
   channelId = null;
   mid = null;
@@ -467,6 +471,58 @@ export class VoiceSession {
       };
     }
     return { receiving, sending, camera };
+  }
+
+  /**
+   * Everything that bears on how the call sounds and looks, for the debug log:
+   * each connection we hold (the microphone, the camera, every voice and video
+   * we are receiving) described by describePc, the capture devices as they
+   * were actually opened, and what the two audio contexts are doing.
+   */
+  async debugSnapshot() {
+    const trackOf = (stream, kind) => {
+      const track = kind === 'audio' ? stream?.getAudioTracks()[0] : stream?.getVideoTracks()[0];
+      if (!track) return null;
+      const s = track.getSettings?.() ?? {};
+      return {
+        label: track.label, state: track.readyState, muted: track.muted, enabled: track.enabled,
+        ...(s.width ? { size: `${s.width}x${s.height}` } : {}),
+        ...(s.frameRate ? { fps: s.frameRate } : {}),
+        ...(s.sampleRate ? { sampleRate: s.sampleRate } : {}),
+        ...(s.channelCount ? { channels: s.channelCount } : {}),
+        ...(s.latency != null ? { latency_ms: Number((s.latency * 1000).toFixed(1)) } : {}),
+        ...(s.echoCancellation !== undefined ? { echoCancellation: s.echoCancellation } : {}),
+        ...(s.noiseSuppression !== undefined ? { noiseSuppression: s.noiseSuppression } : {}),
+        ...(s.autoGainControl !== undefined ? { autoGainControl: s.autoGainControl } : {}),
+      };
+    };
+    const subs = await Promise.all([...this.#subs.entries()].map(async ([mid, sub]) => ({
+      mid,
+      routed: sub.sink.connected,
+      speaking: sub.sink.speaking,
+      level: Number(sub.sink.level.toFixed(4)),
+      ...await describePc(sub.pc),
+    })));
+    const video = await Promise.all([...this.#video.entries()].map(async ([key, sub]) => ({
+      key,
+      ...await describePc(sub.pc),
+    })));
+    return {
+      room: {
+        channel: this.channelId, mid: this.mid, muted: this.muted, deafened: this.deafened,
+        transmitting: this.transmitting, camerasPaused: this.#camerasPaused,
+        micGate: this.#micChain?.kind ?? null,
+        micLevel: Number((this.#micMeter?.read().level ?? 0).toFixed(4)),
+        gate: this.#micChain ? (this.#micChain.open ? 'open' : 'closed') : 'none',
+      },
+      micTrack: trackOf(this.#micStream, 'audio'),
+      camTrack: trackOf(this.#camStream, 'video'),
+      mic: this.#mic ? await describePc(this.#mic.pc) : null,
+      cam: this.#cam ? await describePc(this.#cam.pc) : null,
+      subs,
+      video,
+      audioContexts: audioContextStats(),
+    };
   }
 
   /**
