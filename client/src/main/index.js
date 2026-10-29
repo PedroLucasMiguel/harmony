@@ -560,11 +560,17 @@ handle('api:set-avatar', (_e, s, hash) => api.setAvatar(s, hash));
 handle('api:set-banner', (_e, s, hash) => api.setBanner(s, hash));
 handle('api:set-join-sound', (_e, s, hash) => api.setJoinSound(s, hash));
 handle('api:set-name-font', (_e, s, font) => api.setNameFont(s, font));
+handle('api:badges', (_e, s) => api.badges(s));
+handle('api:create-badge', (_e, s, body) => api.createBadge(s, body));
+handle('api:update-badge', (_e, s, id, body) => api.updateBadge(s, id, body));
+handle('api:delete-badge', (_e, s, id) => api.deleteBadge(s, id));
+handle('api:set-user-badges', (_e, s, id, badges) => api.setUserBadges(s, id, badges));
+handle('api:set-name-color', (_e, s, nameColor) => api.setNameColor(s, nameColor));
 handle('api:roster', (_e, s) => api.roster(s));
 handle('api:set-role', (_e, s, id, role) => api.setRole(s, id, role));
 handle('api:set-display-name', (_e, s, name) => api.setDisplayName(s, name));
 handle('api:rename-clip', (_e, s, id, body) => api.renameClip(s, id, body));
-handle('api:create-group', (_e, s, name) => api.createGroup(s, name));
+handle('api:create-group', (_e, s, name, extra) => api.createGroup(s, name, extra));
 handle('api:rename-group', (_e, s, id, name) => api.renameGroup(s, id, name));
 handle('api:delete-group', (_e, s, id) => api.deleteGroup(s, id));
 handle('api:arrange', (_e, s, body) => api.arrange(s, body));
@@ -573,6 +579,15 @@ handle('api:create-channel', (_e, s, body) => api.createChannel(s, body));
 handle('api:update-channel', (_e, s, id, body) => api.updateChannel(s, id, body));
 handle('api:delete-channel', (_e, s, id) => api.deleteChannel(s, id));
 handle('api:reorder-channels', (_e, s, ids) => api.reorderChannels(s, ids));
+handle('api:roles', (_e, s) => api.roles(s));
+handle('api:create-role', (_e, s, body) => api.createRole(s, body));
+handle('api:update-role', (_e, s, id, body) => api.updateRole(s, id, body));
+handle('api:delete-role', (_e, s, id) => api.deleteRole(s, id));
+handle('api:reorder-roles', (_e, s, ids) => api.reorderRoles(s, ids));
+handle('api:set-user-roles', (_e, s, id, roles) => api.setUserRoles(s, id, roles));
+handle('api:kick-user', (_e, s, id) => api.kickUser(s, id));
+handle('api:ban-user', (_e, s, id, banned) => api.banUser(s, id, banned));
+handle('api:update-group', (_e, s, id, body) => api.updateGroup(s, id, body));
 
 // ---------------------------------------------------------------------------
 // Realtime

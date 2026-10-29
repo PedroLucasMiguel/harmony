@@ -15,6 +15,8 @@ import { WebSocketServer } from 'ws';
 
 import { publicChannel, publicGroup, VOICE_HARD_CAP } from './channels.js';
 import { publicUser } from './accounts.js';
+import { publicBadge } from './badges.js';
+import { channelViewFor, publicRole } from './roles.js';
 
 /** A socket that has not answered a ping in this long is assumed dead. */
 const HEARTBEAT_MS = 15_000;
@@ -32,6 +34,8 @@ export class Realtime {
    * @param {import('./accounts.js').Accounts} deps.accounts
    * @param {import('./channels.js').Channels} deps.channels
    * @param {import('./channels.js').VoiceRooms} deps.voice
+   * @param {import('./roles.js').Roles} deps.roles
+   * @param {import('./badges.js').Badges} deps.badges
    * @param {(channelId: number, userId: number, mid: number) => object} deps.issueTokens
    * @param {(channelId: number, mid: number) => Promise<void>} deps.kickMember
    */
@@ -205,15 +209,11 @@ export class Realtime {
         type: 'hello-ok',
         rid: msg.rid,
         user: publicUser(user),
-        channels: this.#deps.channels.list().map(publicChannel),
-        groups: this.#deps.channels.groups().map(publicGroup),
-        occupancy: this.#deps.voice.occupancy(),
-        // Who is in each channel right now. Without this a client that just
-        // connected shows empty voice channels until somebody happens to
-        // join or leave one.
-        rosters: this.#deps.voice.allRosters(),
-        online: this.onlineUserIds(),
+        ...this.channelView(user),
         voiceCap: VOICE_HARD_CAP,
+        online: this.onlineUserIds(),
+        roles: this.#deps.roles.list().map(publicRole),
+        badges: this.#deps.badges.list().map(publicBadge),
       });
     }
 
@@ -222,7 +222,13 @@ export class Realtime {
     const handler = this.#handlers[msg.type];
     if (!handler) return this.#send(ws, { type: 'error', rid: msg.rid, error: 'unknown_type' });
 
-    const reply = await handler.call(this, client.user, msg, ws);
+    // Read again for every request: a socket authenticates once, and what the
+    // person behind it may do can change -- or end -- at any time after.
+    const user = this.#deps.accounts.byId(client.user.id);
+    if (!user || user.banned_at) return ws.close(4403, 'not allowed');
+    client.user = user;
+
+    const reply = await handler.call(this, user, msg, ws);
     if (reply) this.#send(ws, { ...reply, rid: msg.rid });
     return undefined;
   }
@@ -247,7 +253,12 @@ export class Realtime {
     const channel = this.#deps.channels.get(channelId);
     if (!channel || channel.kind !== 'voice') return { type: 'voice:error', error: 'no_such_channel' };
 
-    const verdict = await this.#deps.channels.admit(channelId, user.id, msg.password);
+    // A channel somebody may not see does not exist, as far as they can tell.
+    if (!this.#canSeeChannel(user, channel)) return { type: 'voice:error', error: 'no_such_channel' };
+
+    const verdict = await this.#deps.channels.admit(channelId, user.id, msg.password, {
+      bypass: this.#deps.roles.context(user).admin,
+    });
     if (verdict !== 'ok') return { type: 'voice:error', error: verdict };
 
     // Leaving the previous channel first keeps "one voice channel at a time"
@@ -349,12 +360,30 @@ export class Realtime {
 
   // ------------------------------------------------------------- admin
 
+  /**
+   * May this person do something TO that person? The permission, and a higher
+   * rank: two moderators of the same rank cannot mute each other.
+   */
+  #mayModerate(user, targetId, permission) {
+    const actor = this.#deps.roles.context(user);
+    if (!actor.can(permission)) return false;
+    const target = this.#deps.accounts.byId(targetId);
+    if (!target) return true;
+    return this.#deps.roles.outranks(actor, this.#deps.roles.context(target));
+  }
+
   async #adminForceMute(user, msg) {
-    if (user.role !== 'owner' && user.role !== 'admin') {
-      return { type: 'voice:error', error: 'forbidden' };
-    }
     const channelId = Number(msg.channelId);
     const mid = Number(msg.mid);
+    // The permission first: whether a slot exists is not for the unauthorised to learn.
+    if (!this.#deps.roles.context(user).can('users.mute')) {
+      return { type: 'voice:error', error: 'forbidden' };
+    }
+    const slot = this.#deps.voice.slot(channelId, mid);
+    if (!slot) return { type: 'voice:error', error: 'no_such_member' };
+    if (!this.#mayModerate(user, slot.userId, 'users.mute')) {
+      return { type: 'voice:error', error: 'forbidden' };
+    }
     if (!this.#deps.voice.setForceMuted(channelId, mid, msg.muted)) {
       return { type: 'voice:error', error: 'no_such_member' };
     }
@@ -371,21 +400,23 @@ export class Realtime {
 
   /** Move somebody out of a voice channel, or into one. */
   async #adminMove(user, msg) {
-    if (user.role !== 'owner' && user.role !== 'admin') {
-      return { type: 'voice:error', error: 'forbidden' };
-    }
     const targetId = Number(msg.userId);
     const toId = msg.toChannelId == null ? null : Number(msg.toChannelId);
-
-    const left = this.#deps.voice.leaveAll(targetId);
-    for (const { channelId } of left) this.#broadcastRoster(channelId);
+    if (!this.#mayModerate(user, targetId, 'users.kick')) {
+      return { type: 'voice:error', error: 'forbidden' };
+    }
 
     if (toId != null) {
       const channel = this.#deps.channels.get(toId);
-      if (!channel || channel.kind !== 'voice') {
+      const target = this.#deps.accounts.byId(targetId);
+      // Where they are being sent has to be somewhere they may go.
+      if (!channel || channel.kind !== 'voice' || !target || !this.#canSeeChannel(target, channel)) {
         return { type: 'voice:error', error: 'no_such_channel' };
       }
     }
+
+    const left = this.#deps.voice.leaveAll(targetId);
+    for (const { channelId } of left) this.#broadcastRoster(channelId);
 
     // The target does the actual join, because only their client can open the
     // peer connections. Telling them where to go keeps every WHIP/WHEP session
@@ -445,21 +476,78 @@ export class Realtime {
     }
   }
 
+  /** The user rows of everybody connected, for deciding who a push is for. */
+  get connectedUsers() {
+    return [...this.#clients.values()].map((c) => c.user).filter(Boolean);
+  }
+
+  #canSeeChannel(user, channel) {
+    const groups = new Map(this.#deps.channels.groups().map((g) => [g.id, g]));
+    return this.#deps.roles.canSee(this.#deps.roles.context(user), channel, groups);
+  }
+
+  /**
+   * The roster goes to the people who can see the channel, and nobody else:
+   * who is talking in a room is as much a part of its existence as its name.
+   */
   #broadcastRoster(channelId) {
-    this.broadcast({
+    const channel = this.#deps.channels.get(channelId);
+    const payload = {
       type: 'voice:roster',
       channelId,
       roster: this.#deps.voice.roster(channelId),
-    });
+    };
+    if (!channel) return this.broadcast(payload);
+    const groups = new Map(this.#deps.channels.groups().map((g) => [g.id, g]));
+    return this.broadcastWhere(payload, (user) => this.#deps.roles.canSee(
+      this.#deps.roles.context(this.#deps.accounts.byId(user.id) ?? user), channel, groups,
+    ));
   }
 
-  /** The channel list changed: everyone needs the new one. */
+  /**
+   * What one person is shown of the channels: only the ones they may know
+   * about, with who is in each. The same shape the `channels` push and the
+   * hello carry, so a client draws all three the same way.
+   */
+  channelView(user) {
+    return channelViewFor(this.#deps, user);
+  }
+
+  /** The channel list changed: everyone needs the new one -- the part of it they may see. */
   broadcastChannels() {
-    this.broadcast({
-      type: 'channels',
-      channels: this.#deps.channels.list().map(publicChannel),
-      groups: this.#deps.channels.groups().map(publicGroup),
-    });
+    for (const [ws, client] of this.#clients) {
+      if (!client.user) continue;
+      const user = this.#deps.accounts.byId(client.user.id);
+      if (!user) continue;
+      client.user = user;
+      const { channels, groups } = this.channelView(user);
+      this.#send(ws, { type: 'channels', channels, groups });
+    }
+  }
+
+  /**
+   * Somebody's roles changed, or a channel's did: everything that was decided
+   * from them has to be decided again.
+   *
+   * Every connected person is sent the list they may now see, and anybody
+   * sitting in a voice channel they may no longer see is taken out of it --
+   * a hidden room with somebody still in it is the one way a restriction
+   * would quietly not apply.
+   */
+  refreshAccess() {
+    this.broadcastChannels();
+    for (const client of new Set(this.#clients.values())) {
+      if (!client.user) continue;
+      const { ids } = this.#deps.roles.visibleTo(
+        this.#deps.roles.context(client.user), this.#deps.channels,
+      );
+      for (const roomId of Object.keys(this.#deps.voice.occupancy()).map(Number)) {
+        if (ids.has(roomId) || !this.#deps.voice.find(roomId, client.user.id)) continue;
+        this.#deps.voice.leave(roomId, client.user.id);
+        this.#broadcastRoster(roomId);
+        this.toUser(client.user.id, { type: 'voice:moved', channelId: null, by: null });
+      }
+    }
   }
 
   /** Who is live on the flat username namespace, replacing the 3s poll. */

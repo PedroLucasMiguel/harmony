@@ -501,6 +501,149 @@ const MIGRATIONS = [
       );
     `);
   },
+  /*
+   * v16: roles.
+   *
+   * A role is a name, a colour, a set of permissions and a PLACE in one
+   * list: `position` 0 is the top of the hierarchy, and that is the whole of
+   * how roles rank against each other -- there is no separate "level" to
+   * keep in step with the order. permissions and assignable are JSON arrays
+   * (permission names, role ids): they are only ever read and written whole,
+   * and a table per list would be four joins for nothing.
+   *
+   * users.role stays what it was -- owner, admin or member. An 'admin' with
+   * no roles is the "super admin": the account that can do everything a
+   * role can, and rank above all of them. That is why the column is not
+   * folded into this table: only the owner can create one, and that is a
+   * statement about accounts, not about roles.
+   *
+   * A role restricts a channel or a group by being listed in channel_roles /
+   * group_roles. Deleting a role takes its memberships and its restrictions
+   * with it (ON DELETE CASCADE) -- and a channel whose only role was deleted
+   * becomes open, not hidden from everyone.
+   *
+   * A group may hold a password too: it is copied onto the channels inside it
+   * (see Channels.setGroupPassword), and kept here so that a channel moved
+   * into the group later gets it as well.
+   *
+   * users.banned_at: a banned account cannot sign in and has no sessions.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE roles (
+        id          INTEGER PRIMARY KEY,
+        name        TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+        color       TEXT    NOT NULL DEFAULT '#99aab5',
+        position    INTEGER NOT NULL,
+        admin       INTEGER NOT NULL DEFAULT 0,
+        permissions TEXT    NOT NULL DEFAULT '[]',
+        assignable  TEXT    NOT NULL DEFAULT '[]',
+        created_at  INTEGER NOT NULL
+      );
+
+      CREATE TABLE user_roles (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        PRIMARY KEY (user_id, role_id)
+      );
+      CREATE INDEX user_roles_role ON user_roles(role_id);
+
+      CREATE TABLE channel_roles (
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        role_id    INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        PRIMARY KEY (channel_id, role_id)
+      );
+
+      CREATE TABLE group_roles (
+        group_id INTEGER NOT NULL REFERENCES channel_groups(id) ON DELETE CASCADE,
+        role_id  INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        PRIMARY KEY (group_id, role_id)
+      );
+
+      ALTER TABLE channel_groups ADD COLUMN password_hash TEXT;
+      ALTER TABLE users ADD COLUMN banned_at INTEGER;
+    `);
+  },
+  /*
+   * v17: the colour of a display name.
+   *
+   * One JSON text, validated and re-written by accounts.js (cleanNameColor)
+   * before it is stored: a solid colour, a gradient that moves, or the
+   * rainbow. It overrides the colour of the person's highest role, and null
+   * -- the default -- leaves that in charge.
+   */
+  (db) => {
+    db.exec('ALTER TABLE users ADD COLUMN name_color TEXT');
+  },
+  /*
+   * v18: badges.
+   *
+   * A small decoration with a name, a description and a picture or an emoji,
+   * shown on somebody's profile card -- a gimmick, or a reward. Whoever may
+   * (the badges.create and badges.edit permissions, or an admin) makes them;
+   * handing one out is a different permission, and is limited to the badges a
+   * role lists in assignable_badges, as handing out roles is limited to the
+   * roles it lists.
+   *
+   * image_hash is a file already uploaded (and retained by chat, like an
+   * avatar). A badge is either that or an emoji, never neither.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE badges (
+        id          INTEGER PRIMARY KEY,
+        name        TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+        description TEXT    NOT NULL DEFAULT '',
+        emoji       TEXT,
+        image_hash  TEXT,
+        position    INTEGER NOT NULL,
+        created_at  INTEGER NOT NULL
+      );
+
+      CREATE TABLE user_badges (
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        badge_id   INTEGER NOT NULL REFERENCES badges(id) ON DELETE CASCADE,
+        awarded_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, badge_id)
+      );
+      CREATE INDEX user_badges_badge ON user_badges(badge_id);
+
+      ALTER TABLE roles ADD COLUMN assignable_badges TEXT NOT NULL DEFAULT '[]';
+    `);
+  },
+  /*
+   * v19: people let into a channel by name.
+   *
+   * A channel or group restricted to roles can also name individual people. The
+   * audience is the roles AND these people: somebody who holds one of the
+   * roles, or is listed, may see it; nobody else is told it exists. A channel
+   * with neither list is open, as before.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE channel_users (
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (channel_id, user_id)
+      );
+      CREATE TABLE group_users (
+        group_id INTEGER NOT NULL REFERENCES channel_groups(id) ON DELETE CASCADE,
+        user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (group_id, user_id)
+      );
+    `);
+  },
+  /*
+   * v20: a role's name can be a gradient or the rainbow, as a person's can.
+   *
+   * `style` is the same JSON a display name's colour is (accounts.js
+   * cleanNameColor) or null for a plain colour. `color` stays, and stays a
+   * plain #rrggbb: it is the role's colour wherever one colour is wanted -- the
+   * dot beside its name -- and the first stop of a gradient.
+   */
+  (db) => {
+    db.exec('ALTER TABLE roles ADD COLUMN style TEXT');
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

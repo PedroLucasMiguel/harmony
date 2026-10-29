@@ -53,3 +53,6 @@
 [data-icon='picture-in-picture'] { --icon: url('icons/picture-in-picture.svg'); }
 [data-icon='arrow-square-out'] { --icon: url('icons/arrow-square-out.svg'); }
 [data-icon='arrow-square-in'] { --icon: url('icons/arrow-square-in.svg'); }
+[data-icon='arrow-down'] { --icon: url('icons/arrow-down.svg'); }
+[data-icon='arrow-up'] { --icon: url('icons/arrow-up.svg'); }
+[data-icon='medal'] { --icon: url('icons/medal.svg'); }

@@ -598,7 +598,13 @@
             </header>
 
             <div id="chat-pinned" class="pinned-strip" hidden></div>
-            <div id="chat-log" class="chat-log"></div>
+            <!-- The box the log scrolls in, so the button can sit beside its scroll bar and stay put. -->
+            <div class="chat-log-wrap">
+              <div id="chat-log" class="chat-log"></div>
+              <button type="button" id="chat-to-bottom" class="chat-to-bottom" data-icon="arrow-down" hidden
+                      title="Jump to the newest messages" data-i18n-title="app.jump_to_the_newest"
+                      aria-label="Jump to the newest messages" data-i18n-aria-label="app.jump_to_the_newest"></button>
+            </div>
 
 <!--
               One box, with the controls inside it.
@@ -1033,78 +1039,274 @@
       same kind of decision.
     -->
     <dialog id="server-dialog" class="ask">
-      <form method="dialog" id="server-form">
-        <h2 data-i18n="server_form.this_server">This server</h2>
-        <label class="field">
-          <span data-i18n="server_form.name">Name</span>
-          <input id="server-name-input" type="text" maxlength="32" autocomplete="off" />
-          <small data-i18n="server_form.what_it_is_called">What it is called in the title bar, for everybody.</small>
-        </label>
-        <!--
-          The logo everybody sees beside this server in their server list.
-          Picking one only stages it -- with a preview -- and Save sends it,
-          like the name and the password beside it.
-        -->
-        <div class="field">
-          <span data-i18n="server_form.logo">Logo</span>
-          <div class="server-logo-row">
-            <span class="server-badge large" id="server-logo-preview"></span>
-            <button type="button" class="ghost small" id="server-logo-pick" data-i18n="server_logo_pick.choose_image">Choose image&hellip;</button>
-            <button type="button" class="ghost small" id="server-logo-remove" data-i18n="server_logo_remove.remove">Remove</button>
+      <!--
+        The server's own settings, laid out like Settings: a menu down the left,
+        one page at a time. Which pages exist for somebody depends on what they
+        may do (see applyServerTabs) -- the owner has all four.
+
+        Settings is about THIS MACHINE and takes effect for nobody else; every
+        page here changes the server for everybody, and most of them at once.
+      -->
+      <div class="settings-shell">
+        <nav class="settings-nav" role="tablist" aria-orientation="vertical" aria-label="Server" data-i18n-aria-label="server_admin.title">
+          <h2 data-i18n="server_form.this_server">This server</h2>
+          <button type="button" role="tab" class="settings-tab" data-tab="general" aria-selected="true">
+            <span class="settings-tab-icon" data-icon="gear-six" aria-hidden="true"></span><span data-i18n="server_admin.general">General</span>
+          </button>
+          <button type="button" role="tab" class="settings-tab" data-tab="roles" aria-selected="false">
+            <span class="settings-tab-icon" data-icon="key" aria-hidden="true"></span><span data-i18n="server_admin.roles">Roles</span>
+          </button>
+          <button type="button" role="tab" class="settings-tab" data-tab="members" aria-selected="false">
+            <span class="settings-tab-icon" data-icon="users" aria-hidden="true"></span><span data-i18n="server_admin.members">Members</span>
+          </button>
+          <button type="button" role="tab" class="settings-tab" data-tab="channels" aria-selected="false">
+            <span class="settings-tab-icon" data-icon="hash" aria-hidden="true"></span><span data-i18n="server_admin.channels">Channels</span>
+          </button>
+          <button type="button" role="tab" class="settings-tab" data-tab="badges" aria-selected="false">
+            <span class="settings-tab-icon" data-icon="medal" aria-hidden="true"></span><span data-i18n="server_admin.badges">Badges</span>
+          </button>
+        </nav>
+        <div class="settings-main">
+          <div class="settings-pages" id="server-pages">
+            <section class="settings-page" role="tabpanel" data-page="general">
+              <h3 class="settings-page-title" data-i18n="server_admin.general">General</h3>
+              <form method="dialog" id="server-form">
+              <label class="field">
+                <span data-i18n="server_form.name">Name</span>
+                <input id="server-name-input" type="text" maxlength="32" autocomplete="off" />
+                <small data-i18n="server_form.what_it_is_called">What it is called in the title bar, for everybody.</small>
+              </label>
+              <!--
+                The logo everybody sees beside this server in their server list.
+                Picking one only stages it -- with a preview -- and Save sends it,
+                like the name and the password beside it.
+              -->
+              <div class="field">
+                <span data-i18n="server_form.logo">Logo</span>
+                <div class="server-logo-row">
+                  <span class="server-badge large" id="server-logo-preview"></span>
+                  <button type="button" class="ghost small" id="server-logo-pick" data-i18n="server_logo_pick.choose_image">Choose image&hellip;</button>
+                  <button type="button" class="ghost small" id="server-logo-remove" data-i18n="server_logo_remove.remove">Remove</button>
+                </div>
+                <small data-i18n="server_form.shown_in_everybody_s">Shown in everybody's server list. Square works best; it is shrunk to 256 px.</small>
+              </div>
+              <label class="field">
+                <span data-i18n="server_form.password">Password</span>
+                <input
+                  id="server-password-input"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="Leave blank to keep it as it is" data-i18n-placeholder="server_form.leave_blank_to_keep"
+                />
+                <small id="server-password-note"></small>
+              </label>
+              <!--
+                Separate from the box above, because "I left it blank" and "I
+                want there to be no password" are different intentions and the
+                same empty box cannot mean both.
+              -->
+              <label class="check">
+                <input type="checkbox" class="switch" role="switch" id="server-password-off" />
+                <span>
+                  <span data-i18n="server_form.no_password_at_all">No password at all</span>
+                  <small data-i18n="server_form.anybody_who_can_reach">Anybody who can reach this server can use it.</small>
+                </span>
+              </label>
+              <!-- Files in chat. Hidden for a server too old to say its limits. -->
+              <div id="server-uploads">
+                <label class="field">
+                  <span data-i18n="server_uploads.largest_file">Largest file</span>
+                  <select id="server-max-file">
+                    <option value="8388608" data-i18n="server_max_file.8_mb">8 MB</option>
+                    <option value="26214400" data-i18n="server_max_file.25_mb">25 MB</option>
+                    <option value="52428800" data-i18n="server_max_file.50_mb">50 MB</option>
+                    <option value="104857600" data-i18n="server_max_file.100_mb">100 MB</option>
+                    <option value="262144000" data-i18n="server_max_file.250_mb">250 MB</option>
+                    <option value="524288000" data-i18n="server_max_file.500_mb">500 MB</option>
+                    <option value="1073741824" data-i18n="server_max_file.1_gb">1 GB</option>
+                    <option value="2147483648" data-i18n="server_max_file.2_gb">2 GB</option>
+                  </select>
+                  <small data-i18n="server_uploads.the_biggest_file_anybody">The biggest file anybody can send in a chat.</small>
+                </label>
+                <label class="field">
+                  <span data-i18n="server_uploads.space_for_files_gb">Space for files (GB)</span>
+                  <input id="server-storage" type="number" min="0.1" step="0.5" />
+                  <small id="server-storage-note"></small>
+                </label>
+              </div>
+                <p class="error" id="server-error" hidden></p>
+                <p class="muted" id="server-note" hidden></p>
+                <div class="ask-buttons">
+                  <button type="submit" class="primary" id="server-save" data-i18n="server_save.save">Save</button>
+                </div>
+              </form>
+            </section>
+
+            <!-- Roles: a list in hierarchy order, the one selected on the right. -->
+            <section class="settings-page" role="tabpanel" data-page="roles" hidden>
+              <h3 class="settings-page-title" data-i18n="server_admin.roles">Roles</h3>
+              <p class="muted" data-i18n="server_admin.roles_hint">The role at the top outranks the ones below it. The owner and super admins are above every role.</p>
+              <div class="admin-split">
+                <div class="admin-list-col">
+                  <ul class="admin-list" id="roles-list" aria-label="Roles" data-i18n-aria-label="server_admin.roles"></ul>
+                  <button type="button" class="ghost small" id="roles-new" data-i18n="server_admin.new_role">+ New role</button>
+                </div>
+                <div class="admin-editor" id="roles-editor" hidden>
+                  <label class="field">
+                    <span data-i18n="server_admin.role_name">Name</span>
+                    <input id="role-name" type="text" maxlength="32" autocomplete="off" />
+                  </label>
+                  <!-- The look of the role's name: a colour, a gradient that moves, or the rainbow. -->
+                  <div class="field">
+                    <span data-i18n="server_admin.role_color">Colour</span>
+                    <div id="role-style"></div>
+                  </div>
+                  <label class="check">
+                    <input type="checkbox" class="switch" role="switch" id="role-admin" />
+                    <span>
+                      <span data-i18n="server_admin.role_admin">Administrator</span>
+                      <small data-i18n="server_admin.role_admin_hint">Has every permission, and sees every channel.</small>
+                    </span>
+                  </label>
+                  <div id="role-permissions"></div>
+                  <div class="field" id="role-assign-field">
+                    <span data-i18n="server_admin.role_assign">Can hand out these roles</span>
+                    <div class="role-checks" id="role-assignable"></div>
+                    <small data-i18n="server_admin.role_assign_hint">Only roles below its own can be handed out.</small>
+                  </div>
+                  <div class="field" id="role-badges-field">
+                    <span data-i18n="server_admin.role_badges">Can award these badges</span>
+                    <div class="role-checks" id="role-badges"></div>
+                  </div>
+                  <p class="error" id="role-error" hidden></p>
+                  <div class="ask-buttons">
+                    <button type="button" class="ghost danger" id="role-delete" data-i18n="server_admin.delete_role">Delete role</button>
+                    <button type="button" class="primary" id="role-save" data-i18n="server_save.save">Save</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Members: who has which roles, and the moderation that goes with them. -->
+            <section class="settings-page" role="tabpanel" data-page="members" hidden>
+              <h3 class="settings-page-title" data-i18n="server_admin.members">Members</h3>
+              <input id="members-filter" type="search" autocomplete="off" placeholder="Find someone" data-i18n-placeholder="server_admin.find_someone" />
+              <div class="admin-split">
+                <ul class="admin-list" id="members-list" aria-label="Members" data-i18n-aria-label="server_admin.members"></ul>
+                <div class="admin-editor" id="members-editor" hidden>
+                  <div class="admin-subject" id="member-subject"></div>
+                  <div class="field">
+                    <span data-i18n="server_admin.member_roles">Roles</span>
+                    <div class="role-checks" id="member-roles"></div>
+                    <small id="member-roles-note"></small>
+                  </div>
+                  <div class="field" id="member-badges-field">
+                    <span data-i18n="server_admin.member_badges">Badges</span>
+                    <div class="role-checks" id="member-badges"></div>
+                  </div>
+                  <p class="error" id="member-error" hidden></p>
+                  <div class="ask-buttons" id="member-actions">
+                    <button type="button" class="ghost" id="member-kick" data-i18n="server_admin.kick">Kick</button>
+                    <button type="button" class="ghost danger" id="member-ban" data-i18n="server_admin.ban">Ban</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Channels: every channel and group, with what is behind each. -->
+            <section class="settings-page" role="tabpanel" data-page="channels" hidden>
+              <h3 class="settings-page-title" data-i18n="server_admin.channels">Channels</h3>
+              <p class="muted" data-i18n="server_admin.channels_hint">A channel in a group follows the group: its password and its roles are the group's.</p>
+              <div class="admin-split">
+                <div class="admin-list-col">
+                  <ul class="admin-list" id="chan-list" aria-label="Channels" data-i18n-aria-label="server_admin.channels"></ul>
+                  <div class="admin-add">
+                    <button type="button" class="ghost small" id="chan-new-text" data-i18n="server_admin.new_text">+ Text</button>
+                    <button type="button" class="ghost small" id="chan-new-voice" data-i18n="server_admin.new_voice">+ Voice</button>
+                    <button type="button" class="ghost small" id="chan-new-group" data-i18n="server_admin.new_group">+ Group</button>
+                  </div>
+                </div>
+                <div class="admin-editor" id="chan-editor" hidden>
+                  <div class="admin-subject" id="chan-subject"></div>
+                  <label class="field">
+                    <span data-i18n="server_admin.chan_name">Name</span>
+                    <input id="chan-name" type="text" maxlength="32" autocomplete="off" />
+                  </label>
+                  <label class="field" id="chan-group-field">
+                    <span data-i18n="server_admin.chan_group">Group</span>
+                    <select id="chan-group"></select>
+                  </label>
+                  <p class="muted" id="chan-follows" hidden></p>
+                  <label class="field" id="chan-password-field">
+                    <span data-i18n="server_form.password">Password</span>
+                    <input id="chan-password" type="password" autocomplete="new-password" />
+                    <small id="chan-password-note"></small>
+                  </label>
+                  <label class="check" id="chan-password-off-field">
+                    <input type="checkbox" class="switch" role="switch" id="chan-password-off" />
+                    <span data-i18n="server_admin.chan_no_password">Remove the password</span>
+                  </label>
+                  <div class="field" id="chan-roles-field">
+                    <span data-i18n="server_admin.chan_roles">Only these roles can see it</span>
+                    <div class="role-checks" id="chan-roles"></div>
+                    <small data-i18n="server_admin.chan_roles_hint">Nobody else is told it exists. None checked means everybody.</small>
+                  </div>
+                  <div class="field" id="chan-users-field">
+                    <span data-i18n="server_admin.chan_users">People who can see it by name</span>
+                    <div class="chan-people" id="chan-users"></div>
+                    <select id="chan-user-add" aria-label="Add a person" data-i18n-aria-label="server_admin.chan_users_add"></select>
+                  </div>
+                  <p class="error" id="chan-error" hidden></p>
+                  <div class="ask-buttons">
+                    <button type="button" class="ghost danger" id="chan-delete" data-i18n="server_admin.delete">Delete</button>
+                    <button type="button" class="primary" id="chan-save" data-i18n="server_save.save">Save</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Badges: a little reward or joke on somebody's profile card. -->
+            <section class="settings-page" role="tabpanel" data-page="badges" hidden>
+              <h3 class="settings-page-title" data-i18n="server_admin.badges">Badges</h3>
+              <p class="muted" data-i18n="server_admin.badges_hint">A badge has a name, a description and a picture or an emoji. It shows on a person's profile card, under their name. Who can hand one out is set on each role.</p>
+              <div class="admin-split">
+                <div class="admin-list-col">
+                  <ul class="admin-list" id="badges-list" aria-label="Badges" data-i18n-aria-label="server_admin.badges"></ul>
+                  <button type="button" class="ghost small" id="badges-new" data-i18n="server_admin.new_badge">+ New badge</button>
+                </div>
+                <div class="admin-editor" id="badges-editor" hidden>
+                  <div class="badge-preview" id="badge-preview"></div>
+                  <label class="field">
+                    <span data-i18n="server_admin.badge_name">Name</span>
+                    <input id="badge-name" type="text" maxlength="32" autocomplete="off" />
+                  </label>
+                  <label class="field">
+                    <span data-i18n="server_admin.badge_description">Description</span>
+                    <input id="badge-description" type="text" maxlength="200" autocomplete="off" />
+                  </label>
+                  <div class="field">
+                    <span data-i18n="server_admin.badge_picture">Picture or emoji</span>
+                    <div class="badge-picture-row">
+                      <input id="badge-emoji" type="text" maxlength="16" autocomplete="off" placeholder="🏆" aria-label="Emoji" data-i18n-aria-label="server_admin.badge_emoji" />
+                      <button type="button" class="ghost small" id="badge-image-pick" data-i18n="server_admin.badge_choose_image">Choose image…</button>
+                      <button type="button" class="ghost small" id="badge-image-remove" data-i18n="server_admin.badge_remove_image">Remove image</button>
+                    </div>
+                    <small data-i18n="server_admin.badge_picture_hint">With both, the image is shown. An image is shrunk to a small square.</small>
+                  </div>
+                  <p class="error" id="badge-error" hidden></p>
+                  <div class="ask-buttons">
+                    <button type="button" class="ghost danger" id="badge-delete" data-i18n="server_admin.delete">Delete</button>
+                    <button type="button" class="primary" id="badge-save" data-i18n="server_save.save">Save</button>
+                  </div>
+                </div>
+              </div>
+            </section>
           </div>
-          <small data-i18n="server_form.shown_in_everybody_s">Shown in everybody's server list. Square works best; it is shrunk to 256 px.</small>
+          <div class="ask-buttons settings-footer">
+            <button type="button" class="primary" id="server-cancel" data-i18n="devices_close.done">Done</button>
+          </div>
         </div>
-        <label class="field">
-          <span data-i18n="server_form.password">Password</span>
-          <input
-            id="server-password-input"
-            type="password"
-            autocomplete="new-password"
-            placeholder="Leave blank to keep it as it is" data-i18n-placeholder="server_form.leave_blank_to_keep"
-          />
-          <small id="server-password-note"></small>
-        </label>
-        <!--
-          Separate from the box above, because "I left it blank" and "I
-          want there to be no password" are different intentions and the
-          same empty box cannot mean both.
-        -->
-        <label class="check">
-          <input type="checkbox" id="server-password-off" />
-          <span>
-            <span data-i18n="server_form.no_password_at_all">No password at all</span>
-            <small data-i18n="server_form.anybody_who_can_reach">Anybody who can reach this server can use it.</small>
-          </span>
-        </label>
-        <!-- Files in chat. Hidden for a server too old to say its limits. -->
-        <div id="server-uploads">
-          <label class="field">
-            <span data-i18n="server_uploads.largest_file">Largest file</span>
-            <select id="server-max-file">
-              <option value="8388608" data-i18n="server_max_file.8_mb">8 MB</option>
-              <option value="26214400" data-i18n="server_max_file.25_mb">25 MB</option>
-              <option value="52428800" data-i18n="server_max_file.50_mb">50 MB</option>
-              <option value="104857600" data-i18n="server_max_file.100_mb">100 MB</option>
-              <option value="262144000" data-i18n="server_max_file.250_mb">250 MB</option>
-              <option value="524288000" data-i18n="server_max_file.500_mb">500 MB</option>
-              <option value="1073741824" data-i18n="server_max_file.1_gb">1 GB</option>
-              <option value="2147483648" data-i18n="server_max_file.2_gb">2 GB</option>
-            </select>
-            <small data-i18n="server_uploads.the_biggest_file_anybody">The biggest file anybody can send in a chat.</small>
-          </label>
-          <label class="field">
-            <span data-i18n="server_uploads.space_for_files_gb">Space for files (GB)</span>
-            <input id="server-storage" type="number" min="0.1" step="0.5" />
-            <small id="server-storage-note"></small>
-          </label>
-        </div>
-        <p class="error" id="server-error" hidden></p>
-        <p class="muted" id="server-note" hidden></p>
-        <div class="ask-buttons">
-          <button type="button" class="ghost" id="server-cancel" data-i18n="server_cancel.cancel">Cancel</button>
-          <button type="submit" class="primary" id="server-save" data-i18n="server_save.save">Save</button>
-        </div>
-      </form>
+      </div>
     </dialog>
 
     <!--
@@ -1350,6 +1552,28 @@
                   The fonts come with the app, so everybody sees the same one.
                 </p>
                 <p class="setting-note profile-status" id="profile-font-note" role="status"></p>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-head">
+                  <span class="setting-title" id="profile-color-title" data-i18n="settings.profile.name_color">Name colour</span>
+                </div>
+                <div class="font-grid" id="profile-color-modes" role="radiogroup" aria-labelledby="profile-color-title"></div>
+                <!-- What the chosen kind needs: its colours, and how fast it moves. -->
+                <div class="name-color-editor" id="profile-color-editor" hidden>
+                  <div class="name-color-stops" id="profile-color-stops"></div>
+                  <button type="button" class="ghost small" id="profile-color-add" data-i18n="profile.color_add">+ Add a colour</button>
+                  <label class="name-color-speed" id="profile-color-speed-row">
+                    <span data-i18n="profile.color_speed">Speed</span>
+                    <input type="range" id="profile-color-speed" />
+                    <span id="profile-color-speed-label"></span>
+                  </label>
+                </div>
+                <p class="setting-note" data-i18n="settings.profile.name_color_note">
+                  The colour of your display name for everybody on this server.
+                  It replaces the colour of your role.
+                </p>
+                <p class="setting-note profile-status" id="profile-color-note" role="status"></p>
               </div>
 
               <div class="setting-group">

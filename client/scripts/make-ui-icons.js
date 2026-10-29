@@ -36,6 +36,12 @@ const ICONS = [
   'dots-three-vertical', 'prohibit',
   // the floating stream window
   'caret-left', 'caret-right', 'picture-in-picture', 'arrow-square-out', 'arrow-square-in',
+  // the chat
+  'arrow-down',
+  // roles
+  'arrow-up',
+  // badges
+  'medal',
 ];
 
 // By path: the package's exports map hides package.json.

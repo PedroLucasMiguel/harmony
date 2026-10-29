@@ -61,8 +61,18 @@ never re-encodes it.
   60 fps or native, changeable while the camera is on.
 - **Text channels** with Markdown, attachments, reactions, custom emoji,
   mentions, pins and search.
-- **Accounts and roles**: owner, admins and members, with optional
-  password-locked channels.
+- **Accounts and roles**: the owner, "super admins" (an admin account with no
+  role, made by the owner alone) and any number of roles you define under
+  Server settings, each with a name, a colour and permissions: create, edit,
+  delete and set passwords on channels; server-mute, kick and ban; delete any
+  message; hand out other roles and manage the hierarchy; or "administrator"
+  for all of them. Roles rank by their order in the list, and nobody can act on
+  someone who ranks as high as they do, change the roles at or above their own,
+  or hand out a permission they lack. Names are drawn in the colour of their
+  highest role, in the member list (grouped by rank), chat and voice channels.
+  A channel or group can be restricted to roles, and is then invisible to
+  everybody else; a channel inside a group always follows the group's password
+  and roles. Role changes take effect the instant they are made.
 - **Runs on almost anything.** The server never decodes a frame, so a
   Raspberry Pi is plenty; upload bandwidth is the only real limit.
 

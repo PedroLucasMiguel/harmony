@@ -697,8 +697,12 @@ select:focus {
 #member-items .member-head {
   position: sticky;
   top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   background: var(--bg);
-  padding: 0.5rem 0.4rem 0.2rem;
+  padding: 0.9rem 0.4rem 0.25rem;
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -721,22 +725,20 @@ select:focus {
 #member-items .member-row {
   cursor: default;
 }
-/* Everything on this menu is permanent, and one of the entries deletes a
-   person. It should not look like the volume slider. */
-.peer-menu button.menu-item.danger {
-  color: var(--danger-soft);
-}
-.peer-menu button.menu-item.danger:hover {
-  background: rgb(var(--danger-rgb) / 0.18);
-}
 /* Offline is dimmed rather than hidden or greyscaled-to-nothing: knowing
    somebody exists and is not here is most of what the bottom half is
    for. */
-#member-items .member-row[data-off] {
-  opacity: 0.4;
-}
 #member-items .member-row[data-off] .avatar {
   filter: grayscale(1);
+  opacity: 0.45;
+}
+#member-items .member-row[data-off] .member-name:not([data-role-color]),
+#member-items .member-row[data-off] .role-tag {
+  opacity: 0.45;
+}
+/* A role's colour is how you find somebody: it is dimmed a little, not lost. */
+#member-items .member-row[data-off] .member-name[data-role-color] {
+  opacity: 0.8;
 }
 #member-items .member-name {
   min-width: 0;
@@ -1225,52 +1227,99 @@ select:focus {
 .peer-menu {
   position: fixed;
   z-index: 80;
-  min-width: 15rem;
+  min-width: 14rem;
   max-width: 20rem;
-  padding: 0.5rem;
-  border-radius: 10px;
-  border: 1px solid rgb(var(--tint-rgb) / 0.14);
-  background: var(--surface-2);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
-  font-size: 0.85rem;
+  padding: 0.35rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, var(--border));
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 0.88rem;
 }
+/* Who the menu is about: their picture and name, like the top of a profile
+   card, with a hairline under it. */
 .peer-menu-head {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.15rem 0.3rem 0.45rem;
-  border-bottom: 1px solid rgb(var(--tint-rgb) / 0.1);
-  margin-bottom: 0.4rem;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.3rem;
+}
+.peer-menu-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
 }
 .peer-menu-body {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 1px;
 }
 .peer-menu-row {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
 }
 .peer-menu-row > span:first-child {
   font-size: 0.75rem;
   opacity: 0.65;
 }
-/* Full-width rather than inline: a menu entry is a target, and a 2rem-wide
-   one beside three others is how you force-mute somebody by accident. */
-.peer-menu button.menu-item {
-  display: block;
+/*
+ * An entry is a flat row, as in the settings lists: no box of its own, an
+ * icon, and the accent on hover. Full width, because a menu entry is a target
+ * and a narrow one beside others is how you force-mute somebody by accident.
+ * (These used to be bordered buttons, which made a menu of four things look
+ * like four buttons stacked in a box.)
+ */
+.peer-menu button.ghost.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
   text-align: left;
-  padding: 0.35rem 0.45rem;
+}
+.peer-menu button.ghost.menu-item::before {
+  color: var(--muted);
+}
+.peer-menu button.ghost.menu-item:hover:not(:disabled),
+.peer-menu button.ghost.menu-item:focus-visible {
+  background: rgb(var(--accent-rgb) / 0.16);
+  outline: none;
+}
+.peer-menu button.ghost.menu-item:hover:not(:disabled)::before {
+  color: var(--accent);
+}
+.peer-menu button.ghost.menu-item.danger,
+.peer-menu button.ghost.menu-item.danger::before {
+  color: var(--danger-soft);
+}
+.peer-menu button.ghost.menu-item.danger:hover:not(:disabled) {
+  background: rgb(var(--danger-rgb) / 0.18);
+}
+.peer-menu button.ghost.menu-item.danger:hover:not(:disabled)::before {
+  color: var(--danger-soft);
+}
+.peer-menu button.ghost.menu-item[data-on] {
+  color: var(--accent);
 }
 .peer-menu select {
-  width: 100%;
+  width: calc(100% - 0.4rem);
+  margin: 0.15rem 0.2rem;
 }
 .peer-menu hr {
   border: 0;
-  border-top: 1px solid rgb(var(--tint-rgb) / 0.1);
-  margin: 0.25rem 0;
+  border-top: 1px solid var(--border);
+  margin: 0.3rem 0.2rem;
 }
 
 /* ---------- per-person volume ---------- */
@@ -1658,6 +1707,40 @@ button.danger {
   color: var(--danger-soft);
 }
 
+.chat-log-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Beside the scroll bar, above the composer, only while there is something below. */
+.chat-to-bottom {
+  position: absolute;
+  right: 1.1rem;
+  bottom: 0.7rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong, rgb(var(--tint-rgb) / 0.25));
+  background: var(--panel, #1f232c);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.4);
+  z-index: 3;
+}
+.chat-to-bottom:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.chat-to-bottom[hidden] {
+  display: none;
+}
 .chat-log {
   flex: 1;
   min-height: 0;
@@ -3385,7 +3468,8 @@ button.danger {
 }
 /* The settings dialog holds a swatch grid and three device rows, which do
    not fit the width a one-field question wants. */
-#devices {
+#devices,
+#server-dialog {
   /* Scales with the window: 48 x 36 rem is the least it is given, and it
      grows with the window up to 78 x 60 rem, where a settings page stops
      being easier to read for being wider. */
@@ -3966,7 +4050,8 @@ input.switch:focus-visible {
  * a dialog is in the top layer and does not inherit the body's padding.
  */
 @media (max-width: 640px) {
-  #devices {
+  #devices,
+  #server-dialog {
     width: 100vw;
     max-width: none;
     height: 100vh;
@@ -4377,7 +4462,7 @@ input.switch:focus-visible {
 /* A heading with no name is a bar of empty space; the row menu's head has
    only a name in it. */
 #row-menu .peer-menu-head {
-  padding-bottom: 0.35rem;
+  padding-bottom: 0.4rem;
 }
 button.tiny {
   padding: 0 0.3rem;
@@ -6845,4 +6930,625 @@ body.pip-window {
 }
 #forgot-row {
   margin-top: 0.2rem;
+}
+
+
+/* ---------- roles ---------- */
+
+/*
+ * The colour of somebody's highest role, on their name wherever it is drawn.
+ * Set from script as --role-color (nameFont in app.js). Doubled so it beats
+ * the rules that colour a name in one place -- a role's colour is meant to
+ * be the colour -- and last so nothing after it can.
+ */
+[data-role-color][data-role-color],
+#member-items .member-head [data-role-color] {
+  color: var(--role-color);
+}
+
+.settings-tab[hidden] {
+  display: none;
+}
+
+.role-dot {
+  display: inline-block;
+  flex: none;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: var(--role-color, var(--muted));
+}
+
+.role-chips {
+  display: inline-flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  min-width: 0;
+  max-height: 1.6em;
+  overflow: hidden;
+}
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0 0.5em;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* A list on the left, the thing selected on the right. */
+.admin-split {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.admin-list-col {
+  flex: 0 0 clamp(14rem, 42%, 20rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.admin-split > .admin-list {
+  flex: 0 0 clamp(14rem, 42%, 20rem);
+}
+.admin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.2rem;
+  max-height: 24rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.admin-list:empty {
+  display: none;
+}
+.admin-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.admin-item:hover {
+  background: rgb(var(--tint-rgb) / 0.06);
+}
+.admin-item[aria-selected='true'] {
+  background: rgb(var(--accent-rgb) / 0.16);
+}
+.admin-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.admin-item[data-nested] {
+  padding-left: 1.7rem;
+}
+.admin-item[data-group] {
+  font-weight: 600;
+}
+.admin-item[data-banned] .admin-item-name {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.admin-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-kind,
+.admin-lock {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+}
+.admin-item .icon-only {
+  flex: none;
+}
+.admin-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.admin-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.admin-editor[hidden] {
+  display: none;
+}
+.admin-subject {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+}
+.admin-editor .ask-buttons {
+  margin-top: 0.3rem;
+}
+.role-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.role-color-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.role-color-row input[type='color'] {
+  width: 2.6rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+}
+.role-color-row input[type='text'] {
+  width: 7rem;
+  font-family: ui-monospace, monospace;
+}
+#members-filter {
+  width: 100%;
+  margin-bottom: 0.7rem;
+}
+@media (max-width: 640px) {
+  .admin-split {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin-list-col,
+  .admin-split > .admin-list {
+    flex: none;
+  }
+}
+
+
+/* ---------- the profile card ---------- */
+
+.profile-card {
+  position: fixed;
+  z-index: 60;
+  width: min(20rem, calc(100vw - 16px));
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.profile-card[hidden] {
+  display: none;
+}
+.profile-card-banner {
+  position: relative;
+  height: 6.2rem;
+  background: var(--banner, rgb(var(--accent-rgb) / 0.35));
+}
+.profile-card-banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.profile-card-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.35rem;
+}
+.profile-card-actions .icon-only {
+  background: rgba(0, 0, 0, 0.55);
+}
+.avatar.profile-card-avatar {
+  position: absolute;
+  top: 3.6rem;
+  left: 0.9rem;
+  font-size: 2.6em;
+  margin: 0;
+  border: 4px solid var(--surface);
+  box-sizing: content-box;
+  overflow: visible;
+}
+.profile-card-status {
+  position: absolute;
+  right: -0.15em;
+  bottom: -0.1em;
+  width: 0.32em;
+  height: 0.32em;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--muted);
+  box-sizing: content-box;
+}
+.profile-card-status[data-online] {
+  background: #3ba55d;
+}
+.profile-card-body {
+  padding: 3.2rem 1rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.profile-card-name {
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+.profile-card-handle,
+.profile-card-since {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.profile-card-roles {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+.profile-card-label {
+  margin-bottom: 0.4rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.profile-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.profile-card-chips .role-chip {
+  padding: 0.1em 0.55em;
+  font-size: 0.8rem;
+  color: var(--text);
+  background: rgb(var(--tint-rgb) / 0.06);
+}
+.profile-card-chip-x,
+.profile-card-add {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  cursor: pointer;
+}
+.profile-card-chip-x {
+  padding: 0;
+  background: none;
+  color: var(--muted);
+}
+.profile-card-chip-x:hover {
+  color: var(--text);
+}
+.profile-card-add {
+  color: var(--muted);
+}
+.profile-card-none {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.profile-card-pick {
+  display: flex;
+  flex-direction: column;
+  margin-top: 0.4rem;
+  padding: 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+.profile-card-note:empty,
+.profile-card-note[hidden] {
+  display: none;
+}
+
+/* Something you can click on opens the card. */
+[data-profile-user] {
+  cursor: pointer;
+}
+
+/* A role's section: its colour as a dot before the name, and the count pushed
+   to the end so the names of the roles line up. The first heading needs no
+   room above it. */
+#member-items .member-head[data-dot]::before {
+  content: '';
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--dot);
+}
+#member-items > .member-head:first-child {
+  padding-top: 0.3rem;
+}
+
+
+/* ---------- a name's own colour ---------- */
+
+/*
+ * A gradient that moves, or the rainbow: the text is a window onto a
+ * background wider than itself, slid along by one whole width per cycle. The
+ * gradient starts and ends on the same colour (name-color.js), so the loop has
+ * no seam. --name-gradient and --name-speed are set from script.
+ */
+[data-name-style] {
+  background-image: var(--name-gradient);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: name-flow var(--name-speed, 6s) linear infinite;
+}
+[data-name-style='rainbow'] {
+  --name-gradient: linear-gradient(
+    90deg, #ff4d4d, #ffa64d, #ffe14d, #5ce65c, #4dd2ff, #6b7bff, #c04dff, #ff4d4d
+  );
+}
+@keyframes name-flow {
+  to {
+    background-position: 200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-name-style] {
+    animation: none;
+  }
+}
+
+.name-color-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 0.7rem 0 0.2rem;
+}
+.name-color-editor[hidden] {
+  display: none;
+}
+.name-color-stops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.name-color-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.name-color-stop input[type='color'] {
+  width: 2.6rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+}
+.name-color-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.name-color-speed[hidden] {
+  display: none;
+}
+.name-color-speed input[type='range'] {
+  width: 10rem;
+}
+.name-color-speed span {
+  white-space: nowrap;
+}
+
+
+/* ---------- badges ---------- */
+
+/* A badge: its picture or its emoji, in a square. */
+.badge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+  line-height: 1;
+}
+.badge-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.badge-icon.small {
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 1.15rem;
+}
+.badge-icon.large {
+  width: 4.5rem;
+  height: 4.5rem;
+  font-size: 3.4rem;
+}
+
+/* Under the name on the profile card. */
+.profile-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+.profile-card-badge {
+  display: inline-flex;
+  padding: 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgb(var(--tint-rgb) / 0.06);
+  cursor: help;
+}
+.profile-card-badge:hover,
+.profile-card-badge:focus-visible {
+  border-color: var(--accent);
+}
+
+/* What a badge is, over the badge. */
+.badge-tip {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  width: 13rem;
+  padding: 0.9rem 0.8rem;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.badge-tip[hidden] {
+  display: none;
+}
+.badge-tip strong {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.badge-tip span:last-child:not(.badge-icon) {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* The editor's own preview, and the picture row. */
+.badge-preview {
+  display: flex;
+  justify-content: center;
+  padding: 0.6rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.badge-picture-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.badge-picture-row input[type='text'] {
+  width: 5rem;
+  text-align: center;
+}
+
+
+/* ---------- the server dialog's editors ---------- */
+
+/* The thing being edited is a card, as a group on a Settings page is. */
+#server-dialog .admin-editor {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+#server-dialog .admin-editor[hidden] {
+  display: none;
+}
+#server-dialog .admin-subject {
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* A yes-or-no is a row with the switch at the end, as in Settings: what it is
+   on the left, the switch on the right. */
+#server-dialog .check {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.88rem;
+}
+#server-dialog .check input.switch {
+  margin: 0;
+}
+
+/* A list of them is one bordered block with a hairline between the rows. */
+#server-dialog .role-checks,
+#role-permissions .field {
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+#role-permissions .field {
+  margin-bottom: 0.7rem;
+}
+#server-dialog .role-checks > .check,
+#role-permissions .field > .check {
+  padding: 0.55rem 0.8rem;
+}
+#server-dialog .role-checks > .check + .check,
+#role-permissions .field > .check {
+  border-top: 1px solid var(--border);
+}
+/* The title of a group of permissions sits on its own band. */
+#role-permissions .field > span:first-child {
+  padding: 0.45rem 0.8rem;
+  background: rgb(var(--tint-rgb) / 0.04);
+}
+
+.chan-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.chan-people:empty {
+  display: none;
+}
+.chan-person {
+  gap: 0.35rem;
+}
+
+.role-style {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.role-style-preview {
+  padding: 0.5rem 0.8rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 1.05rem;
+}
+.role-style .name-color-editor {
+  margin: 0;
+}
+.role-color-hex {
+  width: 7rem;
+  font-family: ui-monospace, monospace;
+}
+.role-style .font-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.role-style .font-choice {
+  padding: 0.4rem 0.3rem;
+  font-size: 0.85rem;
+}
+.role-style .name-color-speed {
+  flex-wrap: wrap;
+}
+.role-style .name-color-speed input[type='range'] {
+  width: 7rem;
+}
+#server-dialog .settings-pages {
+  overflow-x: hidden;
 }

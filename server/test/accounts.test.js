@@ -323,14 +323,16 @@ describe('roles', () => {
   });
 
   /*
-   * An admin may hand out admin and nothing else.
+   * Only the owner makes or unmakes an admin -- a "super admin", the one
+   * account nothing about which a role can limit.
    *
-   * The asymmetry is the point: trusting somebody enough to let them in is
-   * a smaller decision than being able to throw out the person who trusted
-   * you. With symmetric powers any two admins can demote each other and the
-   * first to click wins, which turns a falling-out into a race.
+   * It used to be that an admin could hand admin out and not take it away.
+   * Roles changed that: a super admin outranks every role, so being able to
+   * make another is being able to make something that outranks the people
+   * who gave you the job. With symmetric powers any two of them could also
+   * demote each other and the first to click would win.
    */
-  describe('an admin can promote but not demote', () => {
+  describe('an admin cannot promote or demote anybody', () => {
     let adminToken;
     let carolId;
 
@@ -360,20 +362,23 @@ describe('roles', () => {
       carolId = roster.body.users.find((u) => u.nickname === 'carol').id;
     });
 
-    it('lets an admin promote a member', async () => {
+    it('does not let an admin make another admin', async () => {
       const res = await api(`/api/accounts/${carolId}/role`, {
         method: 'POST', body: { role: 'admin' }, token: adminToken,
       });
-      assert.equal(res.status, 200);
-      assert.equal(res.body.user.role, 'admin');
+      assert.equal(res.status, 403);
+      assert.equal(res.body.error, 'forbidden');
     });
 
     it('does not let an admin demote another admin', async () => {
+      await api(`/api/accounts/${carolId}/role`, {
+        method: 'POST', body: { role: 'admin' }, token: ownerToken,
+      });
       const res = await api(`/api/accounts/${carolId}/role`, {
         method: 'POST', body: { role: 'member' }, token: adminToken,
       });
       assert.equal(res.status, 403);
-      assert.equal(res.body.error, 'owner_only');
+      assert.equal(res.body.error, 'forbidden');
     });
 
     it('does not let an admin appoint an owner', async () => {
@@ -381,10 +386,10 @@ describe('roles', () => {
         method: 'POST', body: { role: 'owner' }, token: adminToken,
       });
       assert.equal(res.status, 403);
-      assert.equal(res.body.error, 'owner_only');
+      assert.equal(res.body.error, 'forbidden');
     });
 
-    it('lets the owner take admin away again', async () => {
+    it('lets the owner make and unmake one', async () => {
       const res = await api(`/api/accounts/${carolId}/role`, {
         method: 'POST', body: { role: 'member' }, token: ownerToken,
       });

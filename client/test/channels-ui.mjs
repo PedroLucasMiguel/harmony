@@ -275,11 +275,11 @@ async function run() {
     };
   `);
   check(
-    'right-clicking a channel offers rename and delete, and moving it for those who cannot drag',
+    'right-clicking a channel offers Edit (which opens the Channels page) and delete, and moving it for those who cannot drag',
     rowMenu.name === '#general'
-      && rowMenu.items.includes('Rename or set a password')
+      && rowMenu.items.includes('Edit…')
       && rowMenu.items.includes('Delete this channel')
-      && rowMenu.items.every((i) => ['Move up', 'Move down', 'Rename or set a password', 'Delete this channel'].includes(i)),
+      && rowMenu.items.every((i) => ['Move up', 'Move down', 'Edit…', 'Delete this channel'].includes(i)),
     `${rowMenu.name}: ${rowMenu.items.join(', ')}`,
   );
   await cdp.evaluate(`

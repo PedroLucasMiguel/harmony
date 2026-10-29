@@ -46,6 +46,17 @@ const MAX_DISPLAY_NAME = 32;
 const ROLES = ['owner', 'admin', 'member'];
 
 /**
+ * The ids of the roles an account holds, as one comma-separated column.
+ *
+ * Carried on every account row so that publicUser can say which roles
+ * somebody has without a second query per person. It is only for DRAWING:
+ * what somebody is allowed to do is decided by Roles.context, which asks
+ * the database again each time rather than trusting a row that may be old.
+ */
+const BADGE_IDS = '(SELECT group_concat(badge_id) FROM user_badges WHERE user_id = users.id) AS badge_ids';
+const ROLE_IDS = '(SELECT group_concat(role_id) FROM user_roles WHERE user_id = users.id) AS role_ids';
+
+/**
  * "Pedro Lucas" is accepted and stored as `pedrolucas` -- the nickname becomes
  * a MediaMTX path and part of a URL, so it cannot keep the capitals or the
  * space, but there is no reason to make someone discover that by being
@@ -127,6 +138,48 @@ export const NAME_FONTS = [
   'caveat', 'fredoka', 'cinzel', 'typewriter', 'marker',
 ];
 
+/**
+ * The colour of a display name: null, or one of
+ *
+ *   {mode: 'solid',    color: '#rrggbb'}
+ *   {mode: 'gradient', colors: ['#rrggbb', ...2 to 4], speed: seconds}
+ *   {mode: 'rainbow',  speed: seconds}
+ *
+ * Returns the normalised value to store, `null` for "none", or `undefined`
+ * when the input is not one of those -- so a bad value is refused rather than
+ * quietly turned into something else. The colours are the six-digit form
+ * only, and the speed a number in a fixed range: every client builds its CSS
+ * from these, so nothing free-form may reach it.
+ */
+export const NAME_COLOR_SPEED = { min: 1, max: 30, fallback: 6 };
+const NAME_COLOR_RE = /^#[0-9a-f]{6}$/i;
+
+export function cleanNameColor(input) {
+  if (input == null || input === '') return null;
+  if (typeof input !== 'object') return undefined;
+  const speedOf = (raw) => {
+    if (raw === undefined || raw === null) return NAME_COLOR_SPEED.fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return undefined;
+    return Math.min(NAME_COLOR_SPEED.max, Math.max(NAME_COLOR_SPEED.min, Math.round(n * 10) / 10));
+  };
+  if (input.mode === 'solid') {
+    return NAME_COLOR_RE.test(String(input.color)) ? { mode: 'solid', color: String(input.color).toLowerCase() } : undefined;
+  }
+  if (input.mode === 'gradient') {
+    if (!Array.isArray(input.colors) || input.colors.length < 2 || input.colors.length > 4) return undefined;
+    if (!input.colors.every((c) => NAME_COLOR_RE.test(String(c)))) return undefined;
+    const speed = speedOf(input.speed);
+    if (speed === undefined) return undefined;
+    return { mode: 'gradient', colors: input.colors.map((c) => String(c).toLowerCase()), speed };
+  }
+  if (input.mode === 'rainbow') {
+    const speed = speedOf(input.speed);
+    return speed === undefined ? undefined : { mode: 'rainbow', speed };
+  }
+  return undefined;
+}
+
 export class Accounts {
   #db;
   #q;
@@ -134,8 +187,8 @@ export class Accounts {
   constructor(db) {
     this.#db = db;
     this.#q = {
-      byNickname: db.prepare('SELECT * FROM users WHERE nickname = ?'),
-      byId: db.prepare('SELECT * FROM users WHERE id = ?'),
+      byNickname: db.prepare(`SELECT users.*, ${ROLE_IDS}, ${BADGE_IDS} FROM users WHERE nickname = ?`),
+      byId: db.prepare(`SELECT users.*, ${ROLE_IDS}, ${BADGE_IDS} FROM users WHERE id = ?`),
       insert: db.prepare(
         'INSERT INTO users (nickname, password_hash, role, created_at) VALUES (?, ?, ?, ?)',
       ),
@@ -147,9 +200,10 @@ export class Accounts {
       setBanner: db.prepare('UPDATE users SET banner_hash = ? WHERE id = ?'),
       setJoinSound: db.prepare('UPDATE users SET join_sound_hash = ? WHERE id = ?'),
       setNameFont: db.prepare('UPDATE users SET name_font = ? WHERE id = ?'),
+      setNameColor: db.prepare('UPDATE users SET name_color = ? WHERE id = ?'),
       list: db.prepare(
         'SELECT id, nickname, display_name, role, avatar_hash, name_font, banner_hash, '
-        + 'join_sound_hash, created_at '
+        + `join_sound_hash, name_color, created_at, banned_at, ${ROLE_IDS}, ${BADGE_IDS} `
         + 'FROM users ORDER BY nickname',
       ),
 
@@ -157,7 +211,8 @@ export class Accounts {
         'INSERT INTO sessions (token_hash, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)',
       ),
       findSession: db.prepare(
-        'SELECT u.*, s.token_hash FROM sessions s JOIN users u ON u.id = s.user_id '
+        `SELECT u.*, s.token_hash, ${ROLE_IDS.replace(/users\./g, 'u.')}, ${BADGE_IDS.replace(/users\./g, 'u.')} `
+        + 'FROM sessions s JOIN users u ON u.id = s.user_id '
         + 'WHERE s.token_hash = ?',
       ),
       touchSession: db.prepare('UPDATE sessions SET last_seen = ? WHERE token_hash = ?'),
@@ -305,6 +360,10 @@ export class Accounts {
     if (!token) return null;
     const row = this.#q.findSession.get(tokenHash(token));
     if (!row) return null;
+    // A ban drops the sessions it finds, but a session issued in the instant
+    // between the check and the ban would outlive it -- so the ban is also
+    // checked here, on every use.
+    if (row.banned_at) return null;
     this.#q.touchSession.run(Date.now(), row.token_hash);
     return row;
   }
@@ -318,6 +377,25 @@ export class Accounts {
   /** Drop sessions nobody has used in a while. Called on a timer. */
   expireSessions(maxIdleMs) {
     this.#q.expireSessions.run(Date.now() - maxIdleMs);
+  }
+
+  /** Sign somebody out of every device, without touching the account. */
+  dropSessions(userId) {
+    this.#q.dropUserSessions.run(userId);
+  }
+
+  /**
+   * Ban an account, or lift the ban. A banned account keeps everything it
+   * wrote -- the ban is about getting in, not about the past -- and loses
+   * its sessions at once.
+   */
+  setBanned(userId, banned) {
+    const user = this.#q.byId.get(userId);
+    if (!user) return { ok: false, error: 'no_such_user' };
+    this.#db.prepare('UPDATE users SET banned_at = ? WHERE id = ?')
+      .run(banned ? Date.now() : null, userId);
+    if (banned) this.#q.dropUserSessions.run(userId);
+    return { ok: true, user: this.#q.byId.get(userId) };
   }
 
   setRole(userId, role) {
@@ -461,6 +539,16 @@ export class Accounts {
     return { ok: true, previous: user.join_sound_hash ?? null, user: this.#q.byId.get(userId) };
   }
 
+  /** A name colour (see cleanNameColor), or null/'' to go back to the role's. */
+  setNameColor(userId, input) {
+    const user = this.#q.byId.get(userId);
+    if (!user) return { ok: false, error: 'no_such_user' };
+    const value = cleanNameColor(input);
+    if (value === undefined) return { ok: false, error: 'bad_name_color' };
+    this.#q.setNameColor.run(value === null ? null : JSON.stringify(value), userId);
+    return { ok: true, user: this.#q.byId.get(userId) };
+  }
+
   /** One of NAME_FONTS, or null/'' for the default. Anything else is refused. */
   setNameFont(userId, font) {
     const user = this.#q.byId.get(userId);
@@ -481,8 +569,20 @@ export const publicUser = (u) => (u ? {
   displayName: u.display_name || u.nickname,
   customName: Boolean(u.display_name),
   role: u.role,
+  // The roles they hold, by id. In no particular order: the hierarchy is
+  // the roles list's order, and whoever draws this has that list.
+  roles: u.role_ids
+    ? String(u.role_ids).split(',').map(Number).sort((a, b) => a - b)
+    : [],
+  banned: Boolean(u.banned_at),
+  // The badges they hold, by id; the badges list says what each one is.
+  badges: u.badge_ids ? String(u.badge_ids).split(',').map(Number).sort((a, b) => a - b) : [],
   avatarHash: u.avatar_hash ?? null,
   nameFont: u.name_font ?? null,
+  // Parsed back out of what cleanNameColor stored; null leaves the role in charge.
+  nameColor: (() => {
+    try { return u.name_color ? JSON.parse(u.name_color) : null; } catch { return null; }
+  })(),
   bannerHash: u.banner_hash ?? null,
   joinSoundHash: u.join_sound_hash ?? null,
   createdAt: u.created_at,

@@ -14,7 +14,7 @@ import { MediaMtxMonitor } from './mediamtx-api.js';
 import { Rooms, normalizeUsername, normalizePath } from './rooms.js';
 import { ensureDataDir, openDatabase, meta } from './db.js';
 import { ServerSettings } from './server-settings.js';
-import { Accounts, NAME_FONTS, claimOwner, ensureOwnerToken, publicUser } from './accounts.js';
+import { Accounts, NAME_FONTS, NAME_COLOR_SPEED, claimOwner, ensureOwnerToken, publicUser } from './accounts.js';
 import { wavSeconds } from './wav.js';
 import {
   Channels,
@@ -29,6 +29,9 @@ import {
   MEDIA_KINDS,
 } from './channels.js';
 import { Realtime } from './realtime.js';
+import { Roles, channelViewFor } from './roles.js';
+import { mountBadges, mountRoles } from './roles-routes.js';
+import { Badges } from './badges.js';
 import { mintMediaKey, verifyMediaKey } from './media-keys.js';
 import {
   Chat, Soundpad, Emojis,
@@ -78,6 +81,8 @@ const metaStore = meta(db);
 const accounts = new Accounts(db);
 ensureOwnerToken(accounts, metaStore);
 
+const roles = new Roles(db);
+const badges = new Badges(db);
 const channels = new Channels(db);
 const voice = new VoiceRooms();
 const mediaSecret = channelSecret(metaStore);
@@ -411,6 +416,15 @@ app.post('/api/accounts/login', async (req, res) => {
   }
   loginLimiter.succeed(nickname);
 
+  // After the password, not before: telling somebody they are banned before
+  // they have proved they are who they say is a way to learn who is.
+  if (user.banned_at) {
+    return res.status(403).json({
+      error: 'banned',
+      message: 'This account has been banned from the server.',
+    });
+  }
+
   const becameOwner = req.body?.ownerKey
     ? claimOwner(accounts, metaStore, user.id, req.body.ownerKey)
     : false;
@@ -601,6 +615,26 @@ app.post('/api/accounts/join-sound', requireLogin, (req, res) => setProfileFile(
   },
 }));
 
+/**
+ * The colour of your display name: a solid colour, a gradient that moves, or
+ * the rainbow -- or null to go back to the colour of your highest role. See
+ * cleanNameColor for the exact shapes; anything else is refused.
+ */
+app.post('/api/accounts/name-color', requireLogin, (req, res) => {
+  const result = accounts.setNameColor(req.user.id, req.body?.nameColor);
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.error,
+      message: result.error === 'bad_name_color'
+        ? `A colour is #rrggbb; a gradient takes 2 to 4 of them; the speed is ${NAME_COLOR_SPEED.min}-${NAME_COLOR_SPEED.max} seconds.`
+        : 'No such user.',
+    });
+  }
+  const user = publicUser(result.user);
+  realtime?.broadcast({ type: 'user:updated', user });
+  return res.json({ user });
+});
+
 /** Your display name's font: one of a fixed list, or null for the default. */
 app.post('/api/accounts/name-font', requireLogin, (req, res) => {
   const result = accounts.setNameFont(req.user.id, req.body?.font);
@@ -644,39 +678,20 @@ app.get('/api/accounts', requireLogin, (_req, res) => {
 });
 
 /**
- * Change somebody's role.
+ * Change somebody's ACCOUNT role: owner, "super admin" (users.role 'admin') or
+ * member. Nothing to do with the roles in roles.js, which are handed out by
+ * POST /api/accounts/:id/roles.
  *
- * An admin may hand out admin, and that is all. Only the owner may take it
- * away, and only the owner may make another owner.
- *
- * The asymmetry is deliberate and is the usual shape for this: trusting
- * someone enough to let them in is a smaller decision than being able to
- * throw out the person who trusted you. With symmetric powers any two
- * admins can demote each other, and the first one to click wins -- which
- * turns a falling-out between friends into an irreversible race.
- *
- * Enforced here rather than by hiding the control, because the control
- * being hidden is a statement about one client's UI and this is a statement
- * about the server.
+ * The owner's alone. A super admin is an account nothing about which a role
+ * can limit, so the only person who may make one is the person nobody can
+ * limit either -- and, with symmetric powers, any two super admins could
+ * demote each other and the first to click would win. Enforced here rather
+ * than by hiding the control, because the control being hidden is a
+ * statement about one client's UI and this is a statement about the server.
  */
-app.post('/api/accounts/:id/role', requireRole('owner', 'admin'), (req, res) => {
+app.post('/api/accounts/:id/role', requireRole('owner'), (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   const role = String(req.body?.role ?? '');
-
-  if (req.user.role !== 'owner') {
-    const target = accounts.byId(id);
-    if (!target) {
-      return res.status(400).json({ error: 'no_such_user', message: 'No such user.' });
-    }
-    // Promotion only, to admin only, and only from member -- which also
-    // stops an admin demoting themselves into a server with no admins.
-    if (role !== 'admin' || target.role !== 'member') {
-      return res.status(403).json({
-        error: 'owner_only',
-        message: 'Only the owner can remove an admin or appoint another owner.',
-      });
-    }
-  }
 
   const result = accounts.setRole(id, role);
   if (!result.ok) {
@@ -689,6 +704,8 @@ app.post('/api/accounts/:id/role', requireRole('owner', 'admin'), (req, res) => 
   }
   const user = publicUser(result.user);
   realtime?.broadcast({ type: 'user:updated', user });
+  // A super admin sees every channel; a demoted one stops.
+  realtime?.refreshAccess();
   return res.json({ user });
 });
 
@@ -736,6 +753,11 @@ app.post('/api/accounts/:id/delete', requireRole('owner'), (req, res) => {
   console.warn(`[accounts] ${target.nickname} removed by ${req.user.nickname}, `
     + `${result.messages} messages deleted`);
   return res.json({ ok: true, messages: result.messages });
+});
+
+mountRoles(app, { requireLogin, roles, accounts, realtime: () => realtime });
+mountBadges(app, {
+  requireLogin, roles, badges, accounts, chat, mediaTypeOf, maxImageBytes: MAX_AVATAR_BYTES, realtime: () => realtime,
 });
 
 // ---------------------------------------------------------------------------
@@ -1043,48 +1065,118 @@ app.post('/api/session/release', (req, res) => {
 // Channels
 // ---------------------------------------------------------------------------
 
+/** Owner, super admin, or somebody whose role says admin. */
 const requireAdmin = (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'login_required', message: 'Log in first.' });
-  if (req.user.role !== 'owner' && req.user.role !== 'admin') {
+  if (!roles.context(req.user).admin) {
     return res.status(403).json({ error: 'forbidden', message: 'Admins only.' });
   }
   return next();
 };
 
+/** The same, asked inside a route that needs several answers. */
+const may = (req, permission) => roles.context(req.user).can(permission);
+const forbid = (res) => res.status(403).json({ error: 'forbidden', message: 'You do not have permission.' });
+
 app.get('/api/channels', requireLogin, (req, res) => {
+  const view = channelViewFor({ roles, channels, voice }, req.user);
+  const holdsEveryKey = roles.context(req.user).admin;
   res.json({
-    channels: channels.list().map((c) => ({
-      ...publicChannel(c),
+    channels: view.channels.map((c) => ({
+      ...c,
       // So the client can show "you will not be asked again" rather than a
-      // padlock on a channel this person already unlocked.
-      unlocked: !c.password_hash || channels.hasGrant(c.id, req.user.id),
+      // padlock on a channel this person already unlocked. An admin has every
+      // key, so for them nothing is locked.
+      unlocked: !c.locked || holdsEveryKey || channels.hasGrant(c.id, req.user.id),
     })),
-    groups: channels.groups().map(publicGroup),
-    occupancy: voice.occupancy(),
+    groups: view.groups,
+    occupancy: view.occupancy,
     // Derived from open sockets, never stored. Empty when the realtime
     // layer is not up, which is honest: with no sockets nobody is online.
     online: realtime?.onlineUserIds() ?? [],
     // Same payload the WebSocket hello carries, so the read-only fallback
     // path the client uses when the socket is down shows the same sidebar.
-    rosters: voice.allRosters(),
+    rosters: view.rosters,
   });
 });
 
-app.post('/api/channels', requireAdmin, async (req, res) => {
+/*
+ * Who may do what to channels, by permission:
+ *
+ *   channels.create    a channel or a group
+ *   channels.edit      rename, move, restrict to roles
+ *   channels.password  put a password on a channel or a group, or take it off
+ *   channels.delete    delete a channel or a group
+ *
+ * Owner, super admins and admin roles have all of them. A channel somebody
+ * cannot see does not exist for them, so editing one is a 404, not a 403:
+ * "forbidden" would tell them it is there.
+ */
+const CHANNEL_ERRORS = {
+  invalid_kind: 'A channel is either voice or text.',
+  invalid_name: 'Give it a name of 1-32 characters.',
+  no_such_channel: 'No such channel.',
+  no_such_group: 'No such group.',
+  no_such_role: 'That role does not exist any more.',
+  no_such_user: 'That person does not exist any more.',
+  follows_group: 'A channel inside a group follows the group: change it there.',
+};
+
+const channelFailure = (res, error) => res.status(error?.startsWith('no_such') ? 404 : 400)
+  .json({ error, message: CHANNEL_ERRORS[error] });
+
+/** Whether this caller may know that a channel or group is there at all. */
+const visibleChannel = (req, id) => {
+  const channel = channels.get(id);
+  if (!channel) return null;
+  const byId = new Map(channels.groups().map((g) => [g.id, g]));
+  return roles.canSee(roles.context(req.user), channel, byId) ? channel : null;
+};
+const visibleGroup = (req, id) => {
+  const group = channels.group(id);
+  return group && roles.canSeeGroup(roles.context(req.user), group) ? group : null;
+};
+
+/** What changed about who can see what: everybody gets the list they may see. */
+const channelsChanged = () => realtime?.refreshAccess();
+
+app.post('/api/channels', requireLogin, async (req, res) => {
+  if (!may(req, 'channels.create')) return forbid(res);
+  // A password or roles on the new channel are the two other permissions.
+  if (req.body?.password && !may(req, 'channels.password')) return forbid(res);
+  if ((req.body?.roles?.length || req.body?.users?.length) && !may(req, 'channels.edit')) return forbid(res);
+
+  // Inside a group: only a group the caller may see, and its own settings
+  // are the group's (see Channels.create).
+  const groupId = req.body?.groupId ?? null;
+  if (groupId != null && !visibleGroup(req, Number(groupId))) return channelFailure(res, 'no_such_group');
+
   const result = await channels.create({
     kind: req.body?.kind,
     name: req.body?.name,
     password: req.body?.password,
+    groupId,
   });
-  if (!result.ok) {
-    const messages = {
-      invalid_kind: 'A channel is either voice or text.',
-      invalid_name: 'Give it a name of 1-32 characters.',
-    };
-    return res.status(400).json({ error: result.error, message: messages[result.error] });
+  if (!result.ok) return channelFailure(res, result.error);
+
+  if (groupId == null && Array.isArray(req.body?.roles) && req.body.roles.length) {
+    const restricted = channels.setRoles(result.channel.id, req.body.roles);
+    if (!restricted.ok) {
+      // Not left open: a channel that was meant to be private and was
+      // created public because of a bad role id is a leak.
+      channels.remove(result.channel.id);
+      return channelFailure(res, restricted.error);
+    }
   }
-  realtime?.broadcastChannels();
-  return res.status(201).json({ channel: publicChannel(result.channel) });
+  if (groupId == null && Array.isArray(req.body?.users) && req.body.users.length) {
+    const named = channels.setUsers(result.channel.id, req.body.users);
+    if (!named.ok) {
+      channels.remove(result.channel.id);
+      return channelFailure(res, named.error);
+    }
+  }
+  channelsChanged();
+  return res.status(201).json({ channel: publicChannel(channels.get(result.channel.id)) });
 });
 
 // Registered BEFORE /api/channels/:id on purpose. Express matches routes in
@@ -1092,26 +1184,62 @@ app.post('/api/channels', requireAdmin, async (req, res) => {
 // /api/channels/reorder is matched by /:id with id="reorder", parsed as NaN,
 // and answered "no such channel" -- a 400 that looks like a validation bug and
 // is really a routing one.
-app.post('/api/channels/groups', requireAdmin, (req, res) => {
+app.post('/api/channels/groups', requireLogin, async (req, res) => {
+  if (!may(req, 'channels.create')) return forbid(res);
+  if (req.body?.password && !may(req, 'channels.password')) return forbid(res);
+  if ((req.body?.roles?.length || req.body?.users?.length) && !may(req, 'channels.edit')) return forbid(res);
+
   const result = channels.createGroup(req.body?.name);
-  if (!result.ok) {
-    return res.status(400).json({ error: result.error, message: 'Give the group a name.' });
+  if (!result.ok) return channelFailure(res, result.error);
+  const id = result.group.id;
+
+  if (Array.isArray(req.body?.roles) && req.body.roles.length) {
+    const restricted = channels.setGroupRoles(id, req.body.roles);
+    if (!restricted.ok) {
+      channels.removeGroup(id);
+      return channelFailure(res, restricted.error);
+    }
   }
-  realtime?.broadcastChannels();
-  return res.status(201).json({ group: publicGroup(result.group) });
+  if (Array.isArray(req.body?.users) && req.body.users.length) {
+    const named = channels.setGroupUsers(id, req.body.users);
+    if (!named.ok) {
+      channels.removeGroup(id);
+      return channelFailure(res, named.error);
+    }
+  }
+  if (req.body?.password) await channels.setGroupPassword(id, req.body.password);
+  channelsChanged();
+  return res.status(201).json({ group: publicGroup(channels.group(id)) });
 });
 
-app.post('/api/channels/groups/:id', requireAdmin, (req, res) => {
-  const result = channels.renameGroup(Number.parseInt(req.params.id, 10), req.body?.name);
-  if (!result.ok) {
-    const messages = {
-      no_such_group: 'No such group.',
-      invalid_name: 'Give the group a name.',
-    };
-    return res.status(400).json({ error: result.error, message: messages[result.error] });
+app.post('/api/channels/groups/:id', requireLogin, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!visibleGroup(req, id)) return channelFailure(res, 'no_such_group');
+
+  // Each field needs its own permission, and nothing is changed until all of
+  // them have been checked -- half an edit is worse than a refused one.
+  const wantsName = req.body?.name !== undefined;
+  const wantsRoles = req.body?.roles !== undefined;
+  const wantsUsers = req.body?.users !== undefined;
+  const wantsPassword = req.body?.password !== undefined;
+  if ((wantsName || wantsRoles || wantsUsers) && !may(req, 'channels.edit')) return forbid(res);
+  if (wantsPassword && !may(req, 'channels.password')) return forbid(res);
+
+  if (wantsName) {
+    const named = channels.renameGroup(id, req.body.name);
+    if (!named.ok) return channelFailure(res, named.error);
   }
-  realtime?.broadcastChannels();
-  return res.json({ group: publicGroup(result.group) });
+  if (wantsRoles) {
+    const restricted = channels.setGroupRoles(id, req.body.roles);
+    if (!restricted.ok) return channelFailure(res, restricted.error);
+  }
+  if (wantsUsers) {
+    const named = channels.setGroupUsers(id, req.body.users);
+    if (!named.ok) return channelFailure(res, named.error);
+  }
+  if (wantsPassword) await channels.setGroupPassword(id, String(req.body.password));
+  channelsChanged();
+  return res.json({ group: publicGroup(channels.group(id)) });
 });
 
 /**
@@ -1119,19 +1247,31 @@ app.post('/api/channels/groups/:id', requireAdmin, (req, res) => {
  *
  * The schema's ON DELETE SET NULL does that, and it is deliberate: a group
  * is a folder for the sidebar, not something that owns what is inside it.
- * Deleting it must not take a year of chat with it.
+ * Deleting it must not take a year of chat with it. They keep the password
+ * and roles they were following, so deleting a private group does not make
+ * its channels public.
  */
-app.post('/api/channels/groups/:id/delete', requireAdmin, (req, res) => {
-  const result = channels.removeGroup(Number.parseInt(req.params.id, 10));
-  if (!result.ok) {
-    return res.status(400).json({ error: result.error, message: 'No such group.' });
-  }
-  realtime?.broadcastChannels();
+app.post('/api/channels/groups/:id/delete', requireLogin, (req, res) => {
+  if (!may(req, 'channels.delete')) return forbid(res);
+  const id = Number.parseInt(req.params.id, 10);
+  if (!visibleGroup(req, id)) return channelFailure(res, 'no_such_group');
+  const result = channels.removeGroup(id);
+  if (!result.ok) return channelFailure(res, result.error);
+  channelsChanged();
   return res.json({ ok: true });
 });
 
 /** The whole sidebar after a drag: see Channels.arrange. */
-app.post('/api/channels/arrange', requireAdmin, (req, res) => {
+app.post('/api/channels/arrange', requireLogin, (req, res) => {
+  if (!may(req, 'channels.edit')) return forbid(res);
+  // A person cannot move what they cannot see -- nor, by naming it, find out
+  // that it exists.
+  const named = [
+    ...(Array.isArray(req.body?.order) ? req.body.order.map((e) => e?.id).filter((x) => x != null) : []),
+    ...(Array.isArray(req.body?.channels) ? req.body.channels.map((e) => e?.id) : []),
+  ].map(Number);
+  if (named.some((id) => !visibleChannel(req, id))) return channelFailure(res, 'no_such_channel');
+
   const result = channels.arrange({
     groups: req.body?.groups,
     channels: req.body?.channels,
@@ -1144,14 +1284,13 @@ app.post('/api/channels/arrange', requireAdmin, (req, res) => {
     };
     return res.status(400).json({ error: result.error, message: messages[result.error] });
   }
-  realtime?.broadcastChannels();
-  return res.json({
-    channels: result.channels.map(publicChannel),
-    groups: result.groups.map(publicGroup),
-  });
+  channelsChanged();
+  const view = channelViewFor({ roles, channels, voice }, req.user);
+  return res.json({ channels: view.channels, groups: view.groups });
 });
 
-app.post('/api/channels/reorder', requireAdmin, (req, res) => {
+app.post('/api/channels/reorder', requireLogin, (req, res) => {
+  if (!may(req, 'channels.edit')) return forbid(res);
   const result = channels.reorder(Array.isArray(req.body?.ids) ? req.body.ids : []);
   if (!result.ok) {
     return res.status(400).json({
@@ -1159,27 +1298,52 @@ app.post('/api/channels/reorder', requireAdmin, (req, res) => {
       message: 'Send every channel id exactly once, in the order you want.',
     });
   }
-  realtime?.broadcastChannels();
+  channelsChanged();
   return res.json({ channels: result.channels.map(publicChannel) });
 });
 
-app.post('/api/channels/:id', requireAdmin, async (req, res) => {
-  const result = await channels.update(Number.parseInt(req.params.id, 10), {
-    ...(req.body?.name !== undefined ? { name: req.body.name } : {}),
-    ...(req.body?.password !== undefined ? { password: req.body.password } : {}),
+app.post('/api/channels/:id', requireLogin, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!visibleChannel(req, id)) return channelFailure(res, 'no_such_channel');
+
+  const wantsName = req.body?.name !== undefined;
+  const wantsRoles = req.body?.roles !== undefined;
+  const wantsUsers = req.body?.users !== undefined;
+  const wantsPassword = req.body?.password !== undefined;
+  if ((wantsName || wantsRoles || wantsUsers) && !may(req, 'channels.edit')) return forbid(res);
+  if (wantsPassword && !may(req, 'channels.password')) return forbid(res);
+
+  // Checked before anything is written: a channel in a group takes none of
+  // these, and half of an edit is worse than a refused one.
+  if ((wantsRoles || wantsUsers || wantsPassword) && channels.get(id).group_id != null) {
+    return channelFailure(res, 'follows_group');
+  }
+  if (wantsRoles) {
+    const restricted = channels.setRoles(id, req.body.roles);
+    if (!restricted.ok) return channelFailure(res, restricted.error);
+  }
+  if (wantsUsers) {
+    const named = channels.setUsers(id, req.body.users);
+    if (!named.ok) return channelFailure(res, named.error);
+  }
+  const result = await channels.update(id, {
+    ...(wantsName ? { name: req.body.name } : {}),
+    ...(wantsPassword ? { password: req.body.password } : {}),
   });
-  if (!result.ok) return res.status(400).json({ error: result.error });
-  realtime?.broadcastChannels();
+  if (!result.ok) return channelFailure(res, result.error);
+  channelsChanged();
   return res.json({ channel: publicChannel(result.channel) });
 });
 
-app.post('/api/channels/:id/delete', requireAdmin, (req, res) => {
+app.post('/api/channels/:id/delete', requireLogin, (req, res) => {
+  if (!may(req, 'channels.delete')) return forbid(res);
   const id = Number.parseInt(req.params.id, 10);
+  if (!visibleChannel(req, id)) return channelFailure(res, 'no_such_channel');
   const result = channels.remove(id);
-  if (!result.ok) return res.status(404).json({ error: result.error });
+  if (!result.ok) return channelFailure(res, result.error);
   // Anyone sitting in it has nowhere to be any more.
   for (const { channelId } of voice.leaveAll(-1)) void channelId;
-  realtime?.broadcastChannels();
+  channelsChanged();
   return res.json({ ok: true });
 });
 
@@ -1189,9 +1353,9 @@ app.post('/api/channels/:id/delete', requireAdmin, (req, res) => {
 
 /** A channel the caller is allowed to read, or null. */
 function readableChannel(req, id) {
-  const channel = channels.get(id);
+  const channel = visibleChannel(req, id);
   if (!channel) return null;
-  if (channel.password_hash && !channels.hasGrant(id, req.user.id)) return null;
+  if (channel.password_hash && !channels.hasGrant(id, req.user.id) && !roles.context(req.user).admin) return null;
   return channel;
 }
 
@@ -1234,8 +1398,15 @@ const oneForClient = (message) => forClient([message])[0] ?? null;
  */
 function toChannelReaders(channelId, payload) {
   const channel = channels.get(channelId);
-  if (!channel?.password_hash) return realtime?.broadcast(payload);
-  return realtime?.broadcastWhere(payload, (user) => channels.hasGrant(channelId, user.id));
+  if (!channel) return undefined;
+  const byId = new Map(channels.groups().map((g) => [g.id, g]));
+  return realtime?.broadcastWhere(payload, (user) => {
+    const fresh = accounts.byId(user.id) ?? user;
+    const ctx = roles.context(fresh);
+    if (!roles.canSee(ctx, channel, byId)) return false;
+    // Admins hold every key, so a passworded channel reaches them as an open one.
+    return !channel.password_hash || channels.hasGrant(channelId, user.id) || ctx.admin;
+  });
 }
 
 app.get('/api/channels/:id/messages', requireLogin, (req, res) => {
@@ -1274,6 +1445,10 @@ app.post('/api/channels/:id/messages', requireLogin, (req, res) => {
 
 app.post('/api/messages/:id/pin', requireLogin, (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
+  const target = chat.get(id);
+  if (target && !readableChannel(req, target.channel_id)) {
+    return res.status(404).json({ error: 'no_such_message' });
+  }
   const result = chat.setPinned(id, req.body?.pinned !== false);
   if (!result.ok) return res.status(404).json({ error: result.error });
   const message = oneForClient(result.message);
@@ -1368,7 +1543,7 @@ app.post('/api/messages/:id/delete', requireLogin, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'no_such_message' });
 
   const isOwn = existing.user_id === req.user.id;
-  if (!isOwn && req.user.role !== 'owner' && req.user.role !== 'admin') {
+  if (!isOwn && !may(req, 'messages.delete')) {
     return res.status(403).json({ error: 'forbidden', message: 'Not your message.' });
   }
 
@@ -1586,7 +1761,7 @@ app.post('/api/emojis/:id/delete', requireLogin, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'no_such_emoji' });
 
   const isOwn = existing.uploaded_by === req.user.id;
-  if (!isOwn && req.user.role !== 'owner' && req.user.role !== 'admin') {
+  if (!isOwn && !roles.context(req.user).admin) {
     return res.status(403).json({ error: 'forbidden', message: 'Not yours to remove.' });
   }
 
@@ -1842,6 +2017,8 @@ realtime = new Realtime({
   accounts,
   channels,
   voice,
+  roles,
+  badges,
   soundpad,
   issueTokens,
   kickMember: (channelId, mid) => monitor.kickPath(channelPath(channelId, mid, 'voice')),

@@ -530,6 +530,10 @@ module.exports = {
   setJoinSound: (s, hash) =>
     requestJson(s, '/api/accounts/join-sound', { method: 'POST', body: { hash } }),
   // One of the server's fixed list of ids, or null for the ordinary font.
+  // A solid colour, a moving gradient or the rainbow for the name -- or null to
+  // go back to the colour of the highest role. The server validates the shape.
+  setNameColor: (s, nameColor) =>
+    requestJson(s, '/api/accounts/name-color', { method: 'POST', body: { nameColor } }),
   setNameFont: (s, font) =>
     requestJson(s, '/api/accounts/name-font', { method: 'POST', body: { font } }),
   roster: (s) => requestJson(s, '/api/accounts'),
@@ -540,11 +544,41 @@ module.exports = {
   deleteAccount: (s, id) =>
     requestJson(s, `/api/accounts/${id}/delete`, { method: 'POST' }),
 
+  // Roles, and what they gate. Every rule is enforced server side.
+  roles: (s) => requestJson(s, '/api/roles'),
+  createRole: (s, body) =>
+    requestJson(s, '/api/roles', { method: 'POST', body: body }),
+  updateRole: (s, id, body) =>
+    requestJson(s, `/api/roles/${id}`, { method: 'POST', body: body }),
+  deleteRole: (s, id) =>
+    requestJson(s, `/api/roles/${id}/delete`, { method: 'POST' }),
+  reorderRoles: (s, ids) =>
+    requestJson(s, '/api/roles/reorder', { method: 'POST', body: { ids } }),
+  setUserRoles: (s, id, roles) =>
+    requestJson(s, `/api/accounts/${id}/roles`, { method: 'POST', body: { roles } }),
+  kickUser: (s, id) =>
+    requestJson(s, `/api/accounts/${id}/kick`, { method: 'POST' }),
+  banUser: (s, id, banned) =>
+    requestJson(s, `/api/accounts/${id}/ban`, { method: 'POST', body: { banned } }),
+  updateGroup: (s, id, body) =>
+    requestJson(s, `/api/channels/groups/${id}`, { method: 'POST', body: body }),
+
+  // Badges: a name, a description and a picture or an emoji, on a profile card.
+  badges: (s) => requestJson(s, '/api/badges'),
+  createBadge: (s, body) =>
+    requestJson(s, '/api/badges', { method: 'POST', body: body }),
+  updateBadge: (s, id, body) =>
+    requestJson(s, `/api/badges/${id}`, { method: 'POST', body: body }),
+  deleteBadge: (s, id) =>
+    requestJson(s, `/api/badges/${id}/delete`, { method: 'POST' }),
+  setUserBadges: (s, id, badges) =>
+    requestJson(s, `/api/accounts/${id}/badges`, { method: 'POST', body: { badges } }),
+
   serverInfo: (s) => requestJson(s, '/api/server'),
   updateServer: (s, body) => requestJson(s, '/api/server', { method: 'POST', body }),
 
-  createGroup: (s, name) =>
-    requestJson(s, '/api/channels/groups', { method: 'POST', body: { name } }),
+  createGroup: (s, name, extra) =>
+    requestJson(s, '/api/channels/groups', { method: 'POST', body: { ...extra, name } }),
   renameGroup: (s, id, name) =>
     requestJson(s, `/api/channels/groups/${id}`, { method: 'POST', body: { name } }),
   deleteGroup: (s, id) =>

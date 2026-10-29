@@ -17,6 +17,10 @@ import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
 import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
+import { canAdminister, contextOf, nameLookOf, rolesOf, roleLook, sortRoles } from './roles.js';
+import { createServerAdmin } from './server-admin.js';
+import { createProfileCard } from './profile-card.js';
+import { NAME_COLOR_SPEED, NAME_COLOR_STOPS, paintName, startingPoint } from './name-color.js';
 
 // ---------------------------------------------------------------------------
 // Stream presets
@@ -195,6 +199,14 @@ const el = {
   profileBannerNote: $('profile-banner-note'),
   profileFontGrid: $('profile-font-grid'),
   profileFontNote: $('profile-font-note'),
+  profileColorModes: $('profile-color-modes'),
+  profileColorEditor: $('profile-color-editor'),
+  profileColorStops: $('profile-color-stops'),
+  profileColorAdd: $('profile-color-add'),
+  profileColorSpeedRow: $('profile-color-speed-row'),
+  profileColorSpeed: $('profile-color-speed'),
+  profileColorSpeedLabel: $('profile-color-speed-label'),
+  profileColorNote: $('profile-color-note'),
   profileSoundState: $('profile-sound-state'),
   profileSoundPlay: $('profile-sound-play'),
   profileSoundChoose: $('profile-sound-choose'),
@@ -280,6 +292,7 @@ const el = {
   chatSearchClear: $('chat-search-clear'),
   chatPinned: $('chat-pinned'),
   chatLog: $('chat-log'),
+  chatToBottom: $('chat-to-bottom'),
   chatForm: $('chat-form'),
   chatInput: $('chat-input'),
   chatFile: $('chat-file'),
@@ -539,6 +552,10 @@ function freshMosaic() {
 /** Everything mutable about the current session. */
 const state = {
   settings: null,
+  /** The server's roles, as it last said: what a name's colour and a person's permissions are read from. */
+  roles: [],
+  /** The server's badges, as it last said; people's `badges` are ids into this. */
+  badges: [],
   /** Who is signed in, and what this server supports. See AUTH_DEFAULTS. */
   auth: { ...AUTH_DEFAULTS },
 
@@ -2054,8 +2071,17 @@ function showChannelsError(message) {
 /** A role as a person reads it: 'owner', 'admin' or 'member', in their language. */
 const roleLabel = (role) => (['owner', 'admin', 'member'].includes(role) ? t(`roles.${role}`) : String(role ?? ''));
 
-const isAdmin = () => state.auth.user?.role === 'owner' || state.auth.user?.role === 'admin';
+/*
+ * What the signed-in account may do, from its roles as they are NOW.
+ *
+ * Only to decide which controls are drawn: the server decides what is allowed,
+ * on every request. `isAdmin` means no role limits them (owner, super admin, or
+ * a role that says admin); everything narrower asks `can` for one permission.
+ */
+const rolesContext = () => contextOf(state.auth.user, state.roles);
+const isAdmin = () => rolesContext().admin;
 const isOwner = () => state.auth.user?.role === 'owner';
+const can = (permission) => rolesContext().can(permission);
 
 /* Asking the person something ------------------------------------------
  *
@@ -2133,7 +2159,8 @@ function ask(spec) {
       if (field.maxlength) input.maxLength = field.maxlength;
     }
     input.name = field.name;
-    input.value = field.value ?? '';
+    // A select with nothing chosen shows a blank box; it starts on its first option.
+    if (field.value !== undefined || !field.options) input.value = field.value ?? '';
     if (field.required) input.required = true;
     label.append(input);
     return label;
@@ -2179,6 +2206,10 @@ const knownUser = (id) => state.users.get(id) ?? null;
  */
 let dmUi = null;
 let securityUi = null;
+/** The Roles, Members and Channels pages of the server dialog; see server-admin.js. */
+let serverAdmin = null;
+/** The floating card that opens on a person; see profile-card.js. */
+let profileCard = null;
 
 /**
  * What to call somebody.
@@ -2212,6 +2243,12 @@ function nameFont(node, userId, user = knownUser(userId)) {
   const id = nameFontOf(user?.nameFont);
   if (id) node.dataset.nameFont = id;
   else delete node.dataset.nameFont;
+
+  // Their own colour if they chose one, and otherwise that of their highest
+  // role -- wherever the name is, beside the font, for the same reason: a
+  // name that is coloured in the list and not in the chat is two names.
+  // CSSOM, not an attribute: the page's CSP has no inline styles.
+  paintName(node, user?.nameColor ?? null, nameLookOf(user, state.roles));
 }
 
 /**
@@ -2286,6 +2323,49 @@ function avatarEl(user, extraClass = '') {
 }
 
 /**
+ * A badge's picture: its image if it has one, otherwise its emoji. `previewUrl`
+ * is a local picture not uploaded yet, shown while a badge is being made.
+ */
+function badgeEl(badge, size = 'small') {
+  const span = document.createElement('span');
+  span.className = `badge-icon ${size}`;
+  span.title = badge.name ?? '';
+  const src = badge.previewUrl || (badge.imageHash ? harmony.mediaUrl(badge.imageHash) : null);
+  if (src) {
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = '';
+    img.draggable = false;
+    span.append(img);
+  } else {
+    span.textContent = badge.emoji || '';
+  }
+  return span;
+}
+
+/** Shrink a picked image to a small square and upload it, for a badge. */
+async function uploadBadgeImage(file) {
+  const SIZE = 128;
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+  const scale = Math.min(SIZE / bitmap.width, SIZE / bitmap.height);
+  const w = bitmap.width * scale;
+  const h = bitmap.height * scale;
+  canvas.getContext('2d').drawImage(bitmap, (SIZE - w) / 2, (SIZE - h) / 2, w, h);
+  bitmap.close();
+  const blob = await new Promise((done) => canvas.toBlob(done, 'image/png'));
+  if (!blob) throw new Error(t('app.could_not_read_that_image'));
+  if (blob.size > AVATAR_MAX_BYTES) throw new Error(t('app.that_image_is_too_detailed'));
+  const upload = await harmony.media.upload(
+    state.server, new Uint8Array(await blob.arrayBuffer()), 'image/png',
+  );
+  // A data: URL, because the page may only show images from itself or data:.
+  return { hash: upload.hash, preview: canvas.toDataURL('image/png') };
+}
+
+/**
  * Repaint our own picture in the bar.
  *
  * Moves the children out of a throwaway avatarEl rather than building the
@@ -2332,6 +2412,8 @@ function renderProfileStyle() {
     button.addEventListener('click', () => saveNameFont(font.id));
     return button;
   }));
+
+  renderNameColor(me, sample);
 
   el.profileSoundState.textContent = me.joinSoundHash
     ? t('profile.join_sound_custom') : t('profile.join_sound_default');
@@ -2397,6 +2479,110 @@ async function clearOwnBanner() {
     profileNote(el.profileBannerNote, t('profile.banner_removed'));
   } catch (err) {
     profileNote(el.profileBannerNote, err.message, true);
+  }
+}
+
+/**
+ * The name colour controls: the kinds, drawn in their own look, and under them
+ * what the chosen kind needs -- its colours and how fast it moves. Every change
+ * is saved as it is made, so there is no Save to forget; the page is drawn
+ * again from what the server answers.
+ */
+function renderNameColor(me, sample) {
+  const current = me.nameColor ?? null;
+  const kinds = [
+    { id: null, label: t('profile.color_role') },
+    { id: 'solid', label: t('profile.color_solid') },
+    { id: 'gradient', label: t('profile.color_gradient') },
+    { id: 'rainbow', label: t('profile.color_rainbow') },
+  ];
+  el.profileColorModes.replaceChildren(...kinds.map((kind) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'font-choice';
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-checked', String((current?.mode ?? null) === kind.id));
+    button.title = kind.label;
+    const name = document.createElement('span');
+    name.textContent = kind.id ? kind.label : sample;
+    // Each one in its own look, so the choice is something you can see.
+    if (kind.id) paintName(name, startingPoint(kind.id, current), null);
+    else paintName(name, null, nameLookOf(me, state.roles));
+    button.append(name);
+    button.addEventListener('click', () => saveNameColor(startingPoint(kind.id, current)));
+    return button;
+  }));
+
+  el.profileColorEditor.hidden = !current;
+  if (!current) return;
+
+  const stops = current.mode === 'solid' ? [current.color]
+    : current.mode === 'gradient' ? current.colors : [];
+  el.profileColorStops.replaceChildren(...stops.map((color, index) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'name-color-stop';
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.value = color;
+    input.setAttribute('aria-label', t('profile.color_stop', { n: index + 1 }));
+    // 'change', not 'input': dragging in the picker is a hundred events and
+    // one choice.
+    input.addEventListener('change', () => {
+      const next = current.mode === 'solid'
+        ? { ...current, color: input.value }
+        : { ...current, colors: current.colors.map((c, i) => (i === index ? input.value : c)) };
+      saveNameColor(next);
+    });
+    wrap.append(input);
+    if (current.mode === 'gradient' && stops.length > NAME_COLOR_STOPS.min) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ghost small icon-only';
+      remove.dataset.icon = 'x';
+      remove.title = t('profile.color_remove', { n: index + 1 });
+      remove.setAttribute('aria-label', remove.title);
+      remove.addEventListener('click', () => saveNameColor({
+        ...current, colors: current.colors.filter((_, i) => i !== index),
+      }));
+      wrap.append(remove);
+    }
+    return wrap;
+  }));
+
+  el.profileColorAdd.hidden = !(current.mode === 'gradient' && current.colors.length < NAME_COLOR_STOPS.max);
+  el.profileColorAdd.onclick = () => saveNameColor({
+    ...current, colors: [...current.colors, current.colors.at(-1)],
+  });
+
+  const moves = current.mode !== 'solid';
+  el.profileColorSpeedRow.hidden = !moves;
+  if (moves) {
+    el.profileColorSpeed.min = String(NAME_COLOR_SPEED.min);
+    el.profileColorSpeed.max = String(NAME_COLOR_SPEED.max);
+    el.profileColorSpeed.step = String(NAME_COLOR_SPEED.step);
+    // Faster to the right: the slider is seconds per cycle, so it is inverted.
+    const toSlider = (seconds) => NAME_COLOR_SPEED.max + NAME_COLOR_SPEED.min - seconds;
+    el.profileColorSpeed.value = String(toSlider(current.speed));
+    el.profileColorSpeedLabel.textContent = t('profile.color_speed_value', { seconds: current.speed });
+    el.profileColorSpeed.oninput = () => {
+      el.profileColorSpeedLabel.textContent = t('profile.color_speed_value', {
+        seconds: toSlider(Number(el.profileColorSpeed.value)),
+      });
+    };
+    el.profileColorSpeed.onchange = () => saveNameColor({
+      ...current, speed: toSlider(Number(el.profileColorSpeed.value)),
+    });
+  }
+}
+
+/** Set the colour of our name, or null to go back to the role's. */
+async function saveNameColor(nameColor) {
+  try {
+    const { user } = await harmony.api.setNameColor(state.server, nameColor);
+    adoptOwnUser(user);
+    profileNote(el.profileColorNote, t('profile.color_saved'));
+  } catch (err) {
+    profileNote(el.profileColorNote, err.message, true);
   }
 }
 
@@ -2612,8 +2798,8 @@ function renderProfile() {
 async function enterChannels() {
   el.channelsWho.textContent = state.auth.user.displayName || state.auth.user.nickname;
   nameFont(el.channelsWho, state.auth.user.id, state.auth.user);
-  el.channelsRole.textContent = state.auth.user.role === 'member' ? '' : roleLabel(state.auth.user.role);
-  el.channelAdd.hidden = !isAdmin();
+  el.channelsRole.textContent = ownRoleText(state.auth.user);
+  el.channelAdd.hidden = !can('channels.create');
   // The media route serves `harmony://app/media/<hash>` -- a hash and nothing
   // else, which is what lets it be used straight in an <img src>. Main needs
   // to be told separately where to download from.
@@ -2635,6 +2821,7 @@ async function enterChannels() {
   applyStage();
   // What the server calls itself, and whether the owner's button appears.
   loadServerInfo();
+  loadRoles();
   loadSoundpad();
   loadEmojis();
   // Draws every emoji into one image, out of idle time, so the picker never
@@ -2676,25 +2863,38 @@ async function enterChannels() {
  * admins reordering at once cannot interleave into an order neither of them
  * chose. That makes this the client's job: work out the list we want, send it.
  */
-async function editChannel(channel) {
+/** Ask for a name and a kind, and make the channel inside the group. */
+async function createChannelInGroup(group) {
   const answer = await ask({
-    title: t('app.edit', { name: channel.name }),
-    text: t('app.leave_the_password_empty_to'),
-    okLabel: t('app.save'),
+    title: t('server_admin.new_channel_in', { name: group.name }),
+    okLabel: t('app.create'),
     fields: [
-      { name: 'name', label: t('app.name'), value: channel.name, required: true },
-      { name: 'password', label: t('app.password'), type: 'password', placeholder: t('app.no_password') },
+      { name: 'name', label: t('app.name'), placeholder: t('app.game_night'), required: true },
+      {
+        name: 'kind',
+        label: t('app.kind'),
+        options: [
+          { value: 'voice', label: t('app.voice_channel') },
+          { value: 'text', label: t('app.text_channel') },
+        ],
+      },
     ],
   });
-  if (!answer) return;
+  if (!answer?.name) return;
   try {
-    await harmony.api.updateChannel(state.server, channel.id, {
-      name: answer.name,
-      password: answer.password,
-    });
+    await harmony.api.createChannel(state.server, { kind: answer.kind, name: answer.name, groupId: group.id });
+    // A folded group would hide what was just made.
+    if (state.channels.collapsed.delete(group.id)) renderChannels();
   } catch (err) {
     showChannelsError(err.message);
   }
+}
+
+function editChannel(channel) {
+  // One place to change a channel -- its name, its group, its password and
+  // the roles that may see it -- instead of a second, smaller one here.
+  openServerDialog('channels');
+  serverAdmin.focusChannel({ kind: 'channel', id: channel.id });
 }
 
 /** A small admin button that must not also trigger the row's own click. */
@@ -2732,6 +2932,7 @@ function openRowMenu(label, items, event, { above = null } = {}) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `ghost menu-item${item.danger ? ' danger' : ''}`;
+    if (item.icon) button.dataset.icon = item.icon;
     button.textContent = item.label;
     button.title = item.title;
     button.addEventListener('click', () => {
@@ -2890,7 +3091,7 @@ function moveChannel(id, to) {
   } else {
     layout.push(onTop());
   }
-  applyLayout(layout);
+  return applyLayout(layout);
 }
 
 /**
@@ -2951,7 +3152,9 @@ function nudgeItems(kind, id) {
     { label: t('app.move_down'), title: t('app.one_place_lower_in_the'), step: 1 },
   ]
     .filter((item) => canNudge(kind, id, item.step))
-    .map(({ label, title, step }) => ({ label, title, run: () => nudge(kind, id, step) }));
+    .map(({ label, title, step }) => ({
+      label, title, icon: step < 0 ? 'arrow-up' : 'arrow-down', run: () => nudge(kind, id, step),
+    }));
 }
 
 /** Whether an item can step that way, so the menu offers only what will work. */
@@ -3006,7 +3209,7 @@ function channelNodes(channel) {
   if (channel.locked) {
     const lock = document.createElement('span');
     lock.className = 'tag';
-    lock.textContent = channel.unlocked ? t('app.unlocked') : t('app.locked');
+    lock.textContent = channel.unlocked || isAdmin() ? t('app.unlocked') : t('app.locked');
     li.append(lock);
   }
 
@@ -3023,9 +3226,9 @@ function channelNodes(channel) {
    * needing the whole roster for every channel.
    */
 
-  if (isAdmin()) {
+  if (can('channels.edit') || can('channels.password') || can('channels.delete')) {
     /*
-     * Rename and delete, on right-click rather than on the row.
+     * Edit and delete, on right-click rather than on the row.
      *
      * They used to be a pencil and a cross drawn into every row, which on
      * a sidebar of twenty channels is forty buttons -- all of them admin
@@ -3040,15 +3243,17 @@ function channelNodes(channel) {
       // sidebar and calling it #voice here would name it something it is
       // not called anywhere else.
       openRowMenu(channel.kind === 'text' ? `#${channel.name}` : channel.name, [
-        ...nudgeItems('channel', channel.id),
+        ...(can('channels.edit') ? nudgeItems('channel', channel.id) : []),
         {
-          label: t('app.rename_or_set_a_password'),
-          title: t('app.change_the_name_or_put'),
+          label: t('server_admin.edit_channel'),
+          title: t('server_admin.edit_channel_hint'),
+          icon: 'pencil-simple',
           run: () => editChannel(channel),
         },
-        {
+        ...(!can('channels.delete') ? [] : [{
           label: t('app.delete_this_channel'),
           title: t('app.removes_the_channel_and_everything'),
+          icon: 'trash',
           danger: true,
           run: async () => {
             if (!await askConfirm(t('app.delete', { name: channel.name }), {
@@ -3061,13 +3266,13 @@ function channelNodes(channel) {
               showChannelsError(err.message);
             }
           },
-        },
+        }]),
       ], event);
     });
 
     // The up/down arrows are gone: dragging replaced them, and keeping
     // both would mean two code paths writing the same positions.
-    li.draggable = true;
+    li.draggable = can('channels.edit');
     li.addEventListener('dragstart', (event) => {
       dragging = { kind: 'channel', id: channel.id };
       event.dataTransfer.effectAllowed = 'move';
@@ -3120,10 +3325,11 @@ function channelNodes(channel) {
   // Dropping onto the people already in a channel means that channel too;
   // the highlight goes on its row, which is what the drop is about.
   acceptMemberDrop(list, channel, li);
-  if (isAdmin()) acceptGroupDrop(list, channel);
+  if (can('channels.edit')) acceptGroupDrop(list, channel);
   list.append(...members.map((member) => {
     const row = document.createElement('span');
     row.className = 'channel-member';
+    row.dataset.profileUser = String(member.userId);
     row.append(avatarEl(faceOf(member.userId, member.nickname), 'tiny'));
 
     const who = document.createElement('span');
@@ -3161,7 +3367,7 @@ function channelNodes(channel) {
      * same admin:move the right-click menu's "Move..." sends. Drawing it
      * for everybody would offer a drag that always ends in "not allowed".
      */
-    if (isAdmin()) {
+    if (can('users.kick')) {
       row.draggable = true;
       row.title = t('app.drag_to_another_voice_channel');
       row.addEventListener('dragstart', (event) => {
@@ -3290,32 +3496,33 @@ function groupNode(group) {
     renderChannels();
   });
 
-  if (isAdmin()) {
+  if (can('channels.edit') || can('channels.password') || can('channels.delete')) {
     li.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
       openRowMenu(group.name, [
-        ...nudgeItems('group', group.id),
+        ...(can('channels.edit') ? nudgeItems('group', group.id) : []),
+        // A shortcut: a channel made inside this group, which takes the group's
+        // password, roles and people as it is made.
+        ...(!can('channels.create') ? [] : [{
+          label: t('server_admin.new_channel_here'),
+          title: t('server_admin.new_channel_here_hint'),
+          icon: 'plus',
+          run: () => createChannelInGroup(group),
+        }]),
         {
-          label: t('app.rename_this_group'),
-          title: t('app.change_what_the_heading_says'),
-          run: async () => {
-            const answer = await ask({
-              title: t('app.rename', { name: group.name }),
-              okLabel: t('app.save'),
-              fields: [{ name: 'name', label: t('app.name'), value: group.name, required: true }],
-            });
-            if (!answer?.name) return;
-            try {
-              await harmony.api.renameGroup(state.server, group.id, answer.name);
-            } catch (err) {
-              showChannelsError(err.message);
-            }
+          label: t('server_admin.edit_group'),
+          title: t('server_admin.edit_group_hint'),
+          icon: 'pencil-simple',
+          run: () => {
+            openServerDialog('channels');
+            serverAdmin.focusChannel({ kind: 'group', id: group.id });
           },
         },
-        {
+        ...(!can('channels.delete') ? [] : [{
           label: t('app.delete_this_group'),
           title: t('app.the_channels_in_it_stay'),
+          icon: 'trash',
           danger: true,
           run: async () => {
             if (!await askConfirm(t('app.delete_the_group', { name: group.name }), {
@@ -3330,11 +3537,11 @@ function groupNode(group) {
               showChannelsError(err.message);
             }
           },
-        },
+        }]),
       ], event);
     });
 
-    li.draggable = true;
+    li.draggable = can('channels.edit');
     li.addEventListener('dragstart', (event) => {
       dragging = { kind: 'group', id: group.id };
       event.dataTransfer.effectAllowed = 'move';
@@ -3428,17 +3635,16 @@ function openMemberMenu(user, event) {
   const me = state.auth.user?.id;
   const theirRole = user.role ?? 'member';
 
-  // The same asymmetry the server enforces: an admin may promote a member,
-  // only the owner may demote one. See POST /api/accounts/:id/role.
-  const canPromote = isAdmin() && theirRole === 'member';
-  const canDemote = isOwner() && theirRole === 'admin';
+  // Roles, kicking and banning are all on the server dialog's Members page;
+  // this only offers the way there, to whoever has anything to do on it.
+  const canManage = user.id !== me && serverTabsAllowed().members;
   // Owner only, and never the owner. Granting admin is reversible and a
   // force-mute lasts until it is lifted; this is neither.
   const canRemove = isOwner() && theirRole !== 'owner' && user.id !== me;
   // Anybody may write to anybody else: this is the one entry every member has.
   const canMessage = user.id !== me && Boolean(dmUi?.available);
 
-  if (!canPromote && !canDemote && !canRemove && !canMessage) return;
+  if (!canManage && !canRemove && !canMessage) return;
 
   // The children, not the element: replaceWith would drop the node the
   // handle points at and the next open would write into a detached one.
@@ -3448,10 +3654,11 @@ function openMemberMenu(user, event) {
   el.memberMenuName.textContent = displayOf(user.id, user.nickname);
 
   const rows = [];
-  const item = (label, title, run, danger = false) => {
+  const item = (label, title, run, danger = false, icon = null) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `ghost menu-item${danger ? ' danger' : ''}`;
+    if (icon) button.dataset.icon = icon;
     button.textContent = label;
     button.title = title;
     button.addEventListener('click', run);
@@ -3466,36 +3673,23 @@ function openMemberMenu(user, event) {
         closeMemberMenu();
         dmUi.openWith(user.id);
       },
+      false,
+      'chat-circle-dots',
     ));
-    if (canPromote || canDemote || canRemove) rows.push(document.createElement('hr'));
+    if (canManage || canRemove) rows.push(document.createElement('hr'));
   }
 
-  if (canPromote || canDemote) {
+  if (canManage) {
     rows.push(item(
-      canPromote ? 'Make admin' : 'Remove admin',
-      canPromote
-        ? t('app.they_can_manage_channels_mute')
-        : t('app.back_to_an_ordinary_member'),
-      async () => {
+      t('server_admin.manage_member'),
+      t('server_admin.manage_member_hint'),
+      () => {
         closeMemberMenu();
-        const next = canPromote ? 'admin' : 'member';
-        if (!await askConfirm(
-          canPromote
-            ? t('app.make_an_admin', { name: displayOf(user.id, user.nickname) })
-            : t('app.remove_s_admin', { name: displayOf(user.id, user.nickname) }),
-          {
-            okLabel: canPromote ? t('app.make_admin') : t('app.remove_admin'),
-            text: canPromote
-              ? t('admin.promote_details')
-              : t('app.they_go_back_to_being'),
-          },
-        )) return;
-        try {
-          await harmony.api.setRole(state.server, user.id, next);
-        } catch (err) {
-          showChannelsError(err.message);
-        }
+        openServerDialog('members');
+        serverAdmin.focusMember(user.id);
       },
+      false,
+      'key',
     ));
   }
 
@@ -3541,6 +3735,7 @@ function openMemberMenu(user, event) {
         }
       },
       true,
+      'trash',
     ));
   }
 
@@ -3574,9 +3769,11 @@ function applyServerInfo(info) {
   if (info) Object.assign(serverInfo, info);
   el.serverName.textContent = serverInfo.name;
   paintServerIcon();
-  // Shown only to the owner. Hidden rather than disabled: a control you
-  // can see and cannot use is a question nobody else needs asked.
-  el.serverSettings.hidden = !isOwner();
+  // Shown to whoever has something to do in it: the owner, an admin, or a
+  // role that manages roles, channels or people. Hidden rather than
+  // disabled: a control you can see and cannot use is a question nobody
+  // else needs asked.
+  el.serverSettings.hidden = !canAdminister(rolesContext());
 }
 
 /**
@@ -3597,6 +3794,68 @@ function paintServerIcon() {
       if ((serverInfo.logo ?? logo) === logo) paint();
     })
     .catch(() => { /* the initial stays */ });
+}
+
+/** The server's roles. A server too old to have any simply has none. */
+async function loadRoles() {
+  try {
+    const { roles } = await harmony.api.roles(state.server);
+    adoptRoles(roles);
+  } catch {
+    state.roles = [];
+  }
+  try {
+    const { badges } = await harmony.api.badges(state.server);
+    adoptBadges(badges);
+  } catch {
+    state.badges = [];
+  }
+}
+
+/**
+ * A new roles list, from a push or from our own request: everything that is
+ * drawn from the roles is drawn again. At once -- a role that shows on the
+ * next sign-in is a role that does not appear to work.
+ */
+function adoptRoles(list) {
+  state.roles = sortRoles(list);
+  applyRolePowers();
+  renderVoiceRoster(state.channels.roster);
+  renderChannels();
+  renderMembers();
+  renderChat();
+  serverAdmin?.render();
+}
+
+/** A new badges list: the open profile card, and the Badges page, show it. */
+function adoptBadges(list) {
+  state.badges = [...list].sort((a, b) => a.position - b.position);
+  applyRolePowers();
+  profileCard?.refresh();
+  serverAdmin?.render();
+}
+
+/** What the signed-in account can now do, reflected in the controls that depend on it. */
+function applyRolePowers() {
+  if (!state.auth.user) return;
+  el.channelAdd.hidden = !can('channels.create');
+  el.channelsRole.textContent = ownRoleText(state.auth.user);
+  // Your own name in the corner follows the look of your role, which may have
+  // changed without you being touched.
+  nameFont(el.channelsWho, state.auth.user.id, state.auth.user);
+  applyServerInfo();
+  renderSoundpad();
+  // The server dialog loses the pages somebody may no longer use.
+  if (el.serverDialog.open) {
+    applyServerTabs();
+    if (!canAdminister(rolesContext())) el.serverDialog.close();
+  }
+}
+
+/** What to show beside your own name: owner, super admin, or the role you hold highest. */
+function ownRoleText(user) {
+  if (user.role === 'owner' || user.role === 'admin') return roleLabel(user.role);
+  return rolesOf(user, state.roles)[0]?.name ?? '';
 }
 
 async function loadServerInfo() {
@@ -3659,7 +3918,67 @@ async function stageServerLogo(file) {
   el.serverLogoRemove.disabled = false;
 }
 
-function openServerDialog() {
+/*
+ * The server dialog's menu: which pages a person has, from what they may do.
+ * The owner has all four; a moderator may have only Members, and somebody
+ * who only manages channels only Channels.
+ */
+function serverTabsAllowed() {
+  const actor = rolesContext();
+  return {
+    general: actor.owner,
+    roles: actor.can('roles.hierarchy'),
+    members: actor.admin || actor.can('roles.hierarchy') || actor.can('users.kick')
+      || actor.can('users.ban') || actor.assignable.size > 0 || actor.assignableBadges.size > 0,
+    badges: actor.can('badges.create') || actor.can('badges.edit'),
+    channels: ['channels.create', 'channels.edit', 'channels.password', 'channels.delete']
+      .some((permission) => actor.can(permission)),
+  };
+}
+
+function showServerTab(name) {
+  for (const tab of el.serverDialog.querySelectorAll('.settings-tab')) {
+    const on = tab.dataset.tab === name;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+  }
+  for (const page of el.serverDialog.querySelectorAll('.settings-page')) {
+    page.hidden = page.dataset.page !== name;
+  }
+  el.serverDialog.querySelector('.settings-pages').scrollTop = 0;
+  serverAdmin?.render(name);
+}
+
+/** Hide the pages this person has no use for, and move off one that has just gone. */
+function applyServerTabs() {
+  const allowed = serverTabsAllowed();
+  for (const tab of el.serverDialog.querySelectorAll('.settings-tab')) {
+    tab.hidden = !allowed[tab.dataset.tab];
+  }
+  const current = el.serverDialog.querySelector('.settings-tab[aria-selected="true"]')?.dataset.tab;
+  if (!allowed[current]) showServerTab(Object.keys(allowed).find((name) => allowed[name]) ?? 'general');
+}
+
+el.serverDialog.querySelector('.settings-nav').addEventListener('click', (event) => {
+  const tab = event.target.closest('.settings-tab');
+  if (tab) showServerTab(tab.dataset.tab);
+});
+el.serverDialog.querySelector('.settings-nav').addEventListener('keydown', (event) => {
+  const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
+  if (!step) return;
+  const tabs = [...el.serverDialog.querySelectorAll('.settings-tab')].filter((tab) => !tab.hidden);
+  const at = tabs.findIndex((tab) => tab.getAttribute('aria-selected') === 'true');
+  const next = tabs[(at + step + tabs.length) % tabs.length];
+  if (!next) return;
+  event.preventDefault();
+  showServerTab(next.dataset.tab);
+  next.focus();
+});
+
+/**
+ * @param {string} [tab]  a page to open on: 'general', 'roles', 'members' or 'channels'
+ */
+function openServerDialog(tab) {
   pendingLogo = undefined;
   paintLogoPreview(serverInfo.logo ? logoUrl(serverInfo.logo) : null);
   el.serverLogoRemove.disabled = !serverInfo.logo;
@@ -3696,8 +4015,13 @@ function openServerDialog() {
   }
   el.serverErrorLine.hidden = true;
   el.serverNote.hidden = true;
-  el.serverDialog.showModal();
-  el.serverNameInput.focus();
+  const allowed = serverTabsAllowed();
+  const first = Object.keys(allowed).find((name) => allowed[name]);
+  if (!first) return;
+  for (const t_ of el.serverDialog.querySelectorAll('.settings-tab')) t_.hidden = !allowed[t_.dataset.tab];
+  showServerTab(allowed[tab] ? tab : first);
+  if (!el.serverDialog.open) el.serverDialog.showModal();
+  if (allowed.general && (allowed[tab] ? tab : first) === 'general') el.serverNameInput.focus();
 }
 
 async function saveServerSettings() {
@@ -3764,12 +4088,13 @@ function renderMembers() {
   if (el.memberList.hidden) return;
 
   const everybody = [...state.users.values()];
-  const online = everybody
-    .filter((u) => state.channels.online.has(u.id))
-    .sort((a, b) => displayOf(a.id, a.nickname).localeCompare(displayOf(b.id, b.nickname)));
-  const offline = everybody
-    .filter((u) => !state.channels.online.has(u.id))
-    .sort((a, b) => displayOf(a.id, a.nickname).localeCompare(displayOf(b.id, b.nickname)));
+  // The hierarchy first -- owner, super admins, then the roles top down --
+  // and by name inside each rank.
+  const rankOf = (u) => contextOf(u, state.roles).rank;
+  const byRank = (a, b) => rankOf(b) - rankOf(a)
+    || displayOf(a.id, a.nickname).localeCompare(displayOf(b.id, b.nickname));
+  const online = everybody.filter((u) => state.channels.online.has(u.id)).sort(byRank);
+  const offline = everybody.filter((u) => !state.channels.online.has(u.id)).sort(byRank);
 
   el.memberCount.textContent = `${online.length} of ${everybody.length}`;
 
@@ -3777,6 +4102,7 @@ function renderMembers() {
     const li = document.createElement('li');
     li.className = 'member-row';
     li.dataset.userId = String(user.id);
+    li.dataset.profileUser = String(user.id);
     if (off) li.setAttribute('data-off', '');
 
     li.append(avatarEl(user, 'tiny'));
@@ -3788,12 +4114,14 @@ function renderMembers() {
     li.append(name);
     showBanner(li, user.bannerHash);
 
-    if (user.role === 'owner' || user.role === 'admin') {
+    // Online, the heading above already says what they are; away, there is none.
+    if (off && (user.role === 'owner' || user.role === 'admin')) {
       const tag = document.createElement('span');
       tag.className = 'role-tag';
       tag.textContent = roleLabel(user.role);
       li.append(tag);
     }
+    if (user.banned) li.dataset.banned = '';
 
     // The user object is read from state at click time rather than
     // captured here, for the same reason the roster rows do it: these rows
@@ -3804,22 +4132,56 @@ function renderMembers() {
       openMemberMenu(state.users.get(user.id) ?? user, event);
     });
     // Promised only to the people for whom the menu has anything on it.
-    if (isAdmin()) li.title = t('app.right_click_for_admin_controls');
+    if (serverTabsAllowed().members) li.title = t('app.right_click_for_admin_controls');
     return li;
   };
 
-  const head = (text) => {
+  const head = (text, look, dot) => {
     const li = document.createElement('li');
     li.className = 'member-head';
-    li.textContent = text;
+    // The text in a span of its own: a gradient is painted onto the text, and
+    // the heading itself keeps its solid background so the rows scroll under it.
+    const label = document.createElement('span');
+    label.textContent = text;
+    li.append(label);
+    // The role's own look -- plain, gradient or rainbow -- and its plain
+    // colour for the dot, which is one colour whatever the name does.
+    if (look) {
+      paintName(label, null, look);
+      li.dataset.dot = '';
+      li.style.setProperty('--dot', dot ?? look.color ?? look.colors?.[0] ?? '#99aab5');
+    }
     return li;
   };
 
   const nodes = [];
-  // The headings are drawn even for an empty half, so the list does not
+  // Online people sit under the highest thing they are: the owner, the
+  // super admins, then each role in the hierarchy's order. Everybody with
+  // none of them is "Online", drawn even when empty, so the list does not
   // silently become "just the people who are here" on a quiet server.
-  nodes.push(head(t('members.online', { count: online.length })));
-  nodes.push(...online.map((u) => row(u, false)));
+  const topOf = (u) => (u.role === 'owner' ? 'owner' : u.role === 'admin' ? 'admin'
+    : rolesOf(u, state.roles)[0]?.id ?? null);
+  const buckets = [
+    { key: 'owner', label: t('roles.owner') },
+    { key: 'admin', label: t('roles.admin') },
+    ...sortRoles(state.roles).map((r) => ({ key: r.id, label: r.name, look: roleLook(r), dot: r.color })),
+  ];
+  for (const bucket of buckets) {
+    const inside = online.filter((u) => topOf(u) === bucket.key);
+    if (!inside.length) continue;
+    nodes.push(head(`${bucket.label} — ${inside.length}`, bucket.look, bucket.dot));
+    nodes.push(...inside.map((u) => row(u, false)));
+  }
+  const plain = online.filter((u) => topOf(u) === null);
+  // "Online" is the heading for people with no role. With role sections
+  // above it and nobody to put under it, it would only be an empty heading.
+  if (plain.length || !nodes.length) {
+    nodes.push(head(t('members.online', { count: plain.length })));
+    nodes.push(...plain.map((u) => row(u, false)));
+  }
+  // Everybody who is away is one list, as it always was, in rank order -- and
+  // their names keep the colour of their role, so a moderator who has logged
+  // off is still recognisable without being a section of their own.
   if (offline.length) {
     nodes.push(head(t('members.offline', { count: offline.length })));
     nodes.push(...offline.map((u) => row(u, true)));
@@ -4599,6 +4961,7 @@ function openPeerMenu(channelId, mid, event) {
     const mute = document.createElement('button');
     mute.type = 'button';
     mute.className = 'ghost menu-item peer-mute';
+    mute.dataset.icon = 'speaker-slash';
 
     const row = document.createElement('div');
     row.className = 'peer-menu-row peer-audio';
@@ -4638,12 +5001,15 @@ function openPeerMenu(channelId, mid, event) {
     rows.push(mute, row);
   }
 
-  if (isAdmin()) {
-    if (rows.length) rows.push(document.createElement('hr'));
-
+  // Muting and moving somebody take the permission AND a higher rank than
+  // theirs, as the server decides; this only decides what to offer.
+  const them = knownUser(userId);
+  const above = rolesContext().rank > contextOf(them, state.roles).rank;
+  if ((can('users.mute') || can('users.kick')) && above) {
     const force = document.createElement('button');
     force.type = 'button';
     force.className = 'ghost menu-item force-mute';
+    force.dataset.icon = 'microphone-slash';
     force.textContent = member.forceMuted ? t('app.unmute') : t('app.force_mute');
     force.addEventListener('click', () => {
       // Read the CURRENT roster rather than the member captured above: the
@@ -4685,56 +5051,28 @@ function openPeerMenu(channelId, mid, event) {
       closePeerMenu();
     });
 
-    rows.push(force, move);
+    const adminRows = [];
+    if (can('users.mute')) adminRows.push(force);
+    if (can('users.kick')) adminRows.push(move);
+    if (rows.length && adminRows.length) rows.push(document.createElement('hr'));
+    rows.push(...adminRows);
   }
 
-  /*
-   * Handing out admin, and taking it back.
-   *
-   * An admin may promote a member; only the owner may demote anybody or
-   * appoint another owner. The server enforces exactly this -- see the
-   * comment on POST /api/accounts/:id/role for why the two directions are
-   * not symmetric -- and what follows only decides which button to draw.
-   *
-   * The role comes from the accounts list rather than from the roster,
-   * because the roster describes a membership of this channel and a role
-   * is a property of the person.
-   */
-  const them = knownUser(userId);
-  const theirRole = them?.role ?? 'member';
-  const canPromote = isAdmin() && theirRole === 'member';
-  const canDemote = isOwner() && theirRole === 'admin';
-
-  if (canPromote || canDemote) {
+  // Roles, kicking and banning live on the server dialog's Members page.
+  if (userId !== state.auth.user?.id && serverTabsAllowed().members) {
     if (rows.length) rows.push(document.createElement('hr'));
-    const role = document.createElement('button');
-    role.type = 'button';
-    role.className = 'ghost menu-item set-role';
-    role.textContent = canPromote ? t('app.make_admin') : t('app.remove_admin');
-    role.title = canPromote
-      ? t('app.they_can_manage_channels_mute')
-      : t('app.back_to_an_ordinary_member');
-    role.addEventListener('click', async () => {
+    const manage = document.createElement('button');
+    manage.type = 'button';
+    manage.className = 'ghost menu-item set-role';
+    manage.dataset.icon = 'key';
+    manage.textContent = t('server_admin.manage_member');
+    manage.title = t('server_admin.manage_member_hint');
+    manage.addEventListener('click', () => {
       closePeerMenu();
-      const next = canPromote ? 'admin' : 'member';
-      if (!await askConfirm(
-        canPromote
-          ? t('app.make_an_admin', { name: displayOf(userId, member.nickname) })
-          : t('app.remove_s_admin', { name: displayOf(userId, member.nickname) }),
-        {
-          okLabel: canPromote ? t('app.make_admin') : t('app.remove_admin'),
-          text: canPromote
-            ? t('admin.promote_details')
-            : t('app.they_go_back_to_being'),
-        },
-      )) return;
-      try {
-        await harmony.api.setRole(state.server, userId, next);
-      } catch (err) {
-        showChannelsError(err.message);
-      }
+      openServerDialog('members');
+      serverAdmin.focusMember(userId);
     });
-    rows.push(role);
+    rows.push(manage);
   }
 
   // Nothing on offer -- an ordinary member right-clicking somebody in a
@@ -4854,6 +5192,8 @@ function renderVoiceRoster(roster) {
 
     const picture = avatarEl(faceOf(member.userId, member.nickname));
     li.querySelector('.avatar').replaceChildren(...picture.childNodes);
+    // Rows are reused, so who the row is about is set every time.
+    li.dataset.profileUser = String(member.userId);
 
     li.querySelector('.member-name').textContent =
       displayOf(member.userId, member.nickname)
@@ -8804,6 +9144,7 @@ function messageRow(message, previous) {
   const gutter = grouped
     ? when
     : avatarEl(faceOf(message.userId, message.nickname), 'msg-avatar');
+  if (!grouped) gutter.dataset.profileUser = String(message.userId);
   if (grouped) when.classList.add('when-gutter');
 
   const main = document.createElement('div');
@@ -8814,6 +9155,7 @@ function messageRow(message, previous) {
     head.className = 'msg-head';
     const who = document.createElement('span');
     who.className = 'who';
+    who.dataset.profileUser = String(message.userId);
     who.textContent = displayOf(message.userId, message.nickname);
     nameFont(who, message.userId);
     head.append(who, when);
@@ -8871,9 +9213,9 @@ function messageRow(message, previous) {
     row.prepend(replyLine(message.reply));
   }
 
-  // Your own, or anybody's if you are an admin -- the same rule the server
+  // Your own, or anybody's with the permission -- the same rule the server
   // enforces, so a button that appears always works.
-  if (message.userId === state.auth.user?.id || isAdmin()) {
+  if (message.userId === state.auth.user?.id || can('messages.delete')) {
     const remove = document.createElement('button');
     remove.className = 'msg-tool msg-tool-danger';
     remove.dataset.icon = 'trash';
@@ -8951,8 +9293,71 @@ function renderChat({ scrollToBottom = false, restore = null } = {}) {
     }
   }
 
-  if (scrollToBottom || wasAtBottom) log.scrollTop = log.scrollHeight;
+  if (scrollToBottom || wasAtBottom) {
+    log.scrollTop = log.scrollHeight;
+    holdChatBottom();
+  }
+  paintChatToBottom();
 }
+
+/*
+ * Staying at the newest message while the page settles.
+ *
+ * Going to the bottom once, when the rows are drawn, lands somewhere short of
+ * it for as long as anything below is still growing: a picture arrives and
+ * the message that holds it gets taller, an avatar, an emoji, a link. The
+ * first time a channel was opened in a session -- when nothing is cached, so
+ * everything arrives late -- that left the log hundreds of pixels above the
+ * newest message, for good.
+ *
+ * So for a few seconds after landing at the bottom, any row changing size puts
+ * it back there. Anything the reader does to scroll ends that at once, so
+ * somebody who has begun to read up is never taken down again.
+ */
+const CHAT_HOLD_MS = 4000;
+let chatHold = null;
+
+function releaseChatBottom() {
+  if (!chatHold) return;
+  const { observer, timer, stop } = chatHold;
+  chatHold = null;
+  observer.disconnect();
+  clearTimeout(timer);
+  for (const name of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+    el.chatLog.removeEventListener(name, stop, true);
+  }
+}
+
+function holdChatBottom() {
+  releaseChatBottom();
+  const log = el.chatLog;
+  const observer = new ResizeObserver(() => {
+    log.scrollTop = log.scrollHeight;
+    paintChatToBottom();
+  });
+  for (const row of log.children) observer.observe(row);
+  const stop = () => releaseChatBottom();
+  // The reader's own scrolling: the wheel, a finger, a press on the bar or the
+  // text, the keys. Scrolling done from here raises none of these.
+  for (const name of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+    log.addEventListener(name, stop, { capture: true, passive: true });
+  }
+  chatHold = { observer, stop, timer: setTimeout(releaseChatBottom, CHAT_HOLD_MS) };
+}
+
+/** The button beside the scroll bar: there while there is more below than a screen's worth of nothing. */
+function paintChatToBottom() {
+  const log = el.chatLog;
+  const away = log.scrollHeight - log.scrollTop - log.clientHeight > CHAT_BOTTOM_PX * 3;
+  el.chatToBottom.hidden = !away || !log.clientHeight;
+}
+
+el.chatLog.addEventListener('scroll', paintChatToBottom, { passive: true });
+el.chatToBottom.addEventListener('click', () => {
+  releaseChatBottom();
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  el.chatLog.scrollTo({ top: el.chatLog.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
+});
 
 /**
  * Scroll to a message, loading older pages until it is there.
@@ -10130,6 +10535,7 @@ function onRealtimeEvent(msg) {
     case 'presence':
       state.channels.online = new Set(msg.online ?? []);
       renderMembers();
+      profileCard?.refresh();
       // Somebody online this client has never heard of: an account made
       // since the list was fetched, on a server too old to announce it (or
       // an announcement missed while reconnecting). Fetch the list again
@@ -10144,6 +10550,23 @@ function onRealtimeEvent(msg) {
       // channels it has not been told about.
       if (msg.groups) state.channels.groups = msg.groups;
       renderChannels();
+      // A channel taken out of view -- deleted, or restricted to roles this
+      // person does not hold -- must not stay open on the stage.
+      if (state.chat.channelId && !state.channels.list.some((c) => c.id === state.chat.channelId)) {
+        closeChat();
+      }
+      serverAdmin?.render('channels');
+      break;
+
+    // The roles changed: a name's colour, what somebody may do, and every
+    // list that is drawn from them.
+    case 'roles':
+      adoptRoles(msg.roles);
+      profileCard?.refresh();
+      break;
+
+    case 'badges':
+      adoptBadges(msg.badges);
       break;
 
     case 'voice:roster':
@@ -10237,7 +10660,9 @@ function onRealtimeEvent(msg) {
       showView('view-connect');
       showError(msg.reason === 'account removed'
         ? t('session.account_removed')
-        : t('session.disconnected', { reason: msg.reason }));
+        : msg.reason === 'kicked' ? t('session.kicked')
+          : msg.reason === 'banned' ? t('session.banned')
+            : t('session.disconnected', { reason: msg.reason }));
       break;
 
     case 'soundpad':
@@ -10255,11 +10680,18 @@ function onRealtimeEvent(msg) {
      */
     case 'accounts':
       state.users = new Map(msg.users.map((u) => [u.id, u]));
+      // Your own entry may be the one that changed (a role taken away).
+      if (state.auth.user && state.users.has(state.auth.user.id)) {
+        state.auth.user = state.users.get(state.auth.user.id);
+      }
       refreshKeepSet();
+      applyRolePowers();
       renderVoiceRoster(state.channels.roster);
       renderChannels();
       renderMembers();
       renderChat();
+      serverAdmin?.render();
+      profileCard?.refresh();
       break;
 
     case 'user:updated':
@@ -10270,9 +10702,10 @@ function onRealtimeEvent(msg) {
         renderOwnAvatar();
         el.channelsWho.textContent = msg.user.displayName || msg.user.nickname;
         nameFont(el.channelsWho, msg.user.id, msg.user);
-        el.channelsRole.textContent = msg.user.role === 'member' ? '' : msg.user.role;
-        // Being made an admin has to reach the controls, not just the badge.
-        el.channelAdd.hidden = !isAdmin();
+        el.channelsRole.textContent = ownRoleText(msg.user);
+        // Being made an admin, or given a role, has to reach the controls,
+        // not just the badge -- at once, not on the next sign-in.
+        applyRolePowers();
         applyServerInfo();
         applyVoiceButtons();
       }
@@ -10283,6 +10716,8 @@ function onRealtimeEvent(msg) {
       renderChannels();
       renderMembers();
       renderChat();
+      serverAdmin?.render();
+      profileCard?.refresh();
       break;
 
     case 'soundpad:play':
@@ -10329,6 +10764,8 @@ function onRealtimeEvent(msg) {
       // Everything the hello carries, not just the channel list: a client
       // that was away has missed every roster broadcast in between, and the
       // hello is the one message that brings the whole picture back.
+      if (msg.roles) state.roles = sortRoles(msg.roles);
+      if (msg.badges) state.badges = msg.badges;
       if (msg.channels) state.channels.list = msg.channels;
       if (msg.groups) state.channels.groups = msg.groups;
       if (msg.online) state.channels.online = new Set(msg.online);
@@ -12528,6 +12965,66 @@ securityUi = createSecurityUi({
   note: profileNote,
 });
 
+/** A user the server has just handed back: the same as being told by a push. */
+const adoptUser = (user) => onRealtimeEvent({ type: 'user:updated', user });
+
+serverAdmin = createServerAdmin({
+  harmony,
+  t,
+  server: () => state.server,
+  me: () => state.auth.user,
+  roles: () => state.roles,
+  users: () => state.users,
+  channels: () => ({ list: state.channels.list, groups: state.channels.groups }),
+  setRoles: adoptRoles,
+  setUser: adoptUser,
+  displayOf,
+  avatarEl,
+  confirm: askConfirm,
+  moveToGroup: (id, groupId) => moveChannel(id, { groupId }),
+  setAccountRole: (id, role) => harmony.api.setRole(state.server, id, role),
+  badges: () => state.badges,
+  badgeEl,
+  uploadBadgeImage,
+});
+
+profileCard = createProfileCard({
+  harmony,
+  t,
+  server: () => state.server,
+  me: () => state.auth.user,
+  roles: () => state.roles,
+  users: () => state.users,
+  online: () => state.channels.online,
+  displayOf,
+  avatarEl,
+  nameFont,
+  roleLabel,
+  setUser: adoptUser,
+  canMessage: () => Boolean(dmUi?.available),
+  message: (userId) => dmUi.openWith(userId),
+  canManage: () => serverTabsAllowed().members,
+  manage: (userId) => {
+    openServerDialog('members');
+    serverAdmin.focusMember(userId);
+  },
+  badges: () => state.badges,
+  badgeEl,
+});
+
+/*
+ * Clicking a person -- their row in a list, their picture or name in the
+ * chat -- opens their card. Whatever draws a person marks the element with
+ * data-profile-user, so this is the one place that knows what a click on
+ * somebody does.
+ */
+document.addEventListener('click', (event) => {
+  const target = event.target.closest?.('[data-profile-user]');
+  if (!target || event.target.closest('dialog[open]')) return;
+  const userId = Number(target.dataset.profileUser);
+  if (Number.isInteger(userId) && state.users.has(userId)) profileCard.open(userId, target);
+});
+
 /*
  * Forgot the password: answer the three questions written while signed in,
  * choose a new one, and be signed in with it. The server does the judging;
@@ -13054,6 +13551,7 @@ el.voiceConfig.addEventListener('click', () => {
   profileNote(el.profileNameNote, '');
   profileNote(el.profileBannerNote, '');
   profileNote(el.profileFontNote, '');
+  profileNote(el.profileColorNote, '');
   profileNote(el.profileSoundNote, '');
   openBackgroundSettings();
   securityUi?.render();
@@ -13620,14 +14118,17 @@ el.channelAdd.addEventListener('click', async () => {
           { value: 'group', label: t('app.group_a_folder') },
         ],
       },
-      { name: 'password', label: t('app.password'), type: 'password', placeholder: t('app.open_to_everyone') },
+      // Only offered to somebody the server would let put one on.
+      ...(can('channels.password')
+        ? [{ name: 'password', label: t('app.password'), type: 'password', placeholder: t('app.open_to_everyone') }]
+        : []),
     ],
   });
   if (!answer?.name) return;
   const { name, kind } = answer;
   const password = answer.password || undefined;
   try {
-    if (kind === 'group') await harmony.api.createGroup(state.server, name);
+    if (kind === 'group') await harmony.api.createGroup(state.server, name, password ? { password } : {});
     else await harmony.api.createChannel(state.server, { kind, name, password });
     // The server broadcasts the new list to everyone, including us.
   } catch (err) {

@@ -168,6 +168,25 @@ function cleanChannelName(raw) {
     .slice(0, 32);
 }
 
+/**
+ * The roles a channel or group is restricted to, as one comma-separated column,
+ * parsed into `roleIds` by Channels. An empty list is an open channel.
+ */
+const CHANNEL_ROLE_IDS =
+  '(SELECT group_concat(role_id) FROM channel_roles WHERE channel_id = channels.id) AS role_ids';
+const GROUP_ROLE_IDS =
+  '(SELECT group_concat(role_id) FROM group_roles WHERE group_id = channel_groups.id) AS role_ids';
+
+const CHANNEL_USER_IDS =
+  '(SELECT group_concat(user_id) FROM channel_users WHERE channel_id = channels.id) AS user_ids';
+const GROUP_USER_IDS =
+  '(SELECT group_concat(user_id) FROM group_users WHERE group_id = channel_groups.id) AS user_ids';
+
+const ids = (text) => (text ? String(text).split(',').map(Number) : []);
+const withRoleIds = (row) => (row
+  ? { ...row, roleIds: ids(row.role_ids), userIds: ids(row.user_ids) }
+  : row);
+
 export class Channels {
   #db;
   #q;
@@ -175,11 +194,36 @@ export class Channels {
   constructor(db) {
     this.#db = db;
     this.#q = {
-      all: db.prepare('SELECT * FROM channels ORDER BY position, id'),
+      all: db.prepare(`SELECT channels.*, ${CHANNEL_ROLE_IDS}, ${CHANNEL_USER_IDS} FROM channels ORDER BY position, id`),
       setGroup: db.prepare('UPDATE channels SET group_id = ?, position = ? WHERE id = ?'),
+      setChannelPassword: db.prepare('UPDATE channels SET password_hash = ? WHERE id = ?'),
 
-      groups: db.prepare('SELECT * FROM channel_groups ORDER BY position, id'),
-      groupById: db.prepare('SELECT * FROM channel_groups WHERE id = ?'),
+      groups: db.prepare(
+        `SELECT channel_groups.*, ${GROUP_ROLE_IDS}, ${GROUP_USER_IDS} FROM channel_groups ORDER BY position, id`,
+      ),
+      groupById: db.prepare(
+        `SELECT channel_groups.*, ${GROUP_ROLE_IDS}, ${GROUP_USER_IDS} FROM channel_groups WHERE id = ?`,
+      ),
+      setGroupPassword: db.prepare('UPDATE channel_groups SET password_hash = ? WHERE id = ?'),
+      channelsOfGroup: db.prepare('SELECT id FROM channels WHERE group_id = ?'),
+      clearChannelRoles: db.prepare('DELETE FROM channel_roles WHERE channel_id = ?'),
+      addChannelRole: db.prepare(
+        'INSERT OR IGNORE INTO channel_roles (channel_id, role_id) VALUES (?, ?)',
+      ),
+      clearGroupRoles: db.prepare('DELETE FROM group_roles WHERE group_id = ?'),
+      addGroupRole: db.prepare(
+        'INSERT OR IGNORE INTO group_roles (group_id, role_id) VALUES (?, ?)',
+      ),
+      roleExists: db.prepare('SELECT 1 AS ok FROM roles WHERE id = ?'),
+      userExists: db.prepare('SELECT 1 AS ok FROM users WHERE id = ?'),
+      clearChannelUsers: db.prepare('DELETE FROM channel_users WHERE channel_id = ?'),
+      addChannelUser: db.prepare(
+        'INSERT OR IGNORE INTO channel_users (channel_id, user_id) VALUES (?, ?)',
+      ),
+      clearGroupUsers: db.prepare('DELETE FROM group_users WHERE group_id = ?'),
+      addGroupUser: db.prepare(
+        'INSERT OR IGNORE INTO group_users (group_id, user_id) VALUES (?, ?)',
+      ),
       insertGroup: db.prepare(
         'INSERT INTO channel_groups (name, position, created_at) VALUES (?, ?, ?)',
       ),
@@ -191,7 +235,7 @@ export class Channels {
       renameGroup: db.prepare('UPDATE channel_groups SET name = ? WHERE id = ?'),
       setGroupPosition: db.prepare('UPDATE channel_groups SET position = ? WHERE id = ?'),
       removeGroup: db.prepare('DELETE FROM channel_groups WHERE id = ?'),
-      byId: db.prepare('SELECT * FROM channels WHERE id = ?'),
+      byId: db.prepare(`SELECT channels.*, ${CHANNEL_ROLE_IDS}, ${CHANNEL_USER_IDS} FROM channels WHERE id = ?`),
       insert: db.prepare(
         'INSERT INTO channels (kind, name, position, password_hash, created_at) '
         + 'VALUES (?, ?, ?, ?, ?)',
@@ -217,27 +261,52 @@ export class Channels {
   }
 
   list() {
-    return this.#q.all.all();
+    return this.#q.all.all().map(withRoleIds);
   }
 
   get(id) {
-    return this.#q.byId.get(id) ?? null;
+    return withRoleIds(this.#q.byId.get(id)) ?? null;
   }
 
-  async create({ kind, name, password }) {
+  /**
+   * Make a channel. With a `groupId` it is made INSIDE that group, and takes
+   * the group's password, roles and people in the same step -- never made open
+   * and then moved in, which would show a private channel to everybody for the
+   * moment in between. A password of its own is ignored there: it follows the group.
+   */
+  async create({ kind, name, password, groupId = null }) {
     if (kind !== 'voice' && kind !== 'text') return { ok: false, error: 'invalid_kind' };
     const clean = cleanChannelName(name);
     if (!clean) return { ok: false, error: 'invalid_name' };
+    const group = groupId == null ? null : this.group(Number(groupId));
+    if (groupId != null && !group) return { ok: false, error: 'no_such_group' };
 
-    const hash = password ? await hashPassword(password) : null;
+    const hash = group ? (group.password_hash ?? null) : (password ? await hashPassword(password) : null);
     const position = this.#q.nextPosition.get().p;
-    this.#q.insert.run(kind, clean, position, hash, Date.now());
-    return { ok: true, channel: this.#q.all.all().find((c) => c.position === position) };
+    this.#db.exec('BEGIN');
+    let id;
+    try {
+      id = Number(this.#q.insert.run(kind, clean, position, hash, Date.now()).lastInsertRowid);
+      if (group) {
+        this.#q.setGroup.run(group.id, position, id);
+        this.#replaceRoles(this.#q.clearChannelRoles, this.#q.addChannelRole, id, group.roleIds);
+        this.#replaceRoles(this.#q.clearChannelUsers, this.#q.addChannelUser, id, group.userIds);
+      }
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    return { ok: true, channel: this.get(id) };
   }
 
   async update(id, { name, password }) {
     const channel = this.get(id);
     if (!channel) return { ok: false, error: 'no_such_channel' };
+    // Inside a group a channel has no password of its own: see #followGroup.
+    if (password !== undefined && channel.group_id != null) {
+      return { ok: false, error: 'follows_group' };
+    }
 
     if (name !== undefined) {
       const clean = cleanChannelName(name);
@@ -255,6 +324,138 @@ export class Channels {
     return { ok: true, channel: this.get(id) };
   }
 
+  /**
+   * Restrict a channel to these roles; none at all makes it open again.
+   * A role that does not exist is refused rather than skipped, because a
+   * list quietly shorter than the one that was sent is a channel left open
+   * by mistake.
+   */
+  setRoles(id, roleIds) {
+    const channel = this.get(id);
+    if (!channel) return { ok: false, error: 'no_such_channel' };
+    if (channel.group_id != null) return { ok: false, error: 'follows_group' };
+    const ids = this.#checkRoles(roleIds);
+    if (!ids) return { ok: false, error: 'no_such_role' };
+    this.#db.exec('BEGIN');
+    try {
+      this.#replaceRoles(this.#q.clearChannelRoles, this.#q.addChannelRole, id, ids);
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    return { ok: true, channel: this.get(id) };
+  }
+
+  /**
+   * Let these people see a channel by name, whatever roles they hold. Together
+   * with its roles they are the channel's audience: a channel with neither is
+   * open. A person who does not exist is refused, as a role is.
+   */
+  setUsers(id, userIds) {
+    const channel = this.get(id);
+    if (!channel) return { ok: false, error: 'no_such_channel' };
+    if (channel.group_id != null) return { ok: false, error: 'follows_group' };
+    const list = this.#checkUsers(userIds);
+    if (!list) return { ok: false, error: 'no_such_user' };
+    this.#db.exec('BEGIN');
+    try {
+      this.#replaceRoles(this.#q.clearChannelUsers, this.#q.addChannelUser, id, list);
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    return { ok: true, channel: this.get(id) };
+  }
+
+  /** The same for a group; the channels in it take the list. */
+  setGroupUsers(id, userIds) {
+    if (!this.group(id)) return { ok: false, error: 'no_such_group' };
+    const list = this.#checkUsers(userIds);
+    if (!list) return { ok: false, error: 'no_such_user' };
+    this.#db.exec('BEGIN');
+    try {
+      this.#replaceRoles(this.#q.clearGroupUsers, this.#q.addGroupUser, id, list);
+      for (const { id: channelId } of this.#q.channelsOfGroup.all(id)) {
+        this.#replaceRoles(this.#q.clearChannelUsers, this.#q.addChannelUser, channelId, list);
+      }
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    return { ok: true, group: this.group(id) };
+  }
+
+  #checkUsers(userIds) {
+    if (!Array.isArray(userIds)) return null;
+    const list = [...new Set(userIds.map(Number))];
+    if (list.some((n) => !Number.isInteger(n) || !this.#q.userExists.get(n))) return null;
+    return list;
+  }
+
+  /** The same for a group: it gates every channel inside it as well as its own heading. */
+  setGroupRoles(id, roleIds) {
+    if (!this.group(id)) return { ok: false, error: 'no_such_group' };
+    const ids = this.#checkRoles(roleIds);
+    if (!ids) return { ok: false, error: 'no_such_role' };
+    this.#db.exec('BEGIN');
+    try {
+      this.#replaceRoles(this.#q.clearGroupRoles, this.#q.addGroupRole, id, ids);
+      // Every channel in the group takes the new list.
+      for (const { id: channelId } of this.#q.channelsOfGroup.all(id)) {
+        this.#replaceRoles(this.#q.clearChannelRoles, this.#q.addChannelRole, channelId, ids);
+      }
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    return { ok: true, group: this.group(id) };
+  }
+
+  #checkRoles(roleIds) {
+    if (!Array.isArray(roleIds)) return null;
+    const ids = [...new Set(roleIds.map(Number))];
+    if (ids.some((n) => !Number.isInteger(n) || !this.#q.roleExists.get(n))) return null;
+    return ids;
+  }
+
+  #replaceRoles(clear, add, id, ids) {
+    clear.run(id);
+    for (const roleId of ids) add.run(id, roleId);
+  }
+
+  /**
+   * Put a password on a group -- which puts it on every channel inside.
+   *
+   * The same hash, copied onto EVERY channel in the group -- a channel in a
+   * group has no password of its own, it follows the group (see #followGroup),
+   * and one moved in later gets it too. Everybody who was admitted before is
+   * asked again, as for any password change. An empty password takes the
+   * password off the group and everything in it.
+   */
+  async setGroupPassword(id, password) {
+    const group = this.group(id);
+    if (!group) return { ok: false, error: 'no_such_group' };
+    const hash = password ? await hashPassword(password) : null;
+
+    this.#db.exec('BEGIN');
+    try {
+      for (const { id: channelId } of this.#q.channelsOfGroup.all(id)) {
+        this.#q.setChannelPassword.run(hash, channelId);
+        this.#q.clearGrants.run(channelId);
+      }
+      this.#q.setGroupPassword.run(hash, id);
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    return { ok: true, group: this.group(id) };
+  }
+
   remove(id) {
     if (!this.get(id)) return { ok: false, error: 'no_such_channel' };
     this.#q.remove.run(id);
@@ -264,7 +465,11 @@ export class Channels {
   // ------------------------------------------------------------- groups
 
   groups() {
-    return this.#q.groups.all();
+    return this.#q.groups.all().map(withRoleIds);
+  }
+
+  group(id) {
+    return withRoleIds(this.#q.groupById.get(id)) ?? null;
   }
 
   createGroup(name) {
@@ -272,15 +477,15 @@ export class Channels {
     if (!clean) return { ok: false, error: 'invalid_name' };
     const position = this.#q.nextGroupPosition.get().p;
     const info = this.#q.insertGroup.run(clean, position, Date.now());
-    return { ok: true, group: this.#q.groupById.get(Number(info.lastInsertRowid)) };
+    return { ok: true, group: this.group(Number(info.lastInsertRowid)) };
   }
 
   renameGroup(id, name) {
-    if (!this.#q.groupById.get(id)) return { ok: false, error: 'no_such_group' };
+    if (!this.group(id)) return { ok: false, error: 'no_such_group' };
     const clean = cleanChannelName(name);
     if (!clean) return { ok: false, error: 'invalid_name' };
     this.#q.renameGroup.run(clean, id);
-    return { ok: true, group: this.#q.groupById.get(id) };
+    return { ok: true, group: this.group(id) };
   }
 
   /**
@@ -291,7 +496,7 @@ export class Channels {
    * separate decision from deleting what was in it.
    */
   removeGroup(id) {
-    if (!this.#q.groupById.get(id)) return { ok: false, error: 'no_such_group' };
+    if (!this.group(id)) return { ok: false, error: 'no_such_group' };
     this.#q.removeGroup.run(id);
     return { ok: true };
   }
@@ -385,9 +590,27 @@ export class Channels {
       // The index in the submitted list IS the position. The client sends
       // everything in the order it is drawn, so there is nothing to compute
       // and no way for the two to disagree.
+      const groupsById = new Map(currentGroups.map((g) => [g.id, g]));
       flat.forEach((entry, i) => {
-        if ('group' in entry) this.#q.setGroupPosition.run(i, entry.group);
-        else this.#q.setGroup.run(entry.groupId, i, entry.id);
+        if ('group' in entry) {
+          this.#q.setGroupPosition.run(i, entry.group);
+          return;
+        }
+        this.#q.setGroup.run(entry.groupId, i, entry.id);
+
+        // A channel moved INTO a group follows it from then on: its password
+        // and its roles become the group's. Moved back out, it keeps what it
+        // had there -- it is not quietly opened to everybody on the way out.
+        const was = knownChannels.get(entry.id);
+        if ((was.group_id ?? null) === entry.groupId) return;
+        const into = groupsById.get(entry.groupId);
+        if (!into) return;
+        if ((was.password_hash ?? null) !== (into.password_hash ?? null)) {
+          this.#q.setChannelPassword.run(into.password_hash ?? null, entry.id);
+          this.#q.clearGrants.run(entry.id);
+        }
+        this.#replaceRoles(this.#q.clearChannelRoles, this.#q.addChannelRole, entry.id, into.roleIds);
+        this.#replaceRoles(this.#q.clearChannelUsers, this.#q.addChannelUser, entry.id, into.userIds);
       });
       this.#db.exec('COMMIT');
     } catch (err) {
@@ -431,14 +654,25 @@ export class Channels {
    * A correct password is remembered as a grant, so it is asked once per person
    * rather than once per join.
    */
-  async admit(channelId, userId, password) {
+  async admit(channelId, userId, password, { bypass = false } = {}) {
     const channel = this.get(channelId);
     if (!channel) return 'no_such_channel';
     if (!channel.password_hash) return 'ok';
+    // The owner, super admins and admin roles hold every key: they do not type one.
+    if (bypass) return 'ok';
     if (this.#q.hasGrant.get(channelId, userId)) return 'ok';
     if (password == null || password === '') return 'password_required';
     if (!(await verifyPassword(String(password), channel.password_hash))) return 'bad_password';
     this.#q.grant.run(channelId, userId, Date.now());
+    // A group's password is one key for the whole group: typing it once
+    // opens the other channels it was copied onto, not one door at a time.
+    if (channel.group_id != null) {
+      for (const { id } of this.#q.channelsOfGroup.all(channel.group_id)) {
+        if (this.get(id)?.password_hash === channel.password_hash) {
+          this.#q.grant.run(id, userId, Date.now());
+        }
+      }
+    }
     return 'ok';
   }
 
@@ -454,12 +688,19 @@ export const publicChannel = (c) => (c ? {
   position: c.position,
   groupId: c.group_id ?? null,
   locked: Boolean(c.password_hash),
+  // The roles it is restricted to; empty is open to everybody.
+  roles: c.roleIds ?? [],
+  // People let in by name, besides the roles.
+  users: c.userIds ?? [],
 } : null);
 
 export const publicGroup = (g) => (g ? {
   id: g.id,
   name: g.name,
   position: g.position,
+  locked: Boolean(g.password_hash),
+  roles: g.roleIds ?? [],
+  users: g.userIds ?? [],
 } : null);
 
 // ---------------------------------------------------------------------------

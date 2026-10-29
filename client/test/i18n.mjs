@@ -188,8 +188,8 @@ async function run() {
   await cdp.evaluate("document.getElementById('continue').click(); return true;");
   await waitFor(cdp, "document.querySelector('.view[data-active]')?.id === 'view-channels'", { label: 'the channels view' });
   await sleep(1000);
-  check('what JavaScript draws is Portuguese too: the member list heading',
-    (await cdp.evaluate("return document.querySelector('.member-head')?.textContent")) === pt['members.online'].replace('{count}', '1'),
+  check('what JavaScript draws is Portuguese too: the member list heading (the owner has a heading of their own)',
+    (await cdp.evaluate("return document.querySelector('.member-head')?.textContent")) === `${pt['roles.owner']} — 1`,
     await cdp.evaluate("return document.querySelector('.member-head')?.textContent"));
 
   // The picker.
@@ -206,7 +206,7 @@ async function run() {
   await sleep(900);
   const es = tables.es;
   check('choosing Spanish changes the open page at once', (await text(cdp, 'ask-cancel')) === es['ask_cancel.cancel'] && (await cdp.evaluate("return document.documentElement.lang")) === 'es');
-  check('and the text JavaScript drew', (await cdp.evaluate("return document.querySelector('.member-head')?.textContent")) === es['members.online'].replace('{count}', '1'),
+  check('and the text JavaScript drew', (await cdp.evaluate("return document.querySelector('.member-head')?.textContent")) === `${es['roles.owner']} — 1`,
     await cdp.evaluate("return document.querySelector('.member-head')?.textContent"));
   check('and the tab names', (await cdp.evaluate("return document.querySelector('.settings-tab[data-tab=\"profile\"]').textContent.trim()")) === es['settings.profile']);
   const saved = await cdp.evaluate("const s = await harmony.settings.get(); return (s.data ?? s).language");
