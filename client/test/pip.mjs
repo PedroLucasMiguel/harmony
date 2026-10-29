@@ -329,9 +329,9 @@ async function run() {
   // --- back to the stage ----------------------------------------------------------------------------------------------------------
   await viewer.evaluate("document.getElementById('pip-stage').click(); return true;");
   v = await settle((x) => x.layout === 'grid' && x.pipHidden, 'back on the stage');
-  check("the window's own button turns it off and the streams are a grid again", v.layout === 'grid' && v.inWindow.length === 0, JSON.stringify(v));
+  check("the window's own button puts the streams back on the stage as a grid", v.layout === 'grid' && v.inWindow.length === 0, JSON.stringify(v));
   const checkbox = await viewer.evaluate("return document.getElementById('picture-in-picture').checked");
-  check('and the setting follows', checkbox === false, String(checkbox));
+  check('and leaves the setting alone: it is the setting that turns picture in picture off', checkbox === true, String(checkbox));
 }
 
 run()

@@ -6231,6 +6231,7 @@ function pipChoice() {
 
 /** Put one tile in the window, the one that was there back in the stage. */
 function showInPip(shown) {
+  const appearing = el.pip.hidden && Boolean(shown);
   el.pip.hidden = !shown;
   const body = el.pipBody;
   if (!shown) {
@@ -6253,7 +6254,10 @@ function showInPip(shown) {
   el.pipNote.textContent = pip.auto && pip.auto === shown.dataset.key
     ? t('app.pip_talking', { name: nameOfMid(Number(shown.dataset.mid)) })
     : '';
-  placePip();
+  // Only when it appears. This runs every hundred milliseconds with the speaking
+  // poll, and putting the window back where it was last SAVED each time is what
+  // made it fight anybody trying to move it.
+  if (appearing) placePip();
 }
 
 /** The poll that follows the conversation; cheap when nothing changed. */
@@ -6263,8 +6267,11 @@ function refreshPip() {
   if (wanted) showInPip(wanted);
 }
 
+/** Where the window is now, in the page: what a drag starts from and what a resize of the app keeps. */
+let pipCurrent = null;
+
 function pipRect() {
-  const saved = state.settings?.pipRect;
+  const saved = pipCurrent ?? state.settings?.pipRect;
   const w = Math.max(PIP_MIN_W, Math.min(window.innerWidth - 16, saved?.w ?? PIP_DEFAULT.w));
   const h = Math.max(PIP_MIN_H, Math.min(window.innerHeight - 16, saved?.h ?? PIP_DEFAULT.h));
   // Fully on screen whatever the window was when it was saved: a window that
@@ -6280,6 +6287,7 @@ function placePip(rect = pipRect()) {
     Object.assign(el.pip.style, { left: '', top: '', width: '', height: '' });
     return;
   }
+  pipCurrent = rect;
   Object.assign(el.pip.style, {
     left: `${rect.x}px`,
     top: `${rect.y}px`,
@@ -6298,7 +6306,8 @@ async function savePipRect() {
 /** Drag the bar to move the window, its corner to resize it. */
 function dragPip(handle, change) {
   handle.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0 || event.target.closest('button') || pipDetached()) return;
+    // Not from a control: a press on a button or a volume slider is that control's.
+    if (event.button !== 0 || event.target.closest('button, input, .tile-controls, .tile-corner') || pipDetached()) return;
     event.preventDefault();
     const start = pipRect();
     const from = { x: event.clientX, y: event.clientY };
@@ -6334,6 +6343,16 @@ dragPip(el.pipBar, {
     y: Math.max(0, Math.min(window.innerHeight - r.h, r.y + dy)),
   }),
 });
+// The picture as well as the bar: reaching for the bar to move something is not
+// what anybody does with a window that is mostly picture.
+dragPip(el.pipBody, {
+  flag: 'data-moving',
+  apply: (r, dx, dy) => ({
+    ...r,
+    x: Math.max(0, Math.min(window.innerWidth - r.w, r.x + dx)),
+    y: Math.max(0, Math.min(window.innerHeight - r.h, r.y + dy)),
+  }),
+});
 dragPip(el.pipResize, {
   flag: 'data-resizing',
   apply: (r, dx, dy) => clampPip({ ...r, w: r.w + dx, h: r.h + dy }),
@@ -6353,10 +6372,14 @@ function stepPip(by) {
 }
 el.pipPrev.addEventListener('click', () => stepPip(-1));
 el.pipNext.addEventListener('click', () => stepPip(1));
-el.pipStage.addEventListener('click', async () => {
-  await harmony.settings.set({ pictureInPicture: false });
-  state.settings = await harmony.settings.get();
-  el.pictureInPicture.checked = false;
+// The streams back on the stage, as the grid. NOT "turn picture in picture off":
+// that is the setting's to say, and a button in the corner of a window that is
+// being dragged about is too easy to press for it to be the one that does it.
+// Opening a text channel brings the window back, as it always does.
+el.pipStage.addEventListener('click', () => {
+  returnPip({ render: false });
+  dmUi?.closeConversation();
+  closeChat();
   renderChannelVideo();
 });
 el.pictureInPicture.addEventListener('change', async () => {

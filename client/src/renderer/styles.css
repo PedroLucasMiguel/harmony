@@ -6730,6 +6730,12 @@ input[data-saved] {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  /* The picture moves the window as well as the bar does. */
+  cursor: grab;
+  touch-action: none;
+}
+.pip[data-moving] .pip-body {
+  cursor: grabbing;
 }
 .pip-body > .channel-tile {
   flex: 1 1 auto;
@@ -6737,7 +6743,7 @@ input[data-saved] {
   display: flex;
   flex-direction: column;
   border-radius: 0;
-  cursor: default;
+  cursor: inherit;
 }
 .pip-body > .channel-tile video {
   flex: 1 1 auto;
@@ -6758,7 +6764,8 @@ input[data-saved] {
   border-radius: 0;
   box-shadow: none;
 }
-.pip[data-detached] .pip-bar {
+.pip[data-detached] .pip-bar,
+.pip[data-detached] .pip-body {
   cursor: default;
 }
 .pip[data-detached] .pip-resize {
