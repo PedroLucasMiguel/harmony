@@ -7637,3 +7637,82 @@ input[type='color'] {
   text-transform: none;
   white-space: nowrap;
 }
+
+
+/*
+ * The server dialog's list-and-editor pages fill the dialog.
+ *
+ * They used to be as tall as their contents and the list was capped at a
+ * fixed height, so on a big window a short list sat at the top of an empty
+ * page. Now the page takes the height there is: the list fills it and scrolls
+ * inside itself, and the editor is a card that scrolls inside the space left
+ * (and does not stretch across a wide window past a comfortable width).
+ */
+#server-dialog .settings-pages {
+  display: flex;
+  flex-direction: column;
+}
+#server-dialog .admin-page:not([hidden]) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 24rem;
+}
+#server-dialog .admin-page .admin-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
+}
+#server-dialog .admin-page .admin-list-col,
+#server-dialog .admin-page .admin-split > .admin-list {
+  min-height: 0;
+}
+#server-dialog .admin-page .admin-list {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 8rem;
+}
+#server-dialog .admin-page .admin-split > .admin-list {
+  flex: 0 0 clamp(14rem, 38%, 22rem);
+}
+#server-dialog .admin-page .admin-list-col {
+  flex-basis: clamp(14rem, 38%, 22rem);
+}
+#server-dialog .admin-page .admin-editor {
+  align-self: flex-start;
+  max-height: 100%;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 46rem;
+}
+@media (max-width: 640px) {
+  #server-dialog .admin-page .admin-split {
+    flex: none;
+  }
+  #server-dialog .admin-page .admin-list {
+    flex: none;
+    max-height: 14rem;
+  }
+  #server-dialog .admin-page .admin-split > .admin-list,
+  #server-dialog .admin-page .admin-list-col {
+    flex-basis: auto;
+  }
+  #server-dialog .admin-page .admin-editor {
+    max-height: none;
+    max-width: none;
+  }
+}
+
+/*
+ * A channel inside a group is set in from the heading, with a thin line down
+ * its left edge -- the line is what makes the block read as "these belong to
+ * that heading" at a glance, where indentation alone was easy to miss. The
+ * people listed under a voice channel move in with it.
+ */
+.channel-list li.channel-row[data-group-id],
+.channel-list li.channel-members[data-group-id] {
+  margin-left: 1.1rem;
+  border-left: 2px solid rgb(var(--tint-rgb) / 0.12);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}

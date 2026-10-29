@@ -3336,6 +3336,8 @@ function channelNodes(channel) {
   const list = document.createElement('li');
   list.className = 'channel-members';
   list.dataset.for = String(channel.id);
+  // Under a channel in a group, it is indented with it.
+  if (channel.groupId != null) list.dataset.groupId = String(channel.groupId);
   // Dropping onto the people already in a channel means that channel too;
   // the highlight goes on its row, which is what the drop is about.
   acceptMemberDrop(list, channel, li);
@@ -13092,29 +13094,36 @@ harmony.realtime.onEvent(onRealtimeEvent);
 // --- column widths ------------------------------------------------------------
 
 /*
- * The channel list and the member list can be dragged narrower, never
- * wider than they are by default -- the layout was drawn for those widths,
- * and wider only takes room from the stage. Remembered in settings.json.
+ * The channel list and the member list can be dragged narrower or wider than
+ * they start. Remembered in settings.json.
  *
- * Applied as a whole grid track through a CSS variable: minmax(floor, w),
- * so a narrow window can still squeeze the column below what was dragged,
- * as it could before.
+ * Applied as a whole grid track through a CSS variable: minmax(floor, w), so a
+ * narrow window can still squeeze the column below what was dragged. A wide
+ * one is also held to a share of the window (`share`, in vw), or dragging the
+ * channel list out to its limit on a small screen would leave the chat with
+ * nothing.
+ *
+ * `normal` is the width the layout was drawn for, and what an unset column
+ * is: dragging back to it forgets the setting.
  */
 const COLUMNS = {
-  side: { setting: 'sideWidth', css: '--side-col', min: 180, floor: 200, max: 260 },
-  members: { setting: 'membersWidth', css: '--members-col', min: 130, floor: 150, max: 200 },
+  side: { setting: 'sideWidth', css: '--side-col', min: 160, floor: 200, normal: 260, max: 560, share: 38 },
+  members: { setting: 'membersWidth', css: '--members-col', min: 120, floor: 150, normal: 200, max: 480, share: 34 },
 };
 
-/** Set a column's width; null or anything at the maximum is the default. */
+/** Set a column's width; null, or the normal width, is the default. */
 function applyColumnWidth(key, width) {
   const col = COLUMNS[key];
   const wanted = Number(width);
-  if (width == null || !Number.isFinite(wanted) || wanted >= col.max) {
+  if (width == null || !Number.isFinite(wanted) || Math.abs(wanted - col.normal) < 2) {
     el.channelsLayout.style.removeProperty(col.css);
     return null;
   }
-  const w = Math.round(Math.max(col.min, wanted));
-  el.channelsLayout.style.setProperty(col.css, `minmax(${Math.min(col.floor, w)}px, ${w}px)`);
+  const w = Math.round(Math.min(col.max, Math.max(col.min, wanted)));
+  el.channelsLayout.style.setProperty(
+    col.css,
+    `minmax(${Math.min(col.floor, w)}px, min(${w}px, ${col.share}vw))`,
+  );
   return w;
 }
 
