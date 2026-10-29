@@ -17,7 +17,9 @@ import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
 import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
-import { canAdminister, contextOf, nameLookOf, rolesOf, roleLook, sortRoles } from './roles.js';
+import {
+  canAdminister, contextOf, nameLookOf, roleIcon, rolesOf, roleLook, sortRoles,
+} from './roles.js';
 import { createServerAdmin } from './server-admin.js';
 import { createProfileCard } from './profile-card.js';
 import { NAME_COLOR_SPEED, NAME_COLOR_STOPS, paintName, startingPoint } from './name-color.js';
@@ -4114,13 +4116,8 @@ function renderMembers() {
     li.append(name);
     showBanner(li, user.bannerHash);
 
-    // Online, the heading above already says what they are; away, there is none.
-    if (off && (user.role === 'owner' || user.role === 'admin')) {
-      const tag = document.createElement('span');
-      tag.className = 'role-tag';
-      tag.textContent = roleLabel(user.role);
-      li.append(tag);
-    }
+    // An icon, not a word: a crown for the owner, a shield for a super admin.
+    if (user.role === 'owner' || user.role === 'admin') li.append(roleIcon(user.role, roleLabel(user.role)));
     if (user.banned) li.dataset.banned = '';
 
     // The user object is read from state at click time rather than
@@ -5204,16 +5201,12 @@ function renderVoiceRoster(roster) {
     // Who can throw you out is worth being able to see without opening a
     // menu on every person in turn.
     const role = knownUser(member.userId)?.role;
-    let badge = li.querySelector('.role-tag');
-    if (role === 'owner' || role === 'admin') {
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'tag role-tag';
-        li.querySelector('.member-name').after(badge);
-      }
-      badge.textContent = roleLabel(role);
-    } else if (badge) {
-      badge.remove();
+    // Rows are reused, so the icon is only replaced when the person in it changed kind.
+    const badge = li.querySelector('.role-icon');
+    const wanted = role === 'owner' || role === 'admin' ? role : null;
+    if (badge && badge.dataset.kind !== wanted) badge.remove();
+    if (wanted && badge?.dataset.kind !== wanted) {
+      li.querySelector('.member-name').after(roleIcon(wanted, roleLabel(wanted)));
     }
     renderStatus(li.querySelector('.status'), member);
 

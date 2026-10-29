@@ -11,7 +11,8 @@
 // by the time it returns their client has already been told.
 
 import {
-  PERMISSION_GROUPS, canAssign, canManageRole, canReorderTo, contextOf, nameLookOf, outranks, roleLook, rolesOf, sortRoles,
+  PERMISSION_GROUPS, canAssign, canManageRole, canReorderTo, contextOf, nameLookOf, outranks, roleIcon, roleLook, rolesOf,
+  sortRoles,
 } from './roles.js';
 import {
   NAME_COLOR_SPEED, NAME_COLOR_STOPS, paintName, startingPoint,
@@ -559,10 +560,7 @@ export function createServerAdmin(deps) {
       paintName(name, user.nameColor ?? null, nameLookOf(user, roles()));
       const li = item(memberSelected === user.id, avatarEl(user, 'tiny'), name);
       if (user.role === 'owner' || user.role === 'admin') {
-        const tag = document.createElement('span');
-        tag.className = 'role-tag';
-        tag.textContent = t(`roles.${user.role}`);
-        li.append(tag);
+        li.append(roleIcon(user.role, t(`roles.${user.role}`)));
       }
       li.append(roleChips(user));
       if (user.banned) li.dataset.banned = '';
@@ -613,10 +611,7 @@ export function createServerAdmin(deps) {
     paintName(name, user.nameColor ?? null, nameLookOf(user, roles()));
     mb.subject.replaceChildren(avatarEl(user, 'tiny'), name);
     if (user.role === 'owner' || user.role === 'admin') {
-      const tag = document.createElement('span');
-      tag.className = 'role-tag';
-      tag.textContent = t(`roles.${user.role}`);
-      mb.subject.append(tag);
+      mb.subject.append(roleIcon(user.role, t(`roles.${user.role}`)));
     }
 
     const held = new Set(user.roles ?? []);

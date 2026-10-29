@@ -56,3 +56,5 @@
 [data-icon='arrow-down'] { --icon: url('icons/arrow-down.svg'); }
 [data-icon='arrow-up'] { --icon: url('icons/arrow-up.svg'); }
 [data-icon='medal'] { --icon: url('icons/medal.svg'); }
+[data-icon='crown-simple'] { --icon: url('icons/crown-simple.svg'); }
+[data-icon='shield-star'] { --icon: url('icons/shield-star.svg'); }

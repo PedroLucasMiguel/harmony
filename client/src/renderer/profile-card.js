@@ -10,7 +10,9 @@
 // Which controls exist comes from roles.js, which mirrors the server's rules to
 // decide what to OFFER; the server decides what is allowed.
 
-import { canAssign, contextOf, nameColorOf, outranks, rolesOf, sortRoles } from './roles.js';
+import {
+  canAssign, contextOf, nameColorOf, outranks, roleIcon, rolesOf, sortRoles,
+} from './roles.js';
 
 /**
  * @param {object} deps
@@ -156,10 +158,7 @@ export function createProfileCard(deps) {
     handle.className = 'profile-card-handle';
     handle.textContent = user.nickname;
     if (user.role === 'owner' || user.role === 'admin') {
-      const tag = document.createElement('span');
-      tag.className = 'role-tag';
-      tag.textContent = roleLabel(user.role);
-      handle.append(' ', tag);
+      handle.append(' ', roleIcon(user.role, roleLabel(user.role)));
     }
 
     const body = document.createElement('div');

@@ -112,3 +112,22 @@ export function canAdminister(actor) {
       'users.kick', 'users.ban', 'badges.create', 'badges.edit'].some((p) => actor.can(p))
     || actor.assignable.size > 0 || actor.assignableBadges.size > 0;
 }
+
+/**
+ * What marks the owner and a super admin, in the lists and on the card: an icon
+ * rather than a word, so it costs a name no room. A crown for the owner and a
+ * shield with a star for a super admin, drawn in the palette's own colours.
+ *
+ * @param {'owner'|'admin'} role  the account role
+ * @param {string} label  what it is called, in the person's language
+ */
+export function roleIcon(role, label) {
+  const span = document.createElement('span');
+  span.className = `role-icon ${role === 'owner' ? 'owner' : 'super'}`;
+  span.dataset.icon = role === 'owner' ? 'crown-simple' : 'shield-star';
+  span.dataset.kind = role;
+  span.title = label;
+  span.setAttribute('role', 'img');
+  span.setAttribute('aria-label', label);
+  return span;
+}

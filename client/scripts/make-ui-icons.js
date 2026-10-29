@@ -42,6 +42,8 @@ const ICONS = [
   'arrow-up',
   // badges
   'medal',
+  // the owner and the super admins
+  'crown-simple', 'shield-star',
 ];
 
 // By path: the package's exports map hides package.json.

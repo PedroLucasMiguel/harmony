@@ -740,7 +740,7 @@ select:focus {
   opacity: 0.45;
 }
 #member-items .member-row[data-off] .member-name:not([data-role-color]),
-#member-items .member-row[data-off] .role-tag {
+#member-items .member-row[data-off] .role-icon {
   opacity: 0.45;
 }
 /* A role's colour is how you find somebody: it is dimmed a little, not lost. */
@@ -752,17 +752,6 @@ select:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-#member-items .role-tag {
-  margin-left: auto;
-  flex: 0 0 auto;
-  font-size: 0.62rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.5;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  padding: 0 0.3rem;
 }
 
 @media (max-width: 720px) {
@@ -1133,14 +1122,6 @@ select:focus {
 #voice-roster .tag.forced {
   color: var(--danger-soft);
   opacity: 1;
-}
-#voice-roster .role-tag {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.55;
-  border-color: currentColor;
-  flex: 0 0 auto;
 }
 
 /* ---------- who is doing what ---------- */
@@ -7575,4 +7556,27 @@ body.pip-window {
 /* The colour inputs sit on the app's own surfaces; the swatch is theirs to draw. */
 input[type='color'] {
   accent-color: var(--accent);
+}
+
+
+/* ---------- the owner's and the super admins' marks ---------- */
+
+/* Icons in the palette's own colours: the accent for a super admin, the
+   palette's amber for the owner. */
+.role-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  font-size: 1.05em;
+  color: var(--accent);
+  cursor: help;
+}
+.role-icon.owner {
+  color: var(--warn);
+}
+#member-items .role-icon {
+  margin-left: auto;
+}
+.profile-card-handle .role-icon {
+  vertical-align: middle;
 }

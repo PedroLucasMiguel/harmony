@@ -170,7 +170,7 @@ async function run() {
   console.log('Starting the server and two clients…\n');
   await startFakeMediaMtx();
   await startServer();
-  await register('chief', { ownerKey });
+  const chief = await register('chief', { ownerKey });
   const bob = await register('bob');
   const carol = await register('carol');
 
@@ -232,6 +232,21 @@ async function run() {
     return { dark, light };
   }`);
   check('native pickers follow the theme: dark on dark palettes, light on daylight', scheme.dark === 'dark' && scheme.light === 'light', JSON.stringify(scheme));
+
+  // --- the owner's and a super admin's marks --------------------------------------------------------------------------
+  await rest('chief', `/api/accounts/${carol.id}/role`, { role: 'admin' });
+  await sleep(800);
+  const marks = await owner.evaluate(`{
+    const mark = (id) => { const i = document.querySelector('#member-items .member-row[data-user-id="' + id + '"] .role-icon'); return i ? { kind: i.dataset.kind, icon: i.dataset.icon, label: i.getAttribute('aria-label'), color: getComputedStyle(i).color } : null; };
+    return { owner: mark(${chief.id}), superAdmin: mark(${carol.id}), plain: mark(${bob.id}), words: document.querySelectorAll('#member-items .role-tag').length };
+  }`);
+  await shot(owner, 'marks');
+  check('the owner is marked with a crown and a super admin with a shield, not with words',
+    marks.owner?.icon === 'crown-simple' && marks.superAdmin?.icon === 'shield-star' && marks.plain === null && marks.words === 0, JSON.stringify(marks));
+  check('each says what it is to anything that reads it, and has its own colour',
+    marks.owner.label === 'owner' && marks.superAdmin.label === 'super admin' && marks.owner.color !== marks.superAdmin.color, JSON.stringify(marks));
+  await rest('chief', `/api/accounts/${carol.id}/role`, { role: 'member' });
+  await sleep(500);
 
   // --- the card from the member list ---------------------------------------------------------------------------------
   await click(owner, `#member-items .member-row[data-user-id="${bob.id}"]`);
