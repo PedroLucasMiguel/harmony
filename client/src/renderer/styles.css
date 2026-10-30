@@ -423,10 +423,10 @@ p {
 }
 #call-bar .call-button {
   flex: none;
-  padding: 2px 10px;
 }
 #call-bar .call-button[data-on] {
   background: rgb(var(--danger-rgb) / 0.25);
+  color: var(--danger-soft);
 }
 #server-rail {
   flex: none;
@@ -1038,7 +1038,15 @@ select:focus {
   grid-template-columns: var(--side-col, minmax(200px, 260px)) minmax(0, 1fr);
   gap: 1rem;
   padding: 1rem;
-  height: calc(100% - 3.5rem);
+  /* Whatever the bar above it leaves, to the pixel. It was calc(100% - 3.5rem), a
+     guess at the bar's height: the bar is a little taller, the grid ran past the
+     window by the difference, and only a chat too short to need a scrollbar let
+     the grid shrink back -- so the bottom of the app moved with the channel. */
+  height: auto;
+  flex: 1 1 0;
+  min-height: 0;
+  /* One row that is the layout's height, not the height of whatever is tallest in it. */
+  grid-template-rows: minmax(0, 1fr);
   box-sizing: border-box;
 }
 
@@ -2262,6 +2270,13 @@ button.danger {
   font-size: 0.68rem;
   text-align: right;
   align-self: center;
+  /* "04:40 PM" wraps in a column this narrow, and two lines of time were taller
+     than the one line of words: every grouped row paid for it, and a lit one showed it.
+     No height of its own, its lines centred on the row. */
+  height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   opacity: 0;
   transition: opacity 90ms ease-out;
 }
@@ -3666,6 +3681,66 @@ button.danger {
 .link-embed-close:hover {
   color: var(--text);
 }
+/*
+ * A YouTube card: the picture is a 16:9 stage with two buttons over it, play here
+ * and open in the browser. Playing puts the frame of the player in the stage.
+ */
+.link-embed[data-player] .link-embed-frame {
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.chat-msg .link-embed[data-player] .link-embed-image {
+  height: 100%;
+  max-height: none;
+}
+.link-embed-actions {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  line-height: 1;
+}
+.link-embed-act {
+  display: inline-grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.link-embed-act::before {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+.link-embed-act:hover,
+.link-embed-act:focus-visible {
+  background: rgb(255 255 255 / 0.2);
+}
+.link-embed-player {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.link-embed-player iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
 /* A link to a picture: the picture. */
 .link-embed-picture-link {
   display: block;
@@ -4339,8 +4414,7 @@ button.danger {
   cursor: pointer;
 }
 .channel-strip > .channel-tile:not(.ghost-tile):hover {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  --tile-ring: 2px var(--accent);
 }
 /* A thumbnail is for picking, not for adjusting: mute and close stay, the
    slider and fullscreen are for the one in focus. */
@@ -4461,10 +4535,24 @@ button.danger {
   background: rgb(var(--accent-rgb) / 0.1);
 }
 
+/*
+ * The ring around a tile -- yours always, any tile while the pointer is on it -- is
+ * drawn by a layer over the picture, not as an outline of the tile. Your own camera
+ * is mirrored, and a mirrored <video> is composited above its parent's outline: the
+ * tile you were pointing at showed no sign of it.
+ */
+.channel-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 var(--tile-ring, 0 transparent);
+}
 /* Your own tiles read as a preview, not as somebody else's camera. */
 .channel-tile[data-own] {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
+  --tile-ring: 1px var(--accent);
 }
 .channel-tile[data-own] video {
   transform: scaleX(-1);
@@ -7531,12 +7619,10 @@ input[data-saved] {
   cursor: pointer;
 }
 .channel-focus > .channel-tile:hover {
-  outline: 2px solid rgb(var(--accent-rgb) / 0.6);
-  outline-offset: -2px;
+  --tile-ring: 2px rgb(var(--accent-rgb) / 0.6);
 }
 .channel-video[data-layout='grid'] > .channel-strip > .channel-tile:not(.ghost-tile):hover {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  --tile-ring: 2px var(--accent);
 }
 
 /* Push to talk: the strip says so while the key is held. */

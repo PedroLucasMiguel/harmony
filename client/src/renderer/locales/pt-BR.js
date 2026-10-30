@@ -1091,6 +1091,8 @@ export default {
   'settings.links.title': 'Prévias de links',
   'settings.links.note': 'Um cartão sob o link, com o título, o texto e a imagem da página. O servidor lê a página, então o site não vê você.',
   'embed.remove': 'Remover a prévia',
+  'embed.play': 'Reproduzir aqui',
+  'embed.open': 'Abrir no navegador',
   'mention.notified': '{count} notificados',
   'mention.nobody': 'Ninguém mais foi notificado',
   'mention.everyone_hint': 'Avisa todos que podem ler este canal',

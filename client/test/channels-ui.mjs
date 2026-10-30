@@ -788,7 +788,7 @@ async function run() {
   );
 
   await cdp.evaluate("document.getElementById('chat-form').requestSubmit(); return true;");
-  await waitFor(cdp, "document.querySelectorAll('#chat-log .chat-msg').length > 0", {
+  await waitFor(cdp, `document.querySelectorAll('#chat-log .chat-msg').length > ${sentBefore}`, {
     label: 'the mention message',
   });
   const drawn = await cdp.evaluate(`
@@ -797,14 +797,14 @@ async function run() {
     return {
       chip: chip?.textContent ?? null,
       mine: chip?.hasAttribute('data-me') ?? false,
-      // Your OWN message never marks the row, however many times it says
-      // your name: writing it is not news.
+      // Your own message marks the row when it names you: you asked to be
+      // reminded. (@everyone or a role you hold in it would not: see mention-who.)
       rowMarked: msg.hasAttribute('data-mentions-me'),
     };
   `);
   check(
-    'a mention is drawn as a chip, and your own message does not flag itself',
-    drawn.chip !== null && drawn.mine === true && drawn.rowMarked === false,
+    'a mention is drawn as a chip, and your own message that names you is marked',
+    drawn.chip !== null && drawn.mine === true && drawn.rowMarked === true,
     `chip ${JSON.stringify(drawn.chip)}, row marked ${drawn.rowMarked}`,
   );
 

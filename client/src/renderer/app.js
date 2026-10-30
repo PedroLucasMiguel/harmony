@@ -1688,11 +1688,14 @@ function renderCallBar() {
   el.callBar.dataset.state = ctx.connected === false ? 'connecting' : 'connected';
   el.callBarReturn.textContent = `${ctx.connected === false ? t('app.reconnecting') : t('app.voice_connected')} · ${t('rail.call_in', { channel: ctx.channelName, server })}`;
   el.callBarReturn.title = t('rail.call_return');
-  setButtonLabel(el.callBarMute, state.voice.muted ? t('app.unmute_mic') : t('app.mute_mic'));
+  // Icons, as in the strip at the top of the channel list; the words are the tooltip.
+  iconLabel(el.callBarMute, state.voice.muted ? t('app.unmute_mic') : t('app.mute_mic'));
+  el.callBarMute.dataset.icon = state.voice.muted ? 'microphone-slash' : 'microphone';
   el.callBarMute.toggleAttribute('data-on', state.voice.muted);
-  setButtonLabel(el.callBarDeafen, state.voice.deafened ? t('app.undeafen') : t('app.deafen'));
+  iconLabel(el.callBarDeafen, state.voice.deafened ? t('app.undeafen') : t('app.deafen'));
+  el.callBarDeafen.dataset.icon = state.voice.deafened ? 'speaker-slash' : 'headphones';
   el.callBarDeafen.toggleAttribute('data-on', state.voice.deafened);
-  setButtonLabel(el.callBarLeave, t('voice_leave.disconnect'));
+  iconLabel(el.callBarLeave, t('voice_leave.disconnect'));
 }
 
 el.callBarReturn.addEventListener('click', () => {
@@ -5419,6 +5422,12 @@ async function leaveVoice({ silent = false } = {}) {
  * Writing them apart is how a button ends up offering to start a camera
  * that is already running, so they are written together.
  */
+/** A button that is only an icon: the words are its tooltip and what a screen reader says. */
+function iconLabel(button, label) {
+  button.title = label;
+  button.setAttribute('aria-label', label);
+}
+
 function setButtonLabel(button, label) {
   button.textContent = label;
   button.title = label;
@@ -10261,7 +10270,9 @@ function messageRow(message, previous) {
     edited.title = new Date(message.editedAt).toLocaleString();
     text.append(edited);
   }
-  if (mentionsMe(message) && message.userId !== state.auth.user?.id) {
+  // Your own message is lit only when you named yourself: @everyone, a role you hold or
+  // answering your own message is not news to you.
+  if (mentionsMe(message) && (message.userId !== state.auth.user?.id || message.mentions?.includes(state.auth.user?.id))) {
     row.setAttribute('data-mentions-me', '');
   }
 

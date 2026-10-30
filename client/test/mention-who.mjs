@@ -120,6 +120,9 @@ async function run() {
   await post('boss', '@everyone dinner');
   await post('boss', 'just @solo');
   await post('boss', 'hello @ana');
+  await post('ana', 'a note to @ana myself');
+  await post('ana', '@everyone from me, and @dev');
+  await post('ana', 'plain from me');
 
   const app = launchApp({ port: DEBUG_PORT, userDataDir });
   procs.push(app);
@@ -141,7 +144,7 @@ async function run() {
     [...document.querySelectorAll('#channel-items li.channel-row')]
       .find((li) => li.querySelector('.channel-name')?.textContent === 'general').click();
     return true;`);
-  await waitFor(cdp, "document.querySelectorAll('.chat-msg').length >= 5", { label: 'the messages' });
+  await waitFor(cdp, "document.querySelectorAll('.chat-msg').length >= 8", { label: 'the messages' });
   await sleep(500);
 
   const rows = () => cdp.evaluate(`
@@ -159,6 +162,17 @@ async function run() {
   check('a role you hold lights the message and the @', all.find((r) => /look at this/.test(r.text))?.lit === true && all.find((r) => /look at this/.test(r.text))?.chipMe === true, JSON.stringify(all.find((r) => /look at this/.test(r.text))));
   check('so does @everyone', all.find((r) => /dinner/.test(r.text))?.lit === true);
   check('and a role you do not hold does not', all.find((r) => /just/.test(r.text))?.lit === false && all.find((r) => /just/.test(r.text))?.chipMe === false);
+
+  // Your own message is lit when you named yourself, and only then.
+  check('a message in which you named yourself is lit', row('a note to')?.lit === true, JSON.stringify(row('a note to')));
+  check('but not one of yours that only reaches the others (@everyone, a role you hold)', row('from me, and')?.lit === false, JSON.stringify(row('from me, and')));
+
+  // A line under your own, grouped with it, is as tall as its words: the time in its gutter has no height.
+  const heights = await cdp.evaluate(`
+    return [...document.querySelectorAll('.chat-msg[data-grouped]')].map((m) => ({
+      text: m.querySelector('.text').textContent.slice(0, 12), row: Math.round(m.getBoundingClientRect().height), words: Math.round(m.querySelector('.text').getBoundingClientRect().height) }));`);
+  check('a grouped line has no room above or below its words but the row\'s own padding',
+    heights.length >= 3 && heights.every((h) => h.row - h.words <= 8), JSON.stringify(heights));
 
   const press = (needle) => cdp.evaluate(`
     const row = [...document.querySelectorAll('.chat-msg')].find((m) => m.querySelector('.text')?.textContent.includes(${JSON.stringify(needle)}));

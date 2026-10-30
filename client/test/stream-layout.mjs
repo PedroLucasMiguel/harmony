@@ -213,6 +213,24 @@ async function run() {
   check('and none of them in focus', l.tiles.every((t) => !t.focus && !t.inFocusArea), JSON.stringify(l.tiles));
   await shot(ana, 'grid');
 
+  // --- pointing at a tile lights it, yours included (a mirrored camera preview hid the outline) -----------------------------------
+  await ana.evaluate("document.querySelector('#channel-video .channel-tile[data-own] [data-role=preview]').click(); return true;");
+  await sleep(800);
+  const ring = async (selector) => {
+    const pt = await ana.evaluate(`const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 };`);
+    await ana.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pt.x, y: pt.y, button: 'none', buttons: 0 });
+    await sleep(400);
+    return ana.evaluate(`return Object.fromEntries([...document.querySelectorAll('#channel-video .channel-tile')].map((t) => [t.hasAttribute('data-own') ? 'own' : 'theirs', getComputedStyle(t, '::after').boxShadow]));`);
+  };
+  const onOwn = await ring('#channel-video .channel-tile[data-own]');
+  const onTheirs = await ring('#channel-video .channel-tile:not([data-own])');
+  const wide = (shadow) => Number(/(\d+)px inset/.exec(shadow ?? '')?.[1] ?? 0);
+  check('the camera preview of your own is mirrored, which is what hid the ring', await ana.evaluate("return getComputedStyle(document.querySelector('#channel-video .channel-tile[data-own] video')).transform !== 'none'"));
+  check('pointing at your own tile lights it, over its picture', wide(onOwn.own) === 2 && /inset/.test(onOwn.own), JSON.stringify(onOwn));
+  check('and not the other one', wide(onOwn.theirs) === 0, JSON.stringify(onOwn));
+  check('pointing at theirs lights theirs, and yours is back to its thin line', wide(onTheirs.theirs) === 2 && wide(onTheirs.own) === 1, JSON.stringify(onTheirs));
+  await ana.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5, button: 'none', buttons: 0 });
+
   // --- a click gives one the space ----------------------------------------------------------------------------------
   const theirs = l.tiles.find((t) => t.key.endsWith(':c') && !t.key.startsWith('me:')).key;
   const click = (key) => ana.evaluate(`

@@ -153,6 +153,9 @@ let win = null;
  */
 let pendingSource = null;
 
+/** What the player of a YouTube card is told is asking. See the handler that sets it. */
+const PLAYER_REFERER = 'https://github.com/PedroLucasMiguel/harmony';
+
 /**
  * Whether to attach Chromium's own system-wide loopback audio. Only used when
  * the native per-application capture is unavailable -- see src/main/app-audio.js.
@@ -480,6 +483,18 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(['media', 'display-capture', 'audioCapture', 'fullscreen', 'clipboard-sanitized-write'].includes(permission));
   });
+
+  // YouTube's player refuses a page that does not say, in a web address, who is
+  // asking ("Video player configuration error 153"), and the app's own address
+  // is not one. So the player of a card -- only that, and only when it is
+  // played -- is asked for with the project's address, which is what the API's
+  // terms ask of a client anyway.
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://www.youtube-nocookie.com/embed/*'] },
+    (details, callback) => {
+      callback({ requestHeaders: { ...details.requestHeaders, Referer: PLAYER_REFERER } });
+    },
+  );
 
   createWindow();
 

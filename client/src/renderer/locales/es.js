@@ -1091,6 +1091,8 @@ export default {
   'settings.links.title': 'Vistas previas de enlaces',
   'settings.links.note': 'Una tarjeta bajo el enlace, con el título, el texto y la imagen de la página. El servidor lee la página, así que el sitio no te ve.',
   'embed.remove': 'Quitar la vista previa',
+  'embed.play': 'Reproducir aquí',
+  'embed.open': 'Abrir en el navegador',
   'mention.notified': '{count} notificados',
   'mention.nobody': 'No se notificó a nadie más',
   'mention.everyone_hint': 'Avisa a todos los que pueden leer este canal',

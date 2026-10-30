@@ -195,9 +195,19 @@ async function run() {
   check('Ana still has Pedro in the room', (await roster(tokenAna)).some((m) => m.nickname === 'pedro'), JSON.stringify((await roster(tokenAna)).map((m) => m.nickname)));
   check('A\'s bubble on the rail shows the call', await page.evaluate(`return document.querySelector('#server-rail .rail-item[data-server*="${PORT_A}"]').hasAttribute('data-in-call')`));
 
+  // The bar's controls are icons, like the strip at the top of the channel list: no words on them.
+  const icons = await page.evaluate(`
+    const f = (id) => { const b = document.getElementById(id); const r = b.getBoundingClientRect();
+      return { text: b.textContent.trim(), icon: b.dataset.icon, title: b.title, aria: b.getAttribute('aria-label'), glyph: getComputedStyle(b, '::before').maskImage !== 'none', w: Math.round(r.width), h: Math.round(r.height) }; };
+    return { mute: f('call-bar-mute'), deafen: f('call-bar-deafen'), leave: f('call-bar-leave') };`);
+  check('the call bar buttons are icons with their words as a tooltip',
+    Object.values(icons).every((b) => b.text === '' && b.icon && b.title && b.aria === b.title && b.glyph && b.w <= 44 && b.h <= 36)
+      && icons.mute.icon === 'microphone' && icons.deafen.icon === 'headphones' && icons.leave.icon === 'phone-disconnect', JSON.stringify(icons));
+
   // The bar's controls reach A.
   await page.evaluate("document.getElementById('call-bar-mute').click(); return true;");
   await waitFor(page, "document.getElementById('call-bar-mute').hasAttribute('data-on')", { label: 'the mute button lit' });
+  check('and the microphone is struck through while muted', await page.evaluate("return document.getElementById('call-bar-mute').dataset.icon === 'microphone-slash'"));
   let muted = false;
   for (let i = 0; i < 40 && !muted; i += 1) {
     muted = (await roster(tokenAna)).find((m) => m.nickname === 'pedro')?.muted === true;

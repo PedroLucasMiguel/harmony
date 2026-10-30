@@ -1101,6 +1101,8 @@ export default {
   'settings.links.title': 'Link previews',
   'settings.links.note': 'A card under a link, with the page\'s title, text and picture. The server reads the page, so the site never sees you.',
   'embed.remove': 'Remove the preview',
+  'embed.play': 'Play here',
+  'embed.open': 'Open in the browser',
   'mention.notified': '{count} notified',
   'mention.nobody': 'Nobody else was notified',
   'mention.everyone_hint': 'Notifies everybody who can read this channel',

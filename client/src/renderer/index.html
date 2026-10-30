@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
+      content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; frame-src https://www.youtube-nocookie.com; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
     />
     <title>Harmony</title>
     <link rel="stylesheet" href="styles.css" />
@@ -28,9 +28,9 @@
     <div id="call-bar" hidden>
       <span class="call-dot" aria-hidden="true"></span>
       <button type="button" id="call-bar-return" class="call-where"></button>
-      <button type="button" id="call-bar-mute" class="ghost call-button"></button>
-      <button type="button" id="call-bar-deafen" class="ghost call-button"></button>
-      <button type="button" id="call-bar-leave" class="ghost call-button danger"></button>
+      <button type="button" id="call-bar-mute" class="ghost small icon-only call-button" data-icon="microphone"></button>
+      <button type="button" id="call-bar-deafen" class="ghost small icon-only call-button" data-icon="headphones"></button>
+      <button type="button" id="call-bar-leave" class="ghost small icon-only call-button danger" data-icon="phone-disconnect"></button>
     </div>
     <!-- ================= Connect ================= -->
     <section class="view" id="view-connect" data-active>
