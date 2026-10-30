@@ -235,6 +235,44 @@ describe('profile banner', () => {
   });
 });
 
+describe('banner dimming', () => {
+  it('needs a login', async () => {
+    const res = await api('/api/accounts/banner-dim', { method: 'POST', body: { dim: 30 } });
+    assert.equal(res.status, 401);
+  });
+
+  it('starts as the default, which is null', async () => {
+    const { body } = await api('/api/accounts', { token: ownerToken });
+    assert.equal(body.users.find((u) => u.nickname === 'member').bannerDim, null);
+  });
+
+  it('takes a whole number from 0 to 100, and the roster shows it', async () => {
+    for (const dim of [0, 35, 100]) {
+      const res = await api('/api/accounts/banner-dim', { method: 'POST', body: { dim }, token: memberToken });
+      assert.equal(res.status, 200, String(dim));
+      assert.equal(res.body.user.bannerDim, dim);
+    }
+    const { body } = await api('/api/accounts', { token: ownerToken });
+    assert.equal(body.users.find((u) => u.nickname === 'member').bannerDim, 100);
+  });
+
+  it('refuses anything else, and keeps what it had', async () => {
+    for (const dim of [-1, 101, 12.5, 'dark', {}, [5]]) {
+      const res = await api('/api/accounts/banner-dim', { method: 'POST', body: { dim }, token: memberToken });
+      assert.equal(res.status, 400, JSON.stringify(dim));
+      assert.equal(res.body.error, 'invalid_dim');
+    }
+    const { body } = await api('/api/accounts', { token: ownerToken });
+    assert.equal(body.users.find((u) => u.nickname === 'member').bannerDim, 100);
+  });
+
+  it('goes back to the default with nothing', async () => {
+    const res = await api('/api/accounts/banner-dim', { method: 'POST', body: { dim: null }, token: memberToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.user.bannerDim, null);
+  });
+});
+
 describe('join sound', () => {
   it('takes a WAV of ten seconds, and shows it on the roster', async () => {
     const hash = (await upload(wav(10), 'audio/wav', memberToken)).hash;

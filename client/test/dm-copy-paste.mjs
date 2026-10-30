@@ -184,9 +184,9 @@ async function run() {
   await sleep(2500);
 
   // --- the recovery key's Copy button ------------------------------------------------------------------------------------
-  await until(alice, "!document.getElementById('dm-open').hidden", { label: 'the DM button' });
-  await alice.evaluate("document.getElementById('dm-open').click(); return true;");
-  await until(alice, "!document.getElementById('dm-panel').hidden", { label: 'the list' });
+  await until(alice, "document.querySelector('#server-rail .rail-home') && !document.querySelector('#server-rail .rail-home').disabled", { label: 'the DM bubble' });
+  await alice.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
+  await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-dms' && document.getElementById('dm-panel').offsetParent !== null", { label: 'the list' });
   await alice.evaluate("[...document.querySelectorAll('#dm-panel-actions button')].find((b) => /recovery key/i.test(b.textContent))?.click(); return true;");
   await until(alice, "document.querySelector('dialog.dm-keys')?.open", { label: 'the recovery key' });
   const key = await alice.evaluate("return document.querySelector('dialog.dm-keys [data-testid=recovery-key]').textContent");
@@ -214,7 +214,8 @@ async function run() {
   check('and the key really is on the clipboard', pasted === key, `${JSON.stringify(pasted)} vs ${key}`);
 
   // --- pasting a picture into a conversation ---------------------------------------------------------------------------------
-  await alice.evaluate("document.getElementById('probe').remove(); document.getElementById('dm-panel-close').click(); return true;");
+  await alice.evaluate("document.getElementById('probe').remove(); document.querySelector('#server-rail .rail-home').click(); return true;");
+  await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-channels'", { label: 'back on the server' });
   await until(alice, "document.querySelector('.member-row[data-user-id]')", { label: 'the member list' }).catch(async () => {
     await alice.evaluate("if (document.getElementById('member-list').hidden) document.getElementById('channels-members').click(); return true;");
   });
@@ -276,6 +277,9 @@ async function run() {
   // --- copying out of the chat -------------------------------------------------------------------------------------------------
   // The first conversation shows the recovery key again: put it away, it is not what this is about.
   await alice.evaluate("document.querySelectorAll('dialog[open]').forEach((d) => d.close()); return true;");
+  // The channels are on their own page now: back to it from the private messages.
+  await alice.evaluate("if (document.querySelector('.view[data-active]')?.id === 'view-dms') document.querySelector('#server-rail .rail-home').click(); return true;");
+  await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-channels'", { label: 'back on the server' });
   const text = (await rest('alice', '/api/channels')).body.channels.find((c) => c.kind === 'text');
   await rest('bob', `/api/channels/${text.id}/messages`, { body: 'read https://example.com/some/page and **this** too' });
   await alice.evaluate(`[...document.querySelectorAll('#channel-items .channel-row')].find((r) => r.textContent.includes(${JSON.stringify(text.name)})).click(); return true;`);

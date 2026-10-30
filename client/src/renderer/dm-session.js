@@ -65,6 +65,8 @@ export class DmSession {
   #raw = new Map();
 
   #started = false;
+  /** What is waiting, when this computer cannot read it: the server says how many, in the clear. */
+  #lockedUnread = 0;
 
   /** Conversation id -> {id, peer, createdAt, lastAt, unread, lastReadId, last: message|null}. */
   conversations = new Map();
@@ -152,9 +154,25 @@ export class DmSession {
       const next = this.#vault.onKeys({ keys: res.body?.keys ?? [], mine: res.body?.mine });
       if (next === 'create') await this.#createIdentity();
       if (this.ready) await this.refresh();
+      else await this.peekUnread();
     }
     this.#changed();
     return this.state;
+  }
+
+  /**
+   * How many messages are waiting in a server this computer cannot open (its key
+   * is not here yet): the count is not secret, so a badge can say there is
+   * something to unlock for. Nothing is read, nothing is kept but the number.
+   */
+  async peekUnread() {
+    try {
+      const res = await this.#req('GET', '/api/dms');
+      if (res.status !== 200) return 0;
+      this.#lockedUnread = (res.body?.conversations ?? []).reduce((n, c) => n + (c.unread ?? 0), 0);
+      this.#changed();
+    } catch { /* the badge stays as it was */ }
+    return this.#lockedUnread;
   }
 
   /** Makes this account's identity key and publishes it. The recovery key is then the vault's to show. */
@@ -255,6 +273,8 @@ export class DmSession {
   }
 
   get unread() {
+    // Not readable here: only the server's own count, until the key is.
+    if (!this.ready) return this.#lockedUnread;
     let n = 0;
     for (const c of this.conversations.values()) n += c.unread;
     return n;

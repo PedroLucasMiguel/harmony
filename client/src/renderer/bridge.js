@@ -12,6 +12,8 @@
 // do on its own instead: see web/bridge.js. app.js cannot tell the two apart
 // except through `capabilities`.
 
+import { serverSegment } from './server-key.js';
+
 const raw = window.harmony;
 
 function unwrap(result) {
@@ -152,6 +154,7 @@ const desktop = () => ({
   api: {
     setPassword: lift(raw.api.setPassword),
     setSessionToken: lift(raw.api.setSessionToken),
+    setCredentials: lift(raw.api.setCredentials),
     health: lift(raw.api.health),
     probe: lift(raw.api.probe),
     streams: lift(raw.api.streams),
@@ -174,6 +177,7 @@ const desktop = () => ({
     me: lift(raw.api.me),
     setAvatar: lift(raw.api.setAvatar),
     setBanner: lift(raw.api.setBanner),
+    setBannerDim: lift(raw.api.setBannerDim),
     setJoinSound: lift(raw.api.setJoinSound),
     setNameFont: lift(raw.api.setNameFont),
     setNameColor: lift(raw.api.setNameColor),
@@ -207,6 +211,8 @@ const desktop = () => ({
     updateGroup: lift(raw.api.updateGroup),
 
     messages: lift(raw.api.messages),
+    markRead: lift(raw.api.markRead),
+    unread: lift(raw.api.unread),
     dmRequest: lift(raw.api.dmRequest),
     dmUpload: lift(raw.api.dmUpload),
     dmDownload: lift(raw.api.dmDownload),
@@ -231,6 +237,7 @@ const desktop = () => ({
 
   media: {
     setServer: lift(raw.media.setServer),
+    register: lift(raw.media.register),
     keep: lift(raw.media.keep),
     stats: lift(raw.media.stats),
     upload: lift(raw.media.upload),
@@ -253,7 +260,9 @@ const desktop = () => ({
    * main downloads and verifies it on first use, so the renderer never needs
    * to know whether it is already on disk.
    */
-  mediaUrl: (hash) => `harmony://app/media/${hash}`,
+  mediaUrl: (hash, server) => (server
+    ? `harmony://app/media/${serverSegment(server)}/${hash}`
+    : `harmony://app/media/${hash}`),
 
   realtime: {
     connect: lift(raw.realtime.connect),

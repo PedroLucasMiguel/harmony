@@ -19,7 +19,7 @@ const { opensDevTools } = require('./devtools-keys');
 const updater = require('./updater');
 const voiceTray = require('./voice-tray');
 const strings = require('./strings');
-const { RealtimeClient } = require('./realtime');
+const { RealtimeHub } = require('./realtime-hub');
 const { MediaCache, HASH_RE } = require('./media-cache');
 
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
@@ -37,6 +37,20 @@ app.on('second-instance', () => voiceTray.showWindow());
 
 /** Set once the renderer tells us which server it is talking to. */
 let mediaServer = '';
+/**
+ * Every server the renderer has said media may be fetched from. A URL that names
+ * its server (harmony://app/media/<server>/<hash>) is only honoured for one of
+ * these, so a page cannot make main download from an address it has not declared.
+ */
+const mediaServers = new Set();
+const serverOfMediaUrl = (segment) => {
+  try {
+    const key = Buffer.from(segment, 'base64url').toString('utf8');
+    return mediaServers.has(key) ? key : '';
+  } catch {
+    return '';
+  }
+};
 /** @type {MediaCache|null} */
 let mediaCache = null;
 /**
@@ -130,12 +144,15 @@ function registerProtocol() {
     // would be a different origin and the CSP's `'self'` would block every
     // image it was added to allow.
     if (rel.startsWith('media/')) {
-      const hash = rel.slice('media/'.length);
-      if (!HASH_RE.test(hash)) return new Response('Bad hash', { status: 400 });
-      if (!mediaCache || !mediaServer) return new Response('No server', { status: 503 });
+      // `media/<hash>` is the current server's; `media/<server>/<hash>` names one.
+      const parts = rel.slice('media/'.length).split('/');
+      const hash = parts[parts.length - 1];
+      if (parts.length > 2 || !HASH_RE.test(hash)) return new Response('Bad hash', { status: 400 });
+      const from = parts.length === 2 ? serverOfMediaUrl(parts[0]) : mediaServer;
+      if (!mediaCache || !from) return new Response('No server', { status: 503 });
       try {
         const { path: file, contentType } = await mediaCache.get(hash, (h) =>
-          api.fetchUpload(mediaServer, h));
+          api.fetchUpload(from, h));
         const response = await net.fetch(pathToFileURL(file).toString());
         return new Response(response.body, {
           status: 200,
@@ -477,7 +494,10 @@ const handle = (channel, fn) => {
   });
 };
 
-handle('settings:get', () => settings.read());
+// The tests open the connect screen and look at it; a saved session must not skip it for them.
+handle('settings:get', () => (process.env.HARMONY_NO_AUTO_SIGNIN
+  ? { ...settings.read(), autoSignIn: false }
+  : settings.read()));
 handle('settings:set', (_e, patch) => settings.write(patch ?? {}));
 
 handle('permissions:screen-status', () => screenPermission.status());
@@ -534,7 +554,7 @@ handle('app:relaunch', () => {
   return true;
 });
 
-handle('api:password', (_e, value) => api.setPassword(value));
+handle('api:password', (_e, value, server) => api.setPassword(value, server));
 handle('api:probe', (_e, s, serverPassword) => api.probe(s, serverPassword));
 
 /**
@@ -548,7 +568,8 @@ handle('logos:ensure', async (_e, server, serverPassword, hash) => {
   await logoCache.get(hash, () => api.fetchServerLogo(server, serverPassword));
   return `harmony://app/server-logo/${hash}`;
 });
-handle('api:session-token', (_e, value) => api.setSessionToken(value));
+handle('api:session-token', (_e, value, server) => api.setSessionToken(value, server));
+handle('api:set-credentials', (_e, server, creds) => api.setCredentials(server, creds));
 handle('api:register', (_e, s, n, p, k) => api.register(s, n, p, k));
 handle('api:login', (_e, s, n, p, k) => api.login(s, n, p, k));
 handle('api:logout', (_e, s) => api.logout(s));
@@ -562,6 +583,7 @@ handle('api:recovery-reset', (_e, s, token, p) => api.recoveryReset(s, token, p)
 handle('api:me', (_e, s) => api.me(s));
 handle('api:set-avatar', (_e, s, hash) => api.setAvatar(s, hash));
 handle('api:set-banner', (_e, s, hash) => api.setBanner(s, hash));
+handle('api:set-banner-dim', (_e, s, dim) => api.setBannerDim(s, dim));
 handle('api:set-join-sound', (_e, s, hash) => api.setJoinSound(s, hash));
 handle('api:set-name-font', (_e, s, font) => api.setNameFont(s, font));
 handle('api:badges', (_e, s) => api.badges(s));
@@ -601,14 +623,14 @@ handle('api:update-group', (_e, s, id, body) => api.updateGroup(s, id, body));
 // 'window:visibility' and 'audio:pcm'.
 // ---------------------------------------------------------------------------
 
-const realtime = new RealtimeClient();
+const realtime = new RealtimeHub();
 
 realtime.on('event', (payload) => {
   if (win && !win.isDestroyed()) win.webContents.send('realtime:event', payload);
 });
 
 handle('realtime:connect', (_e, server, token) => realtime.connect(server, token));
-handle('realtime:request', (_e, type, payload) => realtime.request(type, payload));
+handle('realtime:request', (_e, server, type, payload) => realtime.request(server, type, payload));
 /**
  * Which server the media route should download from.
  *
@@ -618,10 +640,24 @@ handle('realtime:request', (_e, type, payload) => realtime.request(type, payload
  */
 handle('media:server', (_e, server) => {
   mediaServer = String(server ?? '');
+  if (mediaServer) mediaServers.add(api.credKey(mediaServer));
   return true;
 });
-handle('media:keep', (_e, hashes) => {
-  mediaCache?.setKeepSet(Array.isArray(hashes) ? hashes : []);
+// Say media may be fetched from this server by name, without making it the current one.
+handle('media:register', (_e, server) => {
+  const key = api.credKey(server);
+  if (key) mediaServers.add(key);
+  return Boolean(key);
+});
+/**
+ * What the cache must not evict. Each server's files are kept as its own set, and
+ * the cache holds the union: one list for "the" server would drop every other
+ * server's avatars the moment the current one was reported.
+ */
+const keepSets = new Map();
+handle('media:keep', (_e, hashes, server) => {
+  keepSets.set(server ? api.credKey(server) : '', new Set(Array.isArray(hashes) ? hashes : []));
+  mediaCache?.setKeepSet([...keepSets.values()].flatMap((set) => [...set]));
   return true;
 });
 /**
@@ -735,9 +771,10 @@ const EXTENSIONS = {
  * The bytes come from the media cache, so a file already on screen is
  * already on disk and the save is a copy. The renderer never sees a path.
  */
-handle('media:save', async (_e, hash, suggestedName) => {
+handle('media:save', async (_e, hash, suggestedName, server) => {
   if (!HASH_RE.test(String(hash ?? ''))) throw new Error('not a content hash');
-  if (!mediaCache || !mediaServer) throw new Error('not connected to a server');
+  const from = server && mediaServers.has(api.credKey(server)) ? server : mediaServer;
+  if (!mediaCache || !from) throw new Error('not connected to a server');
 
   // path.basename as well as the server's own cleaning, because this is the
   // last point before a path is built and it is the only one that knows
@@ -759,14 +796,14 @@ handle('media:save', async (_e, hash, suggestedName) => {
     });
     if (canceled || !filePath) return { saved: false };
     const sender = _e.sender;
-    await api.downloadTo(mediaServer, hash, filePath, (received, total) => {
+    await api.downloadTo(from, hash, filePath, (received, total) => {
       if (!sender.isDestroyed()) sender.send('media:progress', { hash, received, total });
     });
     return { saved: true, path: filePath, name: path.basename(filePath) };
   }
 
   const { path: file, contentType } = await mediaCache.get(
-    hash, (h) => api.fetchUpload(mediaServer, h),
+    hash, (h) => api.fetchUpload(from, h),
   );
   const name = named || `${hash.slice(0, 12)}.${EXTENSIONS[contentType] ?? 'bin'}`;
 
@@ -802,6 +839,8 @@ handle('media:upload-finish', (_e, server, id) => api.uploadFinish(server, id));
 handle('media:upload-cancel', (_e, server, id) => api.uploadCancel(server, id));
 
 handle('api:messages', (_e, s, id, before) => api.messages(s, id, before));
+handle('api:mark-read', (_e, s, id, upTo) => api.markRead(s, id, upTo));
+handle('api:unread', (_e, s) => api.unread(s));
 handle('api:dm-request', (_e, s, method, path, body) => api.dmRequest(s, method, path, body));
 handle('api:dm-upload', (_e, s, id, bytes) => api.dmUpload(s, id, bytes));
 handle('api:dm-download', (_e, s, id, hash) => api.dmDownload(s, id, hash));
@@ -823,8 +862,9 @@ handle('api:add-clip', (_e, s, body) => api.addClip(s, body));
 handle('api:delete-clip', (_e, s, id) => api.deleteClip(s, id));
 handle('api:reorder-clips', (_e, s, ids) => api.reorderClips(s, ids));
 
-handle('realtime:disconnect', () => {
-  realtime.disconnect();
+// One server's connection, or all of them when none is named.
+handle('realtime:disconnect', (_e, server) => {
+  realtime.disconnect(server);
   return true;
 });
 handle('api:health', (_e, server) => api.health(server));

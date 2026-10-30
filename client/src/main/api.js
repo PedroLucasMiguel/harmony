@@ -20,36 +20,58 @@ const HEALTH_TIMEOUT_MS = 5_000;
 const SDP_TIMEOUT_MS = 20_000;
 
 /**
- * The server password, if the server asks for one.
+ * What each server has been given: its password, if it asks for one, and the
+ * signed-in account's bearer token.
  *
  * Held here rather than passed through every call: it belongs to the server
  * address, not to any one request, and threading it through six signatures
  * would mean six chances to forget it on the call that matters. The renderer
- * sets it once, before anything else talks to the server.
+ * sets it once per server, before anything else talks to that server.
+ *
+ * KEYED BY SERVER: with several servers live at once, one pair for "the
+ * current server" would send one server's token to another. A request to a
+ * server nobody has set credentials for carries none.
  *
  * Media URLs are not covered by this -- they carry a token the control server
  * puts in them, so the password itself never reaches MediaMTX.
- */
-let password = '';
-const setPassword = (value) => {
-  password = String(value ?? '');
-  return { ok: true };
-};
-
-/**
- * The logged-in account's bearer token, held for the same reason as the
- * password above: it belongs to the connection, not to any one call.
  *
- * Note this is the session token and NOT the account password. The renderer
+ * The token is the session token and NOT the account password. The renderer
  * never holds the password after login, and "remember me" persists this token
  * instead -- it expires on its own and can be revoked server-side, neither of
  * which is true of a stored password.
  */
-let sessionToken = '';
-const setSessionToken = (value) => {
-  sessionToken = String(value ?? '');
+const credentials = new Map();
+
+/** The same server however it was typed: scheme assumed, no trailing slash, any case. */
+function credKey(serverUrl) {
+  const trimmed = String(serverUrl ?? '').trim();
+  if (!trimmed) return '';
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  return withScheme.replace(/\/+$/, '').toLowerCase();
+}
+
+const credsOf = (serverUrl) => credentials.get(credKey(serverUrl)) ?? { password: '', token: '' };
+
+function setCreds(serverUrl, patch) {
+  const key = credKey(serverUrl);
+  if (!key) return { ok: false };
+  credentials.set(key, { ...credsOf(serverUrl), ...patch });
   return { ok: true };
-};
+}
+
+const setPassword = (value, serverUrl) => setCreds(serverUrl, { password: String(value ?? '') });
+const setSessionToken = (value, serverUrl) => setCreds(serverUrl, { token: String(value ?? '') });
+const setCredentials = (serverUrl, { password = '', token = '' } = {}) => setCreds(serverUrl, {
+  password: String(password ?? ''), token: String(token ?? ''),
+});
+
+/** The headers that identify us to ONE server. */
+function authHeaders(serverUrl, headers = {}) {
+  const { password, token } = credsOf(serverUrl);
+  if (password) headers['X-Harmony-Password'] = password;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
 
 class ApiError extends Error {
   constructor(message, { status = 0, code = 'request_failed' } = {}) {
@@ -83,9 +105,11 @@ async function requestJson(serverUrl, pathname, {
   try {
     const headers = {};
     if (body) headers['Content-Type'] = 'application/json';
-    const door = foreign ? serverPassword : password;
-    if (door) headers['X-Harmony-Password'] = door;
-    if (sessionToken && !foreign) headers.Authorization = `Bearer ${sessionToken}`;
+    if (foreign) {
+      if (serverPassword) headers['X-Harmony-Password'] = serverPassword;
+    } else {
+      authHeaders(serverUrl, headers);
+    }
 
     res = await fetch(url, {
       method,
@@ -148,8 +172,7 @@ async function dmRequest(serverUrl, method, pathname, body) {
   try {
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (password) headers['X-Harmony-Password'] = password;
-    if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+    authHeaders(serverUrl, headers);
     res = await fetch(url, {
       method,
       headers: Object.keys(headers).length ? headers : undefined,
@@ -175,8 +198,7 @@ async function dmUpload(serverUrl, conversationId, bytes) {
   if (!Number.isSafeInteger(Number(conversationId))) throw new ApiError('Bad conversation.', { code: 'bad_request' });
   const url = `${normalizeBase(serverUrl)}/api/dms/${Number(conversationId)}/uploads`;
   const headers = { 'Content-Type': 'application/octet-stream' };
-  if (password) headers['X-Harmony-Password'] = password;
-  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  authHeaders(serverUrl, headers);
   let res;
   try {
     res = await fetch(url, { method: 'POST', headers, body: Buffer.from(bytes), signal: AbortSignal.timeout(120_000) });
@@ -196,8 +218,7 @@ async function dmDownload(serverUrl, conversationId, hash) {
   }
   const url = `${normalizeBase(serverUrl)}/api/dms/${Number(conversationId)}/uploads/${hash}`;
   const headers = {};
-  if (password) headers['X-Harmony-Password'] = password;
-  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  authHeaders(serverUrl, headers);
   let res;
   try {
     res = await fetch(url, { headers, signal: AbortSignal.timeout(120_000) });
@@ -290,8 +311,7 @@ async function fetchServerLogo(serverUrl, serverPassword) {
 async function fetchUpload(serverUrl, hash) {
   const url = `${normalizeBase(serverUrl)}/api/uploads/${hash}`;
   const headers = {};
-  if (password) headers['X-Harmony-Password'] = password;
-  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  authHeaders(serverUrl, headers);
 
   let res;
   try {
@@ -317,8 +337,7 @@ async function fetchUpload(serverUrl, hash) {
 async function uploadFile(serverUrl, bytes, contentType) {
   const url = `${normalizeBase(serverUrl)}/api/uploads`;
   const headers = { 'Content-Type': contentType };
-  if (password) headers['X-Harmony-Password'] = password;
-  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  authHeaders(serverUrl, headers);
 
   let res;
   try {
@@ -353,8 +372,7 @@ const CHUNK_TIMEOUT_MS = 5 * 60_000;
 async function uploadRequest(serverUrl, pathname, { body, json, timeoutMs = REQUEST_TIMEOUT_MS }) {
   const url = `${normalizeBase(serverUrl)}${pathname}`;
   const headers = {};
-  if (password) headers['X-Harmony-Password'] = password;
-  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  authHeaders(serverUrl, headers);
   if (json) headers['Content-Type'] = 'application/json';
   else if (body) headers['Content-Type'] = 'application/octet-stream';
 
@@ -410,8 +428,7 @@ const uploadCancel = (serverUrl, id) => uploadRequest(
 async function downloadTo(serverUrl, hash, filePath, onProgress) {
   const url = `${normalizeBase(serverUrl)}/api/uploads/${hash}`;
   const headers = {};
-  if (password) headers['X-Harmony-Password'] = password;
-  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  authHeaders(serverUrl, headers);
 
   let res;
   try {
@@ -467,6 +484,8 @@ module.exports = {
   ApiError,
   setPassword,
   setSessionToken,
+  setCredentials,
+  credKey,
   dmRequest,
   dmUpload,
   dmDownload,
@@ -525,6 +544,8 @@ module.exports = {
     requestJson(s, '/api/accounts/avatar', { method: 'POST', body: { hash } }),
   // The banner and the join sound are the same: an already-uploaded file's
   // hash, or null to take it away. See setAvatar.
+  // 0-100, or null for the default.
+  setBannerDim: (s, dim) => requestJson(s, '/api/accounts/banner-dim', { method: 'POST', body: { dim } }),
   setBanner: (s, hash) =>
     requestJson(s, '/api/accounts/banner', { method: 'POST', body: { hash } }),
   setJoinSound: (s, hash) =>
@@ -617,6 +638,11 @@ module.exports = {
   downloadTo,
 
   // Messages
+  // "I have read this channel up to here", and what is new in every channel.
+  markRead: (s, id, upTo) => requestJson(s, `/api/channels/${Number(id)}/read`, {
+    method: 'POST', body: upTo === undefined ? {} : { upTo: Number(upTo) },
+  }),
+  unread: (s) => requestJson(s, '/api/unread'),
   messages: (s, id, before) =>
     requestJson(s, `/api/channels/${id}/messages${before ? `?before=${before}` : ''}`),
   postMessage: (s, id, body) =>

@@ -42,6 +42,7 @@ import {
 } from './chat.js';
 import { UploadSessions } from './upload-sessions.js';
 import { DirectMessages } from './dms.js';
+import { ChannelReads } from './reads.js';
 import { mountDirectMessages } from './dm-routes.js';
 import { Recovery, mountRecovery } from './recovery.js';
 
@@ -91,6 +92,7 @@ const uploads = new UploadSessions(chat);
 const soundpad = new Soundpad(db);
 const emojis = new Emojis(db);
 const dms = new DirectMessages(db);
+const reads = new ChannelReads(db);
 const recovery = new Recovery(db);
 /*
  * The name and the door key.
@@ -636,6 +638,20 @@ app.post('/api/accounts/name-color', requireLogin, (req, res) => {
 });
 
 /** Your display name's font: one of a fixed list, or null for the default. */
+/** How dim your banner is drawn, 0-100 (nothing for the default). Everybody's lists follow at once. */
+app.post('/api/accounts/banner-dim', requireLogin, (req, res) => {
+  const result = accounts.setBannerDim(req.user.id, req.body?.dim);
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.error,
+      message: result.error === 'invalid_dim' ? 'Dimming is a whole number from 0 to 100.' : 'No such user.',
+    });
+  }
+  const user = publicUser(result.user);
+  realtime?.broadcast({ type: 'user:updated', user });
+  return res.json({ user });
+});
+
 app.post('/api/accounts/name-font', requireLogin, (req, res) => {
   const result = accounts.setNameFont(req.user.id, req.body?.font);
   if (!result.ok) {
@@ -1372,11 +1388,14 @@ function readableChannel(req, id) {
  * client draws it from the pushed copy and then loses it on the next
  * refresh, which looks like the feature working intermittently.
  */
-function forClient(messages) {
-  const list = [].concat(messages).filter(Boolean);
-  const byId = chat.reactionsFor(list.map((m) => m.id));
-  // Built once for the page. Eleven people on a friends' server, so the map
-  // is cheaper than the eleven-row query it replaces per message.
+/**
+ * What turns a mention in a message's text into a person or a role: the
+ * nickname table, and the role handles. Built once for a page of messages, or
+ * for counting a person's unread mentions.
+ */
+function mentionLookups() {
+  // Eleven people on a friends' server, so the map is cheaper than the
+  // eleven-row query it replaces per message.
   const ids = new Map(accounts.list().map((u) => [u.nickname, u.id]));
   const idOf = (nickname) => ids.get(nickname) ?? null;
   // Top of the hierarchy first, so when two names fold to the same handle
@@ -1387,6 +1406,13 @@ function forClient(messages) {
     if (handle && !handles.has(handle)) handles.set(handle, role.id);
   }
   const roleOf = (handle) => handles.get(handle) ?? null;
+  return { idOf, roleOf };
+}
+
+function forClient(messages) {
+  const list = [].concat(messages).filter(Boolean);
+  const byId = chat.reactionsFor(list.map((m) => m.id));
+  const { idOf, roleOf } = mentionLookups();
   return list.map(
     (m) => publicMessage(m, byId.get(m.id) ?? [], mentionsIn(m.body, idOf, roleOf)),
   );
@@ -1416,6 +1442,46 @@ function toChannelReaders(channelId, payload) {
     return !channel.password_hash || channels.hasGrant(channelId, user.id) || ctx.admin;
   });
 }
+
+/**
+ * What is new to a person, per channel they may read: how many messages, how
+ * many of them are addressed to them (their name, one of their roles, or
+ * @everyone), and where their read mark is. See reads.js.
+ */
+function unreadFor(user, only = null) {
+  const ctx = roles.context(user);
+  const { ids } = roles.visibleTo(ctx, channels);
+  const readable = [...ids].filter((id) => {
+    if (only !== null && id !== only) return false;
+    const channel = channels.get(id);
+    // The same rule as readableChannel: a passworded channel is only theirs once unlocked.
+    return channel && (!channel.password_hash || channels.hasGrant(id, user.id) || ctx.admin);
+  });
+  const { idOf, roleOf } = mentionLookups();
+  const mentionsThem = (body) => {
+    const m = mentionsIn(body, idOf, roleOf);
+    return m.everyone || m.userIds.includes(user.id) || m.roleIds.some((id) => ctx.roleIds.has(id));
+  };
+  return reads.summary(user.id, readable, mentionsThem);
+}
+
+app.get('/api/unread', requireLogin, (req, res) => res.json({ channels: unreadFor(req.user) }));
+
+/**
+ * "I have read this far." Moves the mark forward, never back and never past the
+ * newest message, and tells the person's other devices so their badges clear
+ * too.
+ */
+app.post('/api/channels/:id/read', requireLogin, (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!readableChannel(req, id)) return res.status(404).json({ error: 'no_such_channel' });
+
+  const upTo = req.body?.upTo === undefined ? Number.POSITIVE_INFINITY : Number(req.body.upTo);
+  reads.markRead(req.user.id, id, upTo);
+  const [entry] = unreadFor(req.user, id);
+  realtime?.toUser(req.user.id, { type: 'channel:read', ...entry });
+  return res.json(entry);
+});
 
 app.get('/api/channels/:id/messages', requireLogin, (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
@@ -1448,6 +1514,8 @@ app.post('/api/channels/:id/messages', requireLogin, (req, res) => {
 
   const message = oneForClient(result.message);
   toChannelReaders(id, { type: 'message', message });
+  // Writing in a channel is reading it: your own message is not news, and neither is what you answered.
+  reads.markRead(req.user.id, id, message.id);
   return res.status(201).json({ message });
 });
 
@@ -2029,6 +2097,7 @@ realtime = new Realtime({
   badges,
   soundpad,
   issueTokens,
+  unreadFor,
   kickMember: (channelId, mid) => monitor.kickPath(channelPath(channelId, mid, 'voice')),
 });
 

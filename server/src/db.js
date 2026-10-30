@@ -644,6 +644,35 @@ const MIGRATIONS = [
   (db) => {
     db.exec('ALTER TABLE roles ADD COLUMN style TEXT');
   },
+  /*
+   * v21: how far each person has read each channel.
+   *
+   * A high-water mark, the same shape as dm_reads and for the same reason: what
+   * "unread" means is "newer than this", and keeping only the mark means there
+   * is nothing per message to update. A person with no row has not been counted
+   * yet; the first time they are asked, everything already there counts as
+   * read (see reads.js).
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE channel_reads (
+        user_id      INTEGER NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+        channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        last_read_id INTEGER NOT NULL,
+        PRIMARY KEY (user_id, channel_id)
+      );
+    `);
+  },
+  /*
+   * v22: how dim a profile's banner is drawn.
+   *
+   * 0 (not dimmed at all) to 100 (nearly black), chosen by the person whose
+   * banner it is and seen by everybody. NULL is "as it always was": the look the
+   * banner had before this could be chosen, which is 50.
+   */
+  (db) => {
+    db.exec('ALTER TABLE users ADD COLUMN banner_dim INTEGER');
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

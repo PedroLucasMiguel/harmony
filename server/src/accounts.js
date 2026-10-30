@@ -200,9 +200,10 @@ export class Accounts {
       setBanner: db.prepare('UPDATE users SET banner_hash = ? WHERE id = ?'),
       setJoinSound: db.prepare('UPDATE users SET join_sound_hash = ? WHERE id = ?'),
       setNameFont: db.prepare('UPDATE users SET name_font = ? WHERE id = ?'),
+      setBannerDim: db.prepare('UPDATE users SET banner_dim = ? WHERE id = ?'),
       setNameColor: db.prepare('UPDATE users SET name_color = ? WHERE id = ?'),
       list: db.prepare(
-        'SELECT id, nickname, display_name, role, avatar_hash, name_font, banner_hash, '
+        'SELECT id, nickname, display_name, role, avatar_hash, name_font, banner_hash, banner_dim, '
         + `join_sound_hash, name_color, created_at, banned_at, ${ROLE_IDS}, ${BADGE_IDS} `
         + 'FROM users ORDER BY nickname',
       ),
@@ -550,6 +551,25 @@ export class Accounts {
   }
 
   /** One of NAME_FONTS, or null/'' for the default. Anything else is refused. */
+  /**
+   * How dim the banner is: a whole number from 0 to 100, or nothing for the
+   * default. Anything else is refused rather than rounded into something nobody
+   * asked for.
+   */
+  setBannerDim(userId, dim) {
+    const user = this.#q.byId.get(userId);
+    if (!user) return { ok: false, error: 'no_such_user' };
+    let value = null;
+    if (dim !== null && dim !== undefined && dim !== '') {
+      // A number as sent, not whatever JavaScript can coerce into one ([5] is not a dimming).
+      if (typeof dim !== 'number') return { ok: false, error: 'invalid_dim' };
+      value = dim;
+      if (!Number.isInteger(value) || value < 0 || value > 100) return { ok: false, error: 'invalid_dim' };
+    }
+    this.#q.setBannerDim.run(value, userId);
+    return { ok: true, user: this.#q.byId.get(userId) };
+  }
+
   setNameFont(userId, font) {
     const user = this.#q.byId.get(userId);
     if (!user) return { ok: false, error: 'no_such_user' };
@@ -584,6 +604,8 @@ export const publicUser = (u) => (u ? {
     try { return u.name_color ? JSON.parse(u.name_color) : null; } catch { return null; }
   })(),
   bannerHash: u.banner_hash ?? null,
+  // 0-100, or null for the look it has always had.
+  bannerDim: u.banner_dim ?? null,
   joinSoundHash: u.join_sound_hash ?? null,
   createdAt: u.created_at,
 } : null);

@@ -159,6 +159,7 @@ contextBridge.exposeInMainWorld('harmony', {
 
   media: {
     setServer: invoke('media:server'),
+    register: invoke('media:register'),
     keep: invoke('media:keep'),
     stats: invoke('media:stats'),
     upload: invoke('media:upload'),
@@ -200,6 +201,7 @@ contextBridge.exposeInMainWorld('harmony', {
   api: {
     setPassword: invoke('api:password'),
     setSessionToken: invoke('api:session-token'),
+    setCredentials: invoke('api:set-credentials'),
     register: invoke('api:register'),
     login: invoke('api:login'),
     logout: invoke('api:logout'),
@@ -213,6 +215,7 @@ contextBridge.exposeInMainWorld('harmony', {
     me: invoke('api:me'),
     setAvatar: invoke('api:set-avatar'),
     setBanner: invoke('api:set-banner'),
+    setBannerDim: invoke('api:set-banner-dim'),
     setJoinSound: invoke('api:set-join-sound'),
     setNameFont: invoke('api:set-name-font'),
     setNameColor: invoke('api:set-name-color'),
@@ -244,6 +247,8 @@ contextBridge.exposeInMainWorld('harmony', {
     banUser: invoke('api:ban-user'),
     updateGroup: invoke('api:update-group'),
     messages: invoke('api:messages'),
+    markRead: invoke('api:mark-read'),
+    unread: invoke('api:unread'),
     dmRequest: invoke('api:dm-request'),
     dmUpload: invoke('api:dm-upload'),
     dmDownload: invoke('api:dm-download'),

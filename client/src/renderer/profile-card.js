@@ -120,6 +120,11 @@ export function createProfileCard(deps) {
       img.draggable = false;
       img.src = harmony.mediaUrl(user.bannerHash);
       banner.append(img);
+      // As dim as its owner made it; undimmed if they never chose.
+      if (user.bannerDim != null) {
+        banner.dataset.dim = '';
+        banner.style.setProperty('--banner-dim', String(user.bannerDim));
+      }
     }
     const actions = document.createElement('div');
     actions.className = 'profile-card-actions';

@@ -840,6 +840,24 @@ export default {
   'quality.note_live': 'Applies to a running camera straight away.',
   'quality.note_native': 'Native asks the camera for the most it offers, which the sent picture follows.',
 
+  // --- rail
+  'rail.dm_pick': 'Pick a conversation to read it.',
+  'rail.menu_open': 'Open',
+  'rail.menu_sign_out': 'Sign out',
+  'rail.menu_keep_live_on': 'Keep connected in the background',
+  'rail.menu_keep_live_off': 'Stop keeping connected in the background',
+  'rail.menu_keep_live_hint': 'A server kept connected shows new messages and mentions on its bubble.',
+  'rail.menu_forget': 'Forget this server',
+  'rail.forget_title': 'Forget {name}?',
+  'rail.forget_text': 'Its saved sign-in is removed from this computer. You can add it again with its address.',
+  'rail.forget_ok': 'Forget',
+  'rail.private_messages': 'Private messages',
+  'rail.add_server': 'Add a server',
+  'rail.call_return': 'Back to the call',
+  'rail.call_in': '{channel} on {server}',
+  'rail.call_interrupted': 'The call was interrupted.',
+  'rail.sign_in_needed': 'Sign in again to open this server',
+
   // --- roles
   'roles.admin': 'super admin',
   'roles.member': 'member',
@@ -930,6 +948,8 @@ export default {
   'settings.profile': 'Profile',
   'settings.profile.account': 'Account',
   'settings.profile.banner': 'Banner',
+  'settings.profile.banner_dim': 'Dimming',
+  'settings.profile.banner_dim_reset': 'Back to the default',
   'settings.profile.banner_note': 'Drawn behind your name in the member list and in voice channels, dimmed and fading out toward the left. A picture or a GIF, up to 2 MB; a still picture is shrunk to fit.',
   'settings.profile.display_name': 'Display name',
   'settings.profile.join_sound': 'Join sound',
@@ -1131,6 +1151,8 @@ export default {
   'app.pip_bring_back': 'Bring back into Harmony',
   // --- security
   'settings.security': "Security",
+  'security.auto_sign_in': 'Sign in automatically',
+  'security.auto_sign_in_hint': 'When Harmony opens, go straight to the last server if its saved sign-in is still good. Signing out of a server asks for the password again next time.',
   'security.title': "Security",
   'security.password_title': "Password",
   'security.password_hint': "Change the password you sign in with. Any other device signed in to this account is signed out when you do.",

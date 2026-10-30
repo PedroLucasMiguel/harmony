@@ -408,6 +408,15 @@ describe('when keys change', () => {
     assert.equal(carol.session.thread(convo)[0].body, 'primeira', 'and the other person still reads all of it');
   });
 
+  it('a computer that cannot open them still knows how many are waiting', async () => {
+    await carol.session.send(convo, { body: 'segunda' });
+    await dan.next('dm:message');
+    const fresh = await computer('dan', { socket: false });
+    assert.equal(await fresh.session.start(), KeyState.Locked);
+    assert.ok(fresh.session.unread >= 2, `what the server counts, with nothing opened (${fresh.session.unread})`);
+    assert.deepEqual(fresh.session.list(), [], 'and nothing read');
+  });
+
   it('a safety number is the same on both screens, and checking it accepts a change', async () => {
     assert.equal(carol.session.safetyNumber(people.dan.id), dan.session.safetyNumber(people.carol.id));
     assert.match(carol.session.safetyNumber(people.dan.id), /^(\d{5} ){5}\d{5}$/);

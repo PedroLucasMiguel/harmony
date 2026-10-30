@@ -14,8 +14,29 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 5_000;
 const SDP_TIMEOUT_MS = 20_000;
 
-let password = '';
-let sessionToken = '';
+/*
+ * What each server has been given -- the same as main/api.js: keyed by server, so
+ * with several live at once one server's token is never sent to another, and a
+ * server nobody set credentials for gets none.
+ */
+const credentials = new Map();
+
+/** The same server however it was typed: scheme assumed, no trailing slash, any case. */
+export function credKey(serverUrl) {
+  const trimmed = String(serverUrl ?? '').trim();
+  if (!trimmed) return '';
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  return withScheme.replace(/\/+$/, '').toLowerCase();
+}
+
+const credsOf = (serverUrl) => credentials.get(credKey(serverUrl)) ?? { password: '', token: '' };
+
+function setCreds(serverUrl, patch) {
+  const key = credKey(serverUrl);
+  if (!key) return { ok: false };
+  credentials.set(key, { ...credsOf(serverUrl), ...patch });
+  return { ok: true };
+}
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = 'request_failed' } = {}) {
@@ -42,12 +63,16 @@ function timeout(ms) {
 
 const timedOut = (err) => err?.name === 'TimeoutError' || err?.name === 'AbortError';
 
-function authHeaders({ serverPassword } = {}) {
-  const foreign = serverPassword !== undefined;
+function authHeaders(serverUrl, { serverPassword } = {}) {
   const headers = {};
-  const door = foreign ? serverPassword : password;
-  if (door) headers['X-Harmony-Password'] = door;
-  if (sessionToken && !foreign) headers.Authorization = `Bearer ${sessionToken}`;
+  if (serverPassword !== undefined) {
+    // Another server asked about itself: its own password, never our token.
+    if (serverPassword) headers['X-Harmony-Password'] = serverPassword;
+    return headers;
+  }
+  const { password, token } = credsOf(serverUrl);
+  if (password) headers['X-Harmony-Password'] = password;
+  if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 
@@ -57,7 +82,7 @@ async function requestJson(serverUrl, pathname, {
   const url = `${normalizeBase(serverUrl)}${pathname}`;
   let res;
   try {
-    const headers = authHeaders({ serverPassword });
+    const headers = authHeaders(serverUrl, { serverPassword });
     if (body) headers['Content-Type'] = 'application/json';
     res = await fetch(url, {
       method,
@@ -143,7 +168,7 @@ export async function fetchBytes(serverUrl, pathname, { serverPassword } = {}) {
   const url = `${normalizeBase(serverUrl)}${pathname}`;
   let res;
   try {
-    res = await fetch(url, { headers: authHeaders({ serverPassword }), signal: timeout(30_000) });
+    res = await fetch(url, { headers: authHeaders(serverUrl, { serverPassword }), signal: timeout(30_000) });
   } catch (err) {
     throw new ApiError(`Could not download ${pathname}: ${err.message}`, { code: 'unreachable' });
   }
@@ -157,7 +182,7 @@ export async function fetchBytes(serverUrl, pathname, { serverPassword } = {}) {
 
 async function uploadFile(serverUrl, bytes, contentType) {
   const url = `${normalizeBase(serverUrl)}/api/uploads`;
-  const headers = { ...authHeaders(), 'Content-Type': contentType };
+  const headers = { ...authHeaders(serverUrl), 'Content-Type': contentType };
   let res;
   try {
     res = await fetch(url, {
@@ -183,7 +208,7 @@ async function uploadFile(serverUrl, bytes, contentType) {
 /* Big uploads, in pieces -- the same protocol as the desktop's main/api.js. */
 async function uploadRequest(serverUrl, pathname, { body, json, timeoutMs = REQUEST_TIMEOUT_MS }) {
   const url = `${normalizeBase(serverUrl)}${pathname}`;
-  const headers = authHeaders();
+  const headers = authHeaders(serverUrl);
   if (json) headers['Content-Type'] = 'application/json';
   else if (body) headers['Content-Type'] = 'application/octet-stream';
   let res;
@@ -242,7 +267,7 @@ async function dmRequest(serverUrl, method, pathname, body) {
   const url = `${normalizeBase(serverUrl)}${pathname}`;
   let res;
   try {
-    const headers = authHeaders();
+    const headers = authHeaders(serverUrl);
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     res = await fetch(url, {
       method,
@@ -271,7 +296,7 @@ async function dmUpload(serverUrl, conversationId, bytes) {
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/octet-stream' },
+      headers: { ...authHeaders(serverUrl), 'Content-Type': 'application/octet-stream' },
       body: new Uint8Array(bytes),
       signal: timeout(120_000),
     });
@@ -291,7 +316,7 @@ async function dmDownload(serverUrl, conversationId, hash) {
   const url = `${normalizeBase(serverUrl)}/api/dms/${Number(conversationId)}/uploads/${hash}`;
   let res;
   try {
-    res = await fetch(url, { headers: authHeaders(), signal: timeout(120_000) });
+    res = await fetch(url, { headers: authHeaders(serverUrl), signal: timeout(120_000) });
   } catch (err) {
     throw new ApiError(`Could not download the file: ${err.message}`, { code: 'unreachable' });
   }
@@ -303,14 +328,11 @@ export const api = {
   dmRequest,
   dmUpload,
   dmDownload,
-  setPassword: (value) => {
-    password = String(value ?? '');
-    return { ok: true };
-  },
-  setSessionToken: (value) => {
-    sessionToken = String(value ?? '');
-    return { ok: true };
-  },
+  setPassword: (value, serverUrl) => setCreds(serverUrl, { password: String(value ?? '') }),
+  setSessionToken: (value, serverUrl) => setCreds(serverUrl, { token: String(value ?? '') }),
+  setCredentials: (serverUrl, { password = '', token = '' } = {}) => setCreds(serverUrl, {
+    password: String(password ?? ''), token: String(token ?? ''),
+  }),
 
   health: (s) => requestJson(s, '/api/health', { timeoutMs: HEALTH_TIMEOUT_MS }),
   probe: (s, serverPassword) =>
@@ -347,6 +369,7 @@ export const api = {
   reorderChannels: (s, ids) => requestJson(s, '/api/channels/reorder', { method: 'POST', body: { ids } }),
   me: (s) => requestJson(s, '/api/accounts/me'),
   setAvatar: (s, hash) => requestJson(s, '/api/accounts/avatar', { method: 'POST', body: { hash } }),
+  setBannerDim: (s, dim) => requestJson(s, '/api/accounts/banner-dim', { method: 'POST', body: { dim } }),
   setBanner: (s, hash) => requestJson(s, '/api/accounts/banner', { method: 'POST', body: { hash } }),
   setJoinSound: (s, hash) => requestJson(s, '/api/accounts/join-sound', { method: 'POST', body: { hash } }),
   badges: (s) => requestJson(s, '/api/badges'),
@@ -395,6 +418,11 @@ export const api = {
   sdp: (url, offer) => sdpExchange(url, offer),
   hangup: (resourceUrl) => deleteResource(resourceUrl).then(() => true),
 
+  // "I have read this channel up to here", and what is new in every channel.
+  markRead: (s, id, upTo) => requestJson(s, `/api/channels/${Number(id)}/read`, {
+    method: 'POST', body: upTo === undefined ? {} : { upTo: Number(upTo) },
+  }),
+  unread: (s) => requestJson(s, '/api/unread'),
   messages: (s, id, before) =>
     requestJson(s, `/api/channels/${id}/messages${before ? `?before=${before}` : ''}`),
   postMessage: (s, id, body) => requestJson(s, `/api/channels/${id}/messages`, { method: 'POST', body }),

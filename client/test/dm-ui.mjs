@@ -185,13 +185,13 @@ async function run() {
   await sleep(3000);
 
   // --- the button ----------------------------------------------------------------------------------------------------
-  await until(alice, "!document.getElementById('dm-open').hidden", { label: 'the button in the corner' });
-  check('the button for private messages is in the top bar', await alice.evaluate("return !document.getElementById('dm-open').hidden"), '');
-  const inHeader = await alice.evaluate("return Boolean(document.getElementById('dm-open').closest('header'))");
-  check('and it is in the header, with the other buttons', inHeader, '');
+  // Private messages are the first bubble on the rail; the button that used to sit in the corner is gone.
+  await until(alice, "document.querySelector('#server-rail .rail-home') && !document.querySelector('#server-rail .rail-home').disabled", { label: 'the rail\'s first bubble' });
+  check('private messages are the first bubble on the rail', await alice.evaluate("return Boolean(document.querySelector('#server-rail .rail-home'))"), '');
+  check('and the old button in the top bar is gone', await alice.evaluate("return !document.getElementById('dm-open') && !document.getElementById('dm-badge')"), '');
 
-  await alice.evaluate("document.getElementById('dm-open').click(); return true;");
-  await until(alice, "!document.getElementById('dm-panel').hidden", { label: 'the list opening' });
+  await alice.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
+  await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-dms' && document.getElementById('dm-panel').offsetParent !== null", { label: 'the list opening' });
   // Nothing was thrown at her on signing in; the list says a recovery key is waiting.
   check('signing in does not put a dialog in front of anybody', !(await alice.evaluate("return document.querySelector('dialog.dm-keys')?.open")), '');
   const note = await alice.evaluate("return document.getElementById('dm-panel-note').textContent");
@@ -206,7 +206,9 @@ async function run() {
   check('and once she has saved it, the dialog goes', !(await alice.evaluate("return document.querySelector('dialog.dm-keys')?.open")), '');
   const empty = await alice.evaluate("return { empty: !document.getElementById('dm-empty').hidden, rows: document.querySelectorAll('#dm-list .dm-row').length }");
   check('the list starts empty and says how to begin', empty.empty && empty.rows === 0, JSON.stringify(empty));
-  await alice.evaluate("document.getElementById('dm-panel-close').click(); return true;");
+  // Back to the server through the rail's first bubble.
+  await alice.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
+  await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-channels'", { label: 'back on the server' });
 
   // --- right-click on a person --------------------------------------------------------------------------------------------
   await until(alice, "document.querySelector('.member-row[data-user-id]')", { label: 'the member list' });
@@ -220,8 +222,8 @@ async function run() {
   await alice.evaluate("[...document.querySelectorAll('#member-menu-body button')].find((b) => b.textContent === 'Send a private message').click(); return true;");
   await until(alice, "!document.getElementById('dm-active').hidden", { label: 'the conversation' });
   const opened = await alice.evaluate(`return { name: document.getElementById('dm-name').textContent,
-    stage: !document.getElementById('channel-stage').hidden, chat: document.getElementById('chat-active').hidden }`);
-  check('the conversation opens on the stage, named for Bob', /bob/i.test(opened.name) && opened.stage && opened.chat, JSON.stringify(opened));
+    view: document.querySelector('.view[data-active]')?.id, picked: document.getElementById('dm-none').hidden }`);
+  check('the conversation opens on the private messages page, named for Bob', /bob/i.test(opened.name) && opened.view === 'view-dms' && opened.picked, JSON.stringify(opened));
 
   // --- writing ----------------------------------------------------------------------------------------------------------------
   await alice.evaluate(`const i = document.getElementById('dm-input'); i.value = 'oi, bob! 👋'; i.dispatchEvent(new Event('input', { bubbles: true }));
@@ -230,10 +232,10 @@ async function run() {
   check('what Alice wrote appears in her conversation', true, '');
 
   // --- Bob sees it -----------------------------------------------------------------------------------------------------------
-  await until(bob, "!document.getElementById('dm-badge').hidden", { label: "the badge on Bob's button" });
-  const badge = await bob.evaluate("return document.getElementById('dm-badge').textContent");
+  await until(bob, "document.querySelector('#server-rail .rail-home .rail-badge')", { label: "the badge on Bob's bubble" });
+  const badge = await bob.evaluate("return document.querySelector('#server-rail .rail-home .rail-badge').textContent");
   check("Bob's button shows one unread", badge === '1', badge);
-  await bob.evaluate("document.getElementById('dm-open').click(); return true;");
+  await bob.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
   await until(bob, "document.querySelectorAll('#dm-list .dm-row').length === 1", { label: 'the conversation in the list' });
   await shot(bob, '2-bob-list');
   const row = await bob.evaluate("const r = document.querySelector('#dm-list .dm-row'); return { text: r.textContent, unread: r.hasAttribute('data-unread') }");
@@ -241,7 +243,7 @@ async function run() {
   await bob.evaluate("document.querySelector('#dm-list .dm-row').click(); return true;");
   await until(bob, "document.querySelector('#dm-log .chat-msg .text')?.textContent.includes('oi, bob')", { label: 'the message in his conversation' });
   check('opening it shows the message, readable', true, '');
-  await until(bob, "document.getElementById('dm-badge').hidden", { label: 'the badge going' });
+  await until(bob, "!document.querySelector('#server-rail .rail-home .rail-badge')", { label: 'the badge going' });
   check('and reading it clears the badge', true, '');
 
   // --- the answer ----------------------------------------------------------------------------------------------------------
@@ -254,10 +256,10 @@ async function run() {
   // --- the lock and the stage ------------------------------------------------------------------------------------------
   const lock = await alice.evaluate("return Boolean(document.querySelector('#dm-active .dm-lock'))");
   check('the conversation says it is encrypted', lock, '');
-  await alice.evaluate(`document.querySelector('#channel-items li.channel-row[data-kind="text"], #channel-items li.channel-row')?.click(); return true;`);
-  await until(alice, "document.getElementById('dm-active').hidden", { label: 'the conversation giving way to a channel' }).catch(() => null);
-  const gaveWay = await alice.evaluate("return document.getElementById('dm-active').hidden");
-  check('opening a channel puts the conversation away', gaveWay, '');
+  await alice.evaluate("document.querySelector('#server-rail .rail-item[data-server]').click(); return true;");
+  await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-channels'", { label: 'the server coming back' });
+  check('the server\'s bubble on the rail goes back to it, and the conversation stays where it was',
+    !(await alice.evaluate("return document.getElementById('dm-active').hidden")), '');
 
   // --- nothing but ciphertext on the way -----------------------------------------------------------------------------
   const leaked = await alice.evaluate(`return (await fetch('${BASE}/api/health')).ok`).catch(() => true);

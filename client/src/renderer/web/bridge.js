@@ -13,8 +13,8 @@
 // default settings, not two.
 
 import { DEFAULTS, VERSION } from './build-info.js';
-import { api, fetchBytes, normalizeBase } from './api.js';
-import { RealtimeClient } from './realtime.js';
+import { api, credKey, fetchBytes, normalizeBase } from './api.js';
+import { RealtimeHub } from './realtime.js';
 import { isNative, native } from './native.js';
 
 const NATIVE = isNative();
@@ -109,14 +109,33 @@ screen.orientation?.addEventListener?.('change', () => applyViewportScale(scaleI
  * own HTTP cache does what the desktop's media cache does; the server marks
  * every upload immutable.
  */
-let mediaBase = '';
-let mediaKey = '';
+/** Where to load a server's uploads from, and the key that stands in for its credentials. */
+const mediaServers = new Map();
+/** The server a media URL means when it names none: the one being viewed. */
+let mediaCurrent = '';
 
-const mediaUrl = (hash) => {
-  if (!mediaBase) return '';
-  return mediaKey
-    ? `${mediaBase}/api/media/${hash}?k=${encodeURIComponent(mediaKey)}`
-    : `${mediaBase}/api/uploads/${hash}`;
+async function registerMedia(server) {
+  const key = credKey(server);
+  if (!key) return '';
+  let mediaKey = '';
+  try {
+    mediaKey = (await api.mediaKey(server))?.key ?? '';
+  } catch {
+    // An older server has no media keys: pictures will not load, but
+    // nothing else depends on them.
+  }
+  mediaServers.set(key, { base: normalizeBase(server), key: mediaKey });
+  return key;
+}
+
+const mediaFor = (server) => mediaServers.get(server ? credKey(server) : mediaCurrent);
+
+const mediaUrl = (hash, server) => {
+  const media = mediaFor(server);
+  if (!media?.base) return '';
+  return media.key
+    ? `${media.base}/api/media/${hash}?k=${encodeURIComponent(media.key)}`
+    : `${media.base}/api/uploads/${hash}`;
 };
 
 function blobToBase64(blob) {
@@ -135,11 +154,12 @@ function blobToBase64(blob) {
  */
 const NATIVE_SAVE_LIMIT = 32 * 1024 * 1024;
 
-async function saveMedia(hash, suggestedName, size = 0) {
-  if (!mediaBase) throw new Error('not connected to a server');
+async function saveMedia(hash, suggestedName, size = 0, server) {
+  const media = mediaFor(server);
+  if (!media?.base) throw new Error('not connected to a server');
   const name = String(suggestedName ?? '').trim().replace(/[\\/]/g, '_')
     || `${hash.slice(0, 12)}`;
-  const download = `${mediaUrl(hash)}${mediaKey ? '&' : '?'}download=${encodeURIComponent(name)}`;
+  const download = `${mediaUrl(hash, server)}${media.key ? '&' : '?'}download=${encodeURIComponent(name)}`;
 
   if (!NATIVE) {
     // A browser downloads it itself, straight from the server -- the server
@@ -159,7 +179,7 @@ async function saveMedia(hash, suggestedName, size = 0) {
     return { saved: true, name, handedOff: true };
   }
 
-  const res = await fetch(mediaUrl(hash));
+  const res = await fetch(mediaUrl(hash, server));
   if (!res.ok) throw new Error(`The server returned ${res.status} for that file.`);
   const blob = await res.blob();
   const saved = await native.saveFile(name, blob.type || 'application/octet-stream', await blobToBase64(blob));
@@ -210,7 +230,7 @@ async function ensureLogo(server, serverPassword, hash) {
 
 // --- realtime ----------------------------------------------------------------
 
-const realtime = new RealtimeClient();
+const realtime = new RealtimeHub(credKey);
 
 // A phone loses its socket to the screen turning off and to changing
 // networks; coming back from either is when to reconnect, not 15 s later.
@@ -447,17 +467,12 @@ export const harmony = {
 
   media: {
     async setServer(server) {
-      mediaBase = server ? normalizeBase(server) : '';
-      mediaKey = '';
-      if (!mediaBase) return true;
-      try {
-        mediaKey = (await api.mediaKey(server))?.key ?? '';
-      } catch {
-        // An older server has no media keys: pictures will not load, but
-        // nothing else depends on them.
-        mediaKey = '';
-      }
+      mediaCurrent = server ? await registerMedia(server) : '';
       return true;
+    },
+    // Say pictures may be loaded from this server by name, without making it the current one.
+    async register(server) {
+      return Boolean(await registerMedia(server));
     },
     keep: async () => true,
     stats: async () => null,
@@ -466,7 +481,7 @@ export const harmony = {
     uploadChunk: (server, id, offset, blob) => api.uploadChunk(server, id, offset, blob),
     uploadFinish: (server, id) => api.uploadFinish(server, id),
     uploadCancel: (server, id) => api.uploadCancel(server, id),
-    save: (hash, suggestedName, size) => saveMedia(hash, suggestedName, size),
+    save: (hash, suggestedName, size, server) => saveMedia(hash, suggestedName, size, server),
     // The browser and Android show their own download progress.
     onProgress: () => () => {},
     reveal: async () => true,
@@ -476,9 +491,10 @@ export const harmony = {
 
   realtime: {
     connect: (server, token) => realtime.connect(server, token),
-    request: (type, payload) => realtime.request(type, payload),
-    disconnect: async () => {
-      realtime.disconnect();
+    request: (server, type, payload) => realtime.request(server, type, payload),
+    // One server's connection, or all of them when none is named.
+    disconnect: async (server) => {
+      realtime.disconnect(server);
       return true;
     },
     onEvent: (handler) => realtime.on('event', handler),

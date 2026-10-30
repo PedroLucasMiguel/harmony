@@ -45,10 +45,27 @@ export class RealtimeClient extends Emitter {
   #heartbeat = null;
   #rejected = false;
   #wanted = false;
+  /** What the server said when the current connection said hello. */
+  #hello = null;
+
+  get connected() {
+    return this.#ws?.readyState === 1; // OPEN
+  }
 
   connect(serverUrl, token) {
-    this.#url = toWebSocketUrl(serverUrl);
-    this.#token = String(token ?? '');
+    const url = toWebSocketUrl(serverUrl);
+    const wanted = String(token ?? '');
+    // Asked again for what is already being kept: not a second socket, the same
+    // connection's answer (see main/realtime.js).
+    if (this.#wanted && !this.#rejected && url === this.#url && wanted === this.#token) {
+      if (this.#hello && this.connected) return Promise.resolve(this.#hello);
+      return new Promise((resolve, reject) => {
+        this.once('hello', resolve);
+        this.once('give-up', reject);
+      });
+    }
+    this.#url = url;
+    this.#token = wanted;
     this.#rejected = false;
     this.#wanted = true;
     this.#attempt = 0;
@@ -68,6 +85,7 @@ export class RealtimeClient extends Emitter {
 
   disconnect() {
     this.#wanted = false;
+    this.#hello = null;
     clearTimeout(this.#reconnectTimer);
     clearTimeout(this.#watchdog);
     clearInterval(this.#heartbeat);
@@ -99,6 +117,7 @@ export class RealtimeClient extends Emitter {
           if (reply.type !== 'hello-ok') throw new Error(reply.error ?? 'hello failed');
           this.#attempt = 0;
           this.#startHeartbeat();
+          this.#hello = reply;
           this.emit('hello', reply);
           this.emit('event', { ...reply, type: 'realtime:up' });
         })
@@ -236,4 +255,54 @@ export function toWebSocketUrl(serverUrl) {
   url.pathname = '/ws';
   url.search = '';
   return url.toString();
+}
+
+/**
+ * One connection per server, every frame tagged with the server it came from --
+ * the same as main/realtime-hub.js.
+ */
+export class RealtimeHub extends Emitter {
+  /** @type {Map<string, RealtimeClient>} */
+  #clients = new Map();
+  #keyOf;
+
+  constructor(keyOf) {
+    super();
+    this.#keyOf = keyOf;
+  }
+
+  connect(server, token) {
+    const key = this.#keyOf(server);
+    let client = this.#clients.get(key);
+    if (!client) {
+      client = new RealtimeClient();
+      client.on('event', (payload) => this.emit('event', { ...payload, server: key }));
+      this.#clients.set(key, client);
+    }
+    return client.connect(server, token);
+  }
+
+  request(server, type, payload) {
+    const client = this.#clients.get(this.#keyOf(server));
+    if (!client) return Promise.reject(new Error('Not connected to the server.'));
+    return client.request(type, payload);
+  }
+
+  /** One server's connection, or every one when no server is named. */
+  disconnect(server) {
+    const keys = server === undefined || server === null ? [...this.#clients.keys()] : [this.#keyOf(server)];
+    for (const key of keys) {
+      this.#clients.get(key)?.disconnect();
+      this.#clients.delete(key);
+    }
+  }
+
+  connected(server) {
+    return this.#clients.get(this.#keyOf(server))?.connected ?? false;
+  }
+
+  /** Back on the network or the screen: every connection that gave up waiting tries now. */
+  nudge() {
+    for (const client of this.#clients.values()) client.nudge();
+  }
 }

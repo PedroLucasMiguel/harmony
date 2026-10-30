@@ -830,6 +830,24 @@ export default {
   'quality.note_live': 'Vale na hora para uma câmera em uso.',
   'quality.note_native': 'Nativa pede à câmera o máximo que ela oferece, e a imagem enviada acompanha.',
 
+  // --- rail
+  'rail.dm_pick': 'Escolha uma conversa para lê-la.',
+  'rail.menu_open': 'Abrir',
+  'rail.menu_sign_out': 'Sair',
+  'rail.menu_keep_live_on': 'Manter conectado em segundo plano',
+  'rail.menu_keep_live_off': 'Parar de manter conectado em segundo plano',
+  'rail.menu_keep_live_hint': 'Um servidor mantido conectado mostra mensagens novas e menções no seu botão.',
+  'rail.menu_forget': 'Esquecer este servidor',
+  'rail.forget_title': 'Esquecer {name}?',
+  'rail.forget_text': 'A sessão salva dele é removida deste computador. Você pode adicioná-lo de novo com o endereço.',
+  'rail.forget_ok': 'Esquecer',
+  'rail.private_messages': 'Mensagens privadas',
+  'rail.add_server': 'Adicionar um servidor',
+  'rail.call_return': 'Voltar para a chamada',
+  'rail.call_in': '{channel} em {server}',
+  'rail.call_interrupted': 'A chamada foi interrompida.',
+  'rail.sign_in_needed': 'Entre novamente para abrir este servidor',
+
   // --- roles
   'roles.admin': 'super admin',
   'roles.member': 'membro',
@@ -920,6 +938,8 @@ export default {
   'settings.profile': 'Perfil',
   'settings.profile.account': 'Conta',
   'settings.profile.banner': 'Banner',
+  'settings.profile.banner_dim': 'Escurecimento',
+  'settings.profile.banner_dim_reset': 'Voltar ao padrão',
   'settings.profile.banner_note': 'Aparece atrás do seu nome na lista de membros e nos canais de voz, escurecido e esmaecendo para a esquerda. Uma imagem ou um GIF, de até 2 MB; uma imagem estática é reduzida para caber.',
   'settings.profile.display_name': 'Nome de exibição',
   'settings.profile.join_sound': 'Som de entrada',
@@ -1121,6 +1141,8 @@ export default {
   'app.pip_bring_back': 'Trazer de volta para o Harmony',
   // --- security
   'settings.security': "Segurança",
+  'security.auto_sign_in': 'Entrar automaticamente',
+  'security.auto_sign_in_hint': 'Ao abrir o Harmony, ir direto ao último servidor se a sessão salva ainda valer. Ao sair de um servidor, a senha é pedida de novo na próxima vez.',
   'security.title': "Segurança",
   'security.password_title': "Senha",
   'security.password_hint': "Troque a senha que você usa para entrar. Qualquer outro dispositivo conectado a esta conta será desconectado.",

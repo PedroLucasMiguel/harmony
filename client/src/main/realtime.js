@@ -60,6 +60,8 @@ class RealtimeClient extends EventEmitter {
   /** Set when the server rejected our credentials; stops all retrying. */
   #rejected = false;
   #wanted = false;
+  /** What the server said when the current connection said hello. */
+  #hello = null;
 
   get connected() {
     return this.#ws?.readyState === 1; // OPEN
@@ -69,8 +71,19 @@ class RealtimeClient extends EventEmitter {
    * Connect, and keep connecting. Resolves on the first successful hello.
    */
   connect(serverUrl, token) {
-    this.#url = toWebSocketUrl(serverUrl);
-    this.#token = String(token ?? '');
+    const url = toWebSocketUrl(serverUrl);
+    const wanted = String(token ?? '');
+    // Asked again for what is already being kept: not a second socket (the first
+    // would be left open with nobody holding it), the same connection's answer.
+    if (this.#wanted && !this.#rejected && url === this.#url && wanted === this.#token) {
+      if (this.#hello && this.connected) return Promise.resolve(this.#hello);
+      return new Promise((resolve, reject) => {
+        this.once('hello', resolve);
+        this.once('give-up', reject);
+      });
+    }
+    this.#url = url;
+    this.#token = wanted;
     this.#rejected = false;
     this.#wanted = true;
     this.#attempt = 0;
@@ -84,6 +97,7 @@ class RealtimeClient extends EventEmitter {
 
   disconnect() {
     this.#wanted = false;
+    this.#hello = null;
     clearTimeout(this.#reconnectTimer);
     clearTimeout(this.#watchdog);
     clearInterval(this.#heartbeat);
@@ -131,6 +145,7 @@ class RealtimeClient extends EventEmitter {
           if (reply.type !== 'hello-ok') throw new Error(reply.error ?? 'hello failed');
           this.#attempt = 0;
           this.#startHeartbeat();
+          this.#hello = reply;
           this.emit('hello', reply);
           /*
            * The spread goes FIRST. `reply` carries its own `type` --

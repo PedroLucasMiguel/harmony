@@ -830,6 +830,24 @@ export default {
   'quality.note_live': 'Se aplica de inmediato a una cámara en uso.',
   'quality.note_native': 'Nativa le pide a la cámara lo máximo que ofrece, y la imagen enviada lo sigue.',
 
+  // --- rail
+  'rail.dm_pick': 'Elige una conversación para leerla.',
+  'rail.menu_open': 'Abrir',
+  'rail.menu_sign_out': 'Cerrar sesión',
+  'rail.menu_keep_live_on': 'Mantener conectado en segundo plano',
+  'rail.menu_keep_live_off': 'Dejar de mantener conectado en segundo plano',
+  'rail.menu_keep_live_hint': 'Un servidor conectado muestra mensajes nuevos y menciones en su burbuja.',
+  'rail.menu_forget': 'Olvidar este servidor',
+  'rail.forget_title': '¿Olvidar {name}?',
+  'rail.forget_text': 'Se quita de este equipo su sesión guardada. Puedes añadirlo otra vez con su dirección.',
+  'rail.forget_ok': 'Olvidar',
+  'rail.private_messages': 'Mensajes privados',
+  'rail.add_server': 'Añadir un servidor',
+  'rail.call_return': 'Volver a la llamada',
+  'rail.call_in': '{channel} en {server}',
+  'rail.call_interrupted': 'La llamada se interrumpió.',
+  'rail.sign_in_needed': 'Vuelve a iniciar sesión para abrir este servidor',
+
   // --- roles
   'roles.admin': 'super admin',
   'roles.member': 'miembro',
@@ -920,6 +938,8 @@ export default {
   'settings.profile': 'Perfil',
   'settings.profile.account': 'Cuenta',
   'settings.profile.banner': 'Banner',
+  'settings.profile.banner_dim': 'Atenuación',
+  'settings.profile.banner_dim_reset': 'Volver al valor por defecto',
   'settings.profile.banner_note': 'Se dibuja detrás de tu nombre en la lista de miembros y en los canales de voz, atenuado y desvaneciéndose hacia la izquierda. Una imagen o un GIF, de hasta 2 MB; una imagen fija se reduce para que quepa.',
   'settings.profile.display_name': 'Nombre para mostrar',
   'settings.profile.join_sound': 'Sonido de entrada',
@@ -1121,6 +1141,8 @@ export default {
   'app.pip_bring_back': 'Traer de vuelta a Harmony',
   // --- security
   'settings.security': "Seguridad",
+  'security.auto_sign_in': 'Iniciar sesión automáticamente',
+  'security.auto_sign_in_hint': 'Al abrir Harmony, ir directo al último servidor si su sesión guardada sigue siendo válida. Al cerrar sesión en un servidor, se pedirá la contraseña la próxima vez.',
   'security.title': "Seguridad",
   'security.password_title': "Contraseña",
   'security.password_hint': "Cambia la contraseña con la que entras. Cualquier otro dispositivo con esta cuenta se desconectará.",

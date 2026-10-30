@@ -37,6 +37,12 @@ const DEFAULTS = {
    * No server NAME is stored: it is asked for each time, so a rename shows.
    */
   servers: [],
+  /*
+   * Open the last server straight away when its saved session is still good,
+   * instead of stopping on the account screen. Signing out ends the session, so
+   * it is also the way to be asked again.
+   */
+  autoSignIn: true,
   // Disk budget for cached avatars, attachments and soundpad clips. Evicted
   // least-recently-used first, never touching pinned or soundpad files.
   mediaCacheMb: 512,

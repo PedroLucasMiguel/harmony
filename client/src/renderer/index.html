@@ -14,6 +14,24 @@
     <link rel="stylesheet" href="fonts.css" />
   </head>
   <body>
+    <!--
+      The shell: the rail of servers on the left, and every view beside it. The
+      rail is only there once there is a server to switch to (see renderServerRail).
+    -->
+    <div id="app-shell">
+    <nav id="server-rail" aria-label="Servers" hidden></nav>
+    <div id="views">
+    <!--
+      A call on a server that is not the one on screen: where it is, and its controls.
+      Shown by renderCallBar, only then.
+    -->
+    <div id="call-bar" hidden>
+      <span class="call-dot" aria-hidden="true"></span>
+      <button type="button" id="call-bar-return" class="call-where"></button>
+      <button type="button" id="call-bar-mute" class="ghost call-button"></button>
+      <button type="button" id="call-bar-deafen" class="ghost call-button"></button>
+      <button type="button" id="call-bar-leave" class="ghost call-button danger"></button>
+    </div>
     <!-- ================= Connect ================= -->
     <section class="view" id="view-connect" data-active>
       <div class="connect-layout">
@@ -328,15 +346,6 @@
             answer ("you are not the owner") is not worth asking everybody
             on every screen.
           -->
-          <!--
-            Private conversations: the list opens under this. Hidden until a
-            session is signed in, and for good on a server that has none (the
-            list says so). The badge is what has not been read.
-          -->
-          <button class="ghost small icon-only dm-open" id="dm-open" data-icon="chat-circle-dots"
-                  title="Private messages" aria-label="Private messages" hidden data-i18n-title="dm.open" data-i18n-aria-label="dm.open">
-            <span class="dm-badge" id="dm-badge" hidden></span>
-          </button>
           <button
             class="ghost small icon-only"
             id="server-settings"
@@ -357,17 +366,6 @@
         Drawn by dm-ui.js; what it says when there is nothing to list (not set
         up, locked, a server without them) is in #dm-panel-note.
       -->
-      <div class="dm-panel" id="dm-panel" hidden role="dialog" aria-label="Private messages" data-i18n-aria-label="dm.title">
-        <div class="dm-panel-head">
-          <h2 data-i18n="dm.title">Private messages</h2>
-          <button class="ghost small icon-only" id="dm-panel-close" data-icon="x"
-                  title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
-        </div>
-        <p class="muted dm-panel-note" id="dm-panel-note" hidden></p>
-        <div class="dm-panel-actions" id="dm-panel-actions" hidden></div>
-        <ul class="dm-list" id="dm-list"></ul>
-        <p class="muted dm-empty" id="dm-empty" hidden data-i18n="dm.empty">No private conversations yet. Right-click someone in the member list and choose &ldquo;Send a private message&rdquo;.</p>
-      </div>
 
       <div class="channels-layout">
         <aside class="channel-list">
@@ -705,63 +703,6 @@
             <p class="muted" id="chat-note"></p>
           </div>
 
-          <!--
-            A private conversation. Beside the channel's chat and never with
-            it: applyStage decides which. Same classes as the chat's, so the
-            same look.
-          -->
-          <div id="dm-active" hidden>
-            <!-- Over the conversation while a file is dragged onto the window. See showDrop. -->
-            <div class="chat-drop" id="dm-drop" hidden aria-hidden="true">
-              <div class="chat-drop-box">
-                <span class="chat-drop-icon" data-icon="plus-circle"></span>
-                <strong id="dm-drop-title"></strong>
-                <small data-i18n="chat_drop.one_file_per_message">One file per message. It is attached, ready to send.</small>
-              </div>
-            </div>
-            <header class="voice-head dm-head">
-              <span class="avatar dm-head-avatar" id="dm-head-avatar"></span>
-              <h2 id="dm-name"></h2>
-              <span class="dm-lock" data-icon="lock-simple" title="End-to-end encrypted: only the two of you can read this."
-                    data-i18n-title="dm.encrypted"></span>
-              <span class="dm-verified" id="dm-verified" hidden data-i18n="dm.verified">Verified</span>
-              <button class="ghost small icon-only" id="dm-safety" data-icon="shield-check"
-                      title="Safety number" aria-label="Safety number" data-i18n-title="dm.safety.menu" data-i18n-aria-label="dm.safety.menu"></button>
-              <button class="ghost small icon-only" id="dm-menu-button" data-icon="dots-three-vertical"
-                      title="More" aria-label="More" data-i18n-title="dm.more" data-i18n-aria-label="dm.more"></button>
-              <button class="ghost small icon-only" id="dm-close" data-icon="x"
-                      title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
-            </header>
-            <div id="dm-banner" class="dm-banner" hidden></div>
-            <button class="ghost small dm-more" id="dm-more" hidden data-i18n="dm.load_older">Load older messages</button>
-            <div id="dm-log" class="chat-log"></div>
-            <form id="dm-form" class="chat-form">
-              <div class="composer">
-                <div class="composer-reply" id="dm-reply" hidden>
-                  <span class="composer-reply-text"><span data-i18n="chat_reply.replying_to">Replying to</span> <strong id="dm-reply-name"></strong></span>
-                  <button type="button" class="composer-btn" id="dm-reply-clear"
-                          data-icon="x" title="Cancel the reply" data-i18n-title="chat_reply.cancel_the_reply" data-i18n="chat_reply_clear.cancel_reply">Cancel reply</button>
-                </div>
-                <div class="composer-file" id="dm-pending" hidden>
-                  <span class="composer-filename" id="dm-pending-name"></span>
-                  <button type="button" class="composer-btn" id="dm-pending-clear"
-                          data-icon="x" title="Don't send this" data-i18n-title="chat_pending.don_t_send_this" data-i18n="chat_pending_clear.remove">Remove</button>
-                </div>
-                <div class="composer-row">
-                  <button type="button" class="composer-btn composer-plus" id="dm-attach" data-icon="plus-circle"
-                          title="Attach a file" data-i18n-title="chat_form.attach_a_file" data-i18n="chat_attach.attach">Attach</button>
-                  <textarea id="dm-input" placeholder="Write a private message" autocomplete="off" maxlength="4000" rows="1"
-                            data-i18n-placeholder="dm.placeholder"></textarea>
-                  <button type="button" class="composer-btn" id="dm-emoji" data-icon="smiley"
-                          title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji">Emoji</button>
-                  <button type="submit" class="composer-btn composer-send" id="dm-send" data-icon="paper-plane-right"
-                          title="Send" data-i18n-title="chat_form.send" data-i18n="chat_send.send">Send</button>
-                </div>
-              </div>
-              <input id="dm-file" type="file" hidden />
-            </form>
-            <p class="muted" id="dm-note"></p>
-          </div>
         </section>
 
         <!--
@@ -884,6 +825,89 @@
     </dialog>
 
     <!-- ================= Broadcasting ================= -->
+    <!--
+      Private messages: every server's conversations in one list, and the one
+      that is open beside it. A page of its own, as on every app of this shape;
+      the rail's first bubble opens it, and it works whichever server is open.
+    -->
+    <section class="view" id="view-dms">
+      <div class="dms-layout">
+        <aside class="dms-list">
+      <div class="dm-panel" id="dm-panel" hidden role="dialog" aria-label="Private messages" data-i18n-aria-label="dm.title">
+        <div class="dm-panel-head">
+          <h2 data-i18n="dm.title">Private messages</h2>
+          <button class="ghost small icon-only" id="dm-panel-close" data-icon="x"
+                  title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+        </div>
+        <p class="muted dm-panel-note" id="dm-panel-note" hidden></p>
+        <div class="dm-panel-actions" id="dm-panel-actions" hidden></div>
+        <ul class="dm-list" id="dm-list"></ul>
+        <p class="muted dm-empty" id="dm-empty" hidden data-i18n="dm.empty">No private conversations yet. Right-click someone in the member list and choose &ldquo;Send a private message&rdquo;.</p>
+      </div>
+        </aside>
+        <div class="dms-pane">
+          <p class="muted dms-none" id="dm-none" data-i18n="rail.dm_pick">Pick a conversation to read it.</p>
+          <!--
+            A private conversation. Beside the channel's chat and never with
+            it: applyStage decides which. Same classes as the chat's, so the
+            same look.
+          -->
+          <div id="dm-active" hidden>
+            <!-- Over the conversation while a file is dragged onto the window. See showDrop. -->
+            <div class="chat-drop" id="dm-drop" hidden aria-hidden="true">
+              <div class="chat-drop-box">
+                <span class="chat-drop-icon" data-icon="plus-circle"></span>
+                <strong id="dm-drop-title"></strong>
+                <small data-i18n="chat_drop.one_file_per_message">One file per message. It is attached, ready to send.</small>
+              </div>
+            </div>
+            <header class="voice-head dm-head">
+              <span class="avatar dm-head-avatar" id="dm-head-avatar"></span>
+              <h2 id="dm-name"></h2>
+              <span class="dm-lock" data-icon="lock-simple" title="End-to-end encrypted: only the two of you can read this."
+                    data-i18n-title="dm.encrypted"></span>
+              <span class="dm-verified" id="dm-verified" hidden data-i18n="dm.verified">Verified</span>
+              <button class="ghost small icon-only" id="dm-safety" data-icon="shield-check"
+                      title="Safety number" aria-label="Safety number" data-i18n-title="dm.safety.menu" data-i18n-aria-label="dm.safety.menu"></button>
+              <button class="ghost small icon-only" id="dm-menu-button" data-icon="dots-three-vertical"
+                      title="More" aria-label="More" data-i18n-title="dm.more" data-i18n-aria-label="dm.more"></button>
+              <button class="ghost small icon-only" id="dm-close" data-icon="x"
+                      title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+            </header>
+            <div id="dm-banner" class="dm-banner" hidden></div>
+            <button class="ghost small dm-more" id="dm-more" hidden data-i18n="dm.load_older">Load older messages</button>
+            <div id="dm-log" class="chat-log"></div>
+            <form id="dm-form" class="chat-form">
+              <div class="composer">
+                <div class="composer-reply" id="dm-reply" hidden>
+                  <span class="composer-reply-text"><span data-i18n="chat_reply.replying_to">Replying to</span> <strong id="dm-reply-name"></strong></span>
+                  <button type="button" class="composer-btn" id="dm-reply-clear"
+                          data-icon="x" title="Cancel the reply" data-i18n-title="chat_reply.cancel_the_reply" data-i18n="chat_reply_clear.cancel_reply">Cancel reply</button>
+                </div>
+                <div class="composer-file" id="dm-pending" hidden>
+                  <span class="composer-filename" id="dm-pending-name"></span>
+                  <button type="button" class="composer-btn" id="dm-pending-clear"
+                          data-icon="x" title="Don't send this" data-i18n-title="chat_pending.don_t_send_this" data-i18n="chat_pending_clear.remove">Remove</button>
+                </div>
+                <div class="composer-row">
+                  <button type="button" class="composer-btn composer-plus" id="dm-attach" data-icon="plus-circle"
+                          title="Attach a file" data-i18n-title="chat_form.attach_a_file" data-i18n="chat_attach.attach">Attach</button>
+                  <textarea id="dm-input" placeholder="Write a private message" autocomplete="off" maxlength="4000" rows="1"
+                            data-i18n-placeholder="dm.placeholder"></textarea>
+                  <button type="button" class="composer-btn" id="dm-emoji" data-icon="smiley"
+                          title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji">Emoji</button>
+                  <button type="submit" class="composer-btn composer-send" id="dm-send" data-icon="paper-plane-right"
+                          title="Send" data-i18n-title="chat_form.send" data-i18n="chat_send.send">Send</button>
+                </div>
+              </div>
+              <input id="dm-file" type="file" hidden />
+            </form>
+            <p class="muted" id="dm-note"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="view" id="view-broadcast">
       <header class="bar">
         <div class="live-head">
@@ -999,6 +1023,8 @@
         </p>
       </footer>
     </section>
+    </div>
+    </div>
 
     <!--
       The soundboard.
@@ -1534,10 +1560,20 @@
                   <button type="button" class="primary" id="profile-banner-choose" data-i18n="profile_banner.choose_banner">Choose banner</button>
                   <button type="button" class="ghost" id="profile-banner-remove" data-i18n="profile_banner.remove_banner">Remove banner</button>
                 </div>
+                <div class="setting-head">
+                  <label class="setting-title" for="profile-banner-dim" data-i18n="settings.profile.banner_dim">Dimming</label>
+                  <output class="value-pill" id="profile-banner-dim-value" for="profile-banner-dim">50%</output>
+                </div>
+                <input id="profile-banner-dim" type="range" min="0" max="100" step="1" value="50" />
+                <div class="profile-actions">
+                  <button type="button" class="ghost" id="profile-banner-dim-reset" data-i18n="settings.profile.banner_dim_reset">Back to the default</button>
+                </div>
                 <input id="profile-banner-file" type="file" accept="image/*" hidden />
                 <p class="setting-note" data-i18n="settings.profile.banner_note">
                   Drawn behind your name in the member list and in voice
-                  channels, dimmed and fading out toward the left. A picture
+                  channels, dimmed and fading out toward the left, and across
+                  the top of your profile card. How dim is yours to choose, and
+                  everybody sees it change as you move the slider. A picture
                   or a GIF, up to 2 MB; a still picture is shrunk to fit.
                 </p>
                 <p class="setting-note profile-status" id="profile-banner-note" role="status"></p>
@@ -1644,6 +1680,16 @@
             -->
             <section class="settings-page" role="tabpanel" data-page="security" hidden>
               <h3 class="settings-page-title" data-i18n="security.title">Security</h3>
+
+              <div class="setting-group">
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="security.auto_sign_in">Sign in automatically</span>
+                    <small data-i18n="security.auto_sign_in_hint">When Harmony opens, go straight to the last server if its saved sign-in is still good. Signing out of a server asks for the password again next time.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="auto-sign-in" checked />
+                </label>
+              </div>
 
               <div class="setting-group">
                 <div class="setting-head">

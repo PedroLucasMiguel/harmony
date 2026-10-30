@@ -16,6 +16,7 @@ import { PersistentKeyFile } from './dm-keyfile.js';
 import { settingsBackend } from './dm-backend.js';
 import { DmSession, MAX_BODY, previewOf } from './dm-session.js';
 import { KeyState } from './dm-vault.js';
+import { serverKeyOf } from './server-key.js';
 
 /** How close together two messages from the same person stay one block. */
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
@@ -41,15 +42,13 @@ function words(t, error) {
  */
 export function createDmUi(deps) {
   const {
-    state, harmony, t, displayOf, faceOf, avatarEl, nameFont, renderBody, appendEmoji,
+    state, harmony, t,
     openEmojiPicker, closeEmojiPicker, ask, askConfirm, formatBytes, playCue, applyStage,
     closeChat, showError,
   } = deps;
 
   const $ = (id) => document.getElementById(id);
   const el = {
-    open: $('dm-open'),
-    badge: $('dm-badge'),
     panel: $('dm-panel'),
     panelClose: $('dm-panel-close'),
     panelNote: $('dm-panel-note'),
@@ -81,7 +80,20 @@ export function createDmUi(deps) {
     send: $('dm-send'),
     file: $('dm-file'),
     note: $('dm-note'),
+    none: $('dm-none'),
   };
+
+  /*
+   * Private conversations are kept per server: each saved server the person is
+   * signed in to has a "home" -- its own session, with its own keys, and the
+   * people it knows -- and the list shows them all together. The conversation on
+   * screen belongs to one of them (`home`), which is also what `session` is.
+   */
+  /** @type {Map<string, {key: string, server: string, meId: number, users: () => Map<number, object>, session: DmSession}>} */
+  const homes = new Map();
+  let home = null;
+  /** While a row of another server's is being drawn: whose people and pictures to use. */
+  let scope = null;
 
   /** @type {DmSession|null} */
   let session = null;
@@ -92,48 +104,121 @@ export function createDmUi(deps) {
   let keysDialog = null;
   let busy = false;
 
-  const me = () => state.auth.user?.id;
+  const me = () => (scope ?? home)?.meId ?? state.auth.user?.id;
+
+  // What names and pictures mean depends on the server: ids are per server, and so are the people.
+  const within = (fn) => {
+    const h = scope ?? home;
+    return h && deps.inServer ? deps.inServer(h, fn) : fn();
+  };
+  const displayOf = (...args) => within(() => deps.displayOf(...args));
+  const faceOf = (...args) => within(() => deps.faceOf(...args));
+  const avatarEl = (...args) => within(() => deps.avatarEl(...args));
+  const nameFont = (...args) => within(() => deps.nameFont(...args));
+  const renderBody = (...args) => within(() => deps.renderBody(...args));
+  const appendEmoji = (...args) => within(() => deps.appendEmoji(...args));
   const peerName = (id) => displayOf(id, 'someone');
+
+  const homeOf = (server) => homes.get(serverKeyOf(server)) ?? null;
+  /** The home of the server that is open on screen. */
+  const openHome = () => (state.auth.user && state.server ? homeOf(state.server) : null);
+
+  /** Point the conversation pane at one server's session. */
+  function bind(next) {
+    if (home === next) return;
+    home = next;
+    session = next?.session ?? null;
+    currentId = null;
+    replyTo = null;
+    pendingFile = null;
+    el.active.hidden = true;
+    closeMenu();
+  }
 
   // ---------------------------------------------------------------- lifecycle
 
-  /** Signed in and the accounts are known: find out whether this computer can take part. */
-  async function start() {
-    stop();
-    el.open.hidden = false;
-    const backend = settingsBackend(harmony, state.server, me());
-    const file = await PersistentKeyFile.open(backend, `${state.server}#${me()}`);
-    const mine = new DmSession({
-      server: state.server,
-      me: { id: me() },
+  /** Make a server's home: its session, with the keys this computer holds for the account on it. */
+  async function makeHome({ server, meId, users }) {
+    closeHome(serverKeyOf(server));
+    const backend = settingsBackend(harmony, server, meId);
+    const file = await PersistentKeyFile.open(backend, `${server}#${meId}`);
+    const key = serverKeyOf(server);
+    const mine = { key, server, meId, users, session: null };
+    mine.session = new DmSession({
+      server,
+      me: { id: meId },
       api: harmony.api,
       file,
-      onChange: () => { if (session === mine) render(); },
+      onChange: () => { if (homes.get(key) === mine) render(); },
     });
-    session = mine;
+    homes.set(key, mine);
+    return mine;
+  }
+
+  /** Signed in and the accounts are known: find out whether this computer can take part. */
+  async function start() {
+    const mine = await makeHome({ server: state.server, meId: state.auth.user?.id, users: () => state.users });
+    if (!home || currentId === null) bind(mine);
     render();
-    await mine.start();
-    if (session !== mine) return;
+    await mine.session.start();
+    if (homes.get(mine.key) !== mine) return;
     // Nothing is put in front of anybody here: signing in is not asking for
     // private messages. The list says what is waiting (a recovery key to keep,
     // a key to unlock with), and the first time one is opened it is asked.
     render();
   }
 
-  /** Signed out, or on another server: nothing opened stays reachable. */
-  function stop() {
-    session?.closeFiles();
-    session = null;
-    currentId = null;
-    replyTo = null;
-    pendingFile = null;
-    el.open.hidden = true;
-    el.panel.hidden = true;
-    el.active.hidden = true;
-    closeMenu();
-    keysDialog?.close();
-    renderBadge();
+  /**
+   * A server that is saved but not open: its private conversations are kept up
+   * behind it, so the list is every server's and a message that arrives anywhere
+   * counts. `users` is what that server's people are looked up in.
+   */
+  async function startBackground({ server, meId, users }) {
+    if (!meId) return;
+    const existing = homeOf(server);
+    if (existing?.meId === meId) {
+      existing.users = users;
+      return;
+    }
+    const mine = await makeHome({ server, meId, users });
+    render();
+    await mine.session.start();
+    if (homes.get(mine.key) === mine) render();
   }
+
+  /** Forget a server's conversations: signed out of it, kicked, or forgotten. */
+  function closeHome(key) {
+    const mine = homes.get(key);
+    if (!mine) return;
+    mine.session.closeFiles();
+    homes.delete(key);
+    if (home === mine) {
+      bind(null);
+      syncPane();
+    }
+    render();
+  }
+
+  /** Signed out of a server, or it is gone: nothing opened stays reachable. */
+  function stop(server = state.server) {
+    if (!server) return;
+    closeHome(serverKeyOf(server));
+    keysDialog?.close();
+  }
+
+  /**
+   * The open server is no longer on screen but still signed in: its
+   * conversations carry on behind the list, looked up in the people it had.
+   */
+  function release(server) {
+    const mine = homeOf(server);
+    if (!mine) return;
+    const people = state.users;
+    mine.users = () => people;
+  }
+
+  /** Whether any server can take part, for the button that opens the list. */
+  const anyAvailable = () => [...homes.values()].some((h) => h.session.state !== KeyState.Unsupported);
 
   const isOpen = () => currentId !== null;
 
@@ -144,23 +229,33 @@ export function createDmUi(deps) {
     replyTo = null;
     pendingFile = null;
     el.active.hidden = true;
+    syncPane();
     closeMenu();
     applyStage();
   }
 
   // ------------------------------------------------------------------ render
 
+  /** The "pick a conversation" text shows exactly when no conversation does. */
+  function syncPane() {
+    if (el.none) el.none.hidden = !el.active.hidden;
+    // A narrow screen shows the list or the conversation, whichever is open.
+    el.active.closest('.dms-layout')?.toggleAttribute('data-conversation', !el.active.hidden);
+  }
+
+  const totalUnread = () => [...homes.values()].reduce((n, h) => n + h.session.unread, 0);
+
   function render() {
     renderBadge();
-    if (!el.panel.hidden) renderPanel();
+    if (!el.panel.hidden || deps.listDocked?.()) renderPanel();
     if (currentId !== null) renderConversation();
+    syncPane();
   }
 
   function renderBadge() {
-    const n = session?.unread ?? 0;
-    el.badge.hidden = n === 0;
-    el.badge.textContent = n > 99 ? '99+' : String(n);
-    el.open.title = n ? t('dm.open_unread', { count: n }) : t('dm.open');
+    const n = totalUnread();
+    // The rail's bubble shows the same count.
+    deps.onUnread?.(n);
   }
 
   const when = (ms) => {
@@ -181,9 +276,12 @@ export function createDmUi(deps) {
   }
 
   /** What the panel says when there is no list to show, or something to do first. */
-  function panelState() {
+  function panelState(h) {
     const note = (text) => ({ text, actions: [] });
-    switch (session?.state) {
+    // What the buttons act on is the session they are about.
+    const mine = h.session;
+    const acting = (run) => () => { bind(h); return run(); };
+    switch (mine.state) {
       case undefined:
       case KeyState.Loading:
         return note(t('dm.loading'));
@@ -191,41 +289,62 @@ export function createDmUi(deps) {
         return note(t('dm.unsupported'));
       case KeyState.Failed:
         return {
-          text: session.failure === 'keychain' ? t('dm.keychain') : t('dm.failed', { message: session.failure || '' }),
-          actions: [button(t('dm.retry'), () => session.start().then(render))],
+          text: mine.failure === 'keychain' ? t('dm.keychain') : t('dm.failed', { message: mine.failure || '' }),
+          actions: [button(t('dm.retry'), () => mine.start().then(render))],
         };
       case KeyState.Locked:
-        return { text: t('dm.locked_note'), actions: [button(t('dm.unlock'), showUnlock, 'primary small')] };
+        return { text: t('dm.locked_note'), actions: [button(t('dm.unlock'), acting(showUnlock), 'primary small')] };
       default: {
         const actions = [];
         let text = '';
-        if (session.vault.needsBackup) {
+        if (mine.vault.needsBackup) {
           text = t('dm.backup_note');
-          actions.push(button(t('dm.show_recovery'), () => showRecoveryKey({}), 'primary small'));
+          actions.push(button(t('dm.show_recovery'), acting(() => showRecoveryKey({})), 'primary small'));
         }
         return { text, actions };
       }
     }
   }
 
+  /** The name a server goes by, where there is more than one to tell apart. */
+  const serverLabel = (server) => deps.serverName?.(server) ?? server;
+
   function renderPanel() {
-    const { text, actions } = panelState();
-    el.panelNote.hidden = !text;
-    el.panelNote.textContent = text;
+    const all = [...homes.values()];
+    const several = all.length > 1;
+    // What each server has to say before its conversations can be shown, with a
+    // way to deal with it; said with the server's name when there are several.
+    const notes = all.map((h) => ({ h, ...panelState(h) })).filter((n) => n.text);
+    el.panelNote.hidden = notes.length === 0;
+    el.panelNote.textContent = notes.map((n) => (several ? `${serverLabel(n.h.server)}: ${n.text}` : n.text)).join('\n');
+    const actions = notes.flatMap((n) => n.actions.map((a) => {
+      if (several) a.textContent = `${serverLabel(n.h.server)}: ${a.textContent}`;
+      return a;
+    }));
     el.panelActions.replaceChildren(...actions);
     el.panelActions.hidden = actions.length === 0;
 
-    const rows = session?.ready ? session.list() : [];
-    el.empty.hidden = !session?.ready || rows.length > 0;
-    el.list.replaceChildren(...rows.map((c) => conversationRow(c)));
+    const rows = all
+      .flatMap((h) => (h.session.ready ? h.session.list().map((c) => ({ h, c })) : []))
+      .sort((a, b) => b.c.lastAt - a.c.lastAt);
+    el.empty.hidden = rows.length > 0 || !all.some((h) => h.session.ready);
+    el.list.replaceChildren(...rows.map(({ h, c }) => {
+      scope = h;
+      try {
+        return conversationRow(c, h, several);
+      } finally {
+        scope = null;
+      }
+    }));
   }
 
-  function conversationRow(c) {
+  function conversationRow(c, h, tagged = false) {
     const li = document.createElement('li');
     li.className = 'dm-row';
     li.dataset.id = String(c.id);
+    li.dataset.server = h.key;
     if (c.unread) li.setAttribute('data-unread', '');
-    if (c.id === currentId) li.setAttribute('data-current', '');
+    if (c.id === currentId && h === home) li.setAttribute('data-current', '');
 
     li.append(avatarEl(faceOf(c.peer, ''), 'tiny'));
 
@@ -240,7 +359,15 @@ export function createDmUi(deps) {
     const time = document.createElement('span');
     time.className = 'dm-row-time';
     time.textContent = c.lastAt ? when(c.lastAt) : '';
-    top.append(name, time);
+    if (tagged) {
+      // Which server it is on, when the list is every server's.
+      const tag = document.createElement('span');
+      tag.className = 'dm-row-server';
+      tag.textContent = serverLabel(h.server);
+      top.append(name, tag, time);
+    } else {
+      top.append(name, time);
+    }
 
     const line = document.createElement('div');
     line.className = 'dm-row-line';
@@ -259,7 +386,7 @@ export function createDmUi(deps) {
     }
     body.append(top, line);
     li.append(body);
-    li.addEventListener('click', () => openConversation(c.id));
+    li.addEventListener('click', () => openConversation(c.id, h));
     return li;
   }
 
@@ -277,18 +404,22 @@ export function createDmUi(deps) {
 
   // ------------------------------------------------------------ conversation
 
-  async function openConversation(id) {
+  async function openConversation(id, from = home) {
+    if (from && from !== home) bind(from);
     if (!session?.ready) return;
     // The stage holds one thing: leaving the channel's chat, and the call's tiles with it.
     closeChat();
     currentId = id;
     replyTo = null;
     setPending(null);
-    el.panel.hidden = true;
+    // The popover closes behind a choice; a list that is docked stays.
+    if (!deps.listDocked?.()) el.panel.hidden = true;
     el.active.hidden = false;
+    syncPane();
     el.note.textContent = '';
     applyStage();
     renderConversation();
+    deps.showConversation?.();
     try {
       await session.load(id);
     } catch (err) {
@@ -303,10 +434,13 @@ export function createDmUi(deps) {
 
   /** Somebody's name was right-clicked: open the conversation with them, making it if there is none. */
   async function openWith(userId) {
+    const mine = openHome();
+    if (mine) bind(mine);
     if (!session) return;
     if (session.state === KeyState.Locked) return showUnlock();
     if (!session.ready) {
       el.panel.hidden = false;
+      deps.showConversation?.();
       return render();
     }
     if (session.vault.needsBackup) showRecoveryKey({ first: true });
@@ -846,11 +980,14 @@ export function createDmUi(deps) {
    * one: the app's handler passes everything through here first.
    */
   function handleEvent(msg) {
-    if (!session || !(msg.type?.startsWith('dm:') || msg.type === 'keys:changed')) return false;
-    session.handle(msg).then(async ({ incoming, conversation }) => {
+    if (!(msg.type?.startsWith('dm:') || msg.type === 'keys:changed')) return false;
+    // Every connection says which server it is; a frame without one is the bound one's.
+    const mine = msg.server ? homes.get(msg.server) : home;
+    if (!mine) return false;
+    mine.session.handle(msg).then(async ({ incoming, conversation }) => {
       if (!incoming) return;
-      if (conversation.id === currentId && document.hasFocus()) {
-        await session.markRead(currentId);
+      if (mine === home && conversation.id === currentId && document.hasFocus() && el.active.offsetParent !== null) {
+        await mine.session.markRead(currentId);
         return;
       }
       if (state.settings?.mentionSound !== false) playCue('mention');
@@ -860,21 +997,28 @@ export function createDmUi(deps) {
 
   // ------------------------------------------------------------------- wiring
 
-  el.open.addEventListener('click', () => {
-    if (!session) return;
+  function togglePanel() {
+    if (!homes.size) return;
     el.panel.hidden = !el.panel.hidden;
     if (!el.panel.hidden) {
       render();
-      if (session.ready) session.refresh();
+      refreshAll();
     }
-  });
+  }
+
+  /** Every server's list, asked for again. */
+  function refreshAll() {
+    for (const h of homes.values()) if (h.session.ready) h.session.refresh().catch(() => {});
+  }
   el.panelClose.addEventListener('click', () => { el.panel.hidden = true; });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !el.panel.hidden) el.panel.hidden = true;
   });
   document.addEventListener('click', (event) => {
     if (menu && !menu.contains(event.target) && !el.menuButton.contains(event.target)) closeMenu();
-    if (!el.panel.hidden && !el.panel.contains(event.target) && !el.open.contains(event.target)) el.panel.hidden = true;
+    if (!deps.listDocked?.() && !el.panel.hidden && !el.panel.contains(event.target)
+      // The rail's bubble opens it too: its own click is not a click away.
+      && !event.target.closest?.('[data-dm-trigger]')) el.panel.hidden = true;
   });
   el.close.addEventListener('click', closeConversation);
   el.menuButton.addEventListener('click', openMenu);
@@ -963,10 +1107,15 @@ export function createDmUi(deps) {
   const bodyOf = (id) => session?.messageById(Number(id))?.body ?? null;
 
   return {
-    start, stop, openWith, handleEvent, closeConversation, isOpen,
+    start, startBackground, stop, release, openWith, handleEvent, closeConversation, isOpen, togglePanel,
+    render, refreshAll,
     acceptsFiles, showDrop, dropFiles, bodyOf,
     get session() { return session; },
-    /** Whether somebody can be written to from here at all. */
-    get available() { return Boolean(session) && session.state !== KeyState.Unsupported; },
+    /** Messages waiting, over every conversation on every server. */
+    get unread() { return totalUnread(); },
+    /** Whether somebody can be written to from here: the open server takes part. */
+    get available() { const mine = openHome(); return Boolean(mine) && mine.session.state !== KeyState.Unsupported; },
+    /** Whether any server can: the list is worth opening. */
+    get anyAvailable() { return anyAvailable(); },
   };
 }

@@ -214,6 +214,8 @@ export class Realtime {
         online: this.onlineUserIds(),
         roles: this.#deps.roles.list().map(publicRole),
         badges: this.#deps.badges.list().map(publicBadge),
+        // What is new in each channel, so a client that was away starts from the truth.
+        unread: this.#deps.unreadFor?.(user) ?? [],
       });
     }
 

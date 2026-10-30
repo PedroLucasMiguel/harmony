@@ -359,6 +359,302 @@ p {
   display: flex;
 }
 
+/* ---------- the server rail ---------- */
+
+#app-shell {
+  display: flex;
+  height: 100%;
+}
+#views {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  /* The call bar above, whichever view is open below it. */
+  display: flex;
+  flex-direction: column;
+}
+#views > .view {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
+#call-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: rgb(var(--live-rgb) / 0.18);
+  border-bottom: 1px solid rgb(var(--live-rgb) / 0.5);
+  font-size: 13px;
+}
+#call-bar[hidden] {
+  display: none;
+}
+#call-bar[data-state='connecting'] {
+  background: rgb(var(--tint-rgb) / 0.06);
+  border-bottom-color: var(--border-strong);
+}
+#call-bar .call-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+}
+#call-bar[data-state='connecting'] .call-dot {
+  background: var(--warn);
+}
+#call-bar .call-where {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  padding: 2px 4px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+}
+#call-bar .call-where:hover {
+  text-decoration: underline;
+}
+#call-bar .call-button {
+  flex: none;
+  padding: 2px 10px;
+}
+#call-bar .call-button[data-on] {
+  background: rgb(var(--danger-rgb) / 0.25);
+}
+#server-rail {
+  flex: none;
+  box-sizing: border-box;
+  width: var(--rail-width, 72px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+#server-rail[hidden] {
+  display: none;
+}
+.rail-item {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 22px;
+  cursor: pointer;
+  transition: border-radius 0.15s, background 0.15s;
+}
+.rail-item:hover:not(:disabled),
+.rail-item[aria-current='true'] {
+  border-radius: 16px;
+  background: var(--accent);
+}
+.rail-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* The pill on the left edge: tall for the open server, a dot for one with news. */
+.rail-item::before {
+  content: '';
+  position: absolute;
+  left: calc((var(--rail-width, 72px) - 48px) / -2);
+  top: 50%;
+  width: 4px;
+  height: 0;
+  border-radius: 0 4px 4px 0;
+  background: var(--text);
+  transform: translateY(-50%);
+  transition: height 0.15s;
+}
+.rail-item[data-unread]::before {
+  height: 8px;
+}
+.rail-item[aria-current='true']::before {
+  height: 32px;
+}
+.rail-item .server-badge {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: transparent;
+  font-size: 18px;
+}
+.rail-item[data-state='offline'] .server-badge,
+.rail-item[data-state='locked'] .server-badge {
+  opacity: 0.5;
+}
+.rail-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 3px var(--bg);
+}
+.rail-lock {
+  background: var(--warn);
+  color: #000;
+}
+/* Where a dragged server would land. */
+.rail-item[data-drop='before']::after,
+.rail-item[data-drop='after']::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.rail-item[data-drop='before']::after {
+  top: -6px;
+}
+.rail-item[data-drop='after']::after {
+  bottom: -6px;
+}
+/* A call is up on this server. */
+.rail-item[data-in-call] {
+  box-shadow: 0 0 0 2px var(--live);
+}
+.rail-separator {
+  flex: none;
+  width: 32px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.rail-add {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--live);
+}
+.rail-add:hover {
+  color: #fff;
+  background: var(--live) !important;
+}
+/* ---------- private messages ---------- */
+
+#view-dms .dms-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+#view-dms .dms-list {
+  display: flex;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+/* The list is the page's own column here, not a popover over something else. */
+#view-dms .dm-panel,
+#view-dms .dm-panel[hidden] {
+  display: flex !important;
+  position: static;
+  flex: 1 1 auto;
+  width: auto;
+  max-height: none;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+#view-dms .dm-panel-head #dm-panel-close {
+  display: none;
+}
+#view-dms .dm-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+#view-dms .dms-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+#view-dms #dm-active {
+  flex: 1 1 auto;
+}
+#view-dms .dms-none {
+  margin: auto;
+}
+#view-dms .dms-none[hidden] {
+  display: none;
+}
+.dm-row-server {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: rgb(var(--tint-rgb) / 0.1);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+.dm-row-server + .dm-row-time {
+  margin-left: 6px;
+}
+@media (max-width: 720px) {
+  /* One column at a time: the list, or the conversation once one is open (its close button comes back). */
+  #view-dms .dms-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #view-dms .dms-layout[data-conversation] .dms-list,
+  #view-dms .dms-layout:not([data-conversation]) .dms-pane {
+    display: none;
+  }
+}
+
+/* While another server is being opened: the old one stays, dimmed, and cannot be clicked. */
+#app-shell[data-switching] #views {
+  opacity: 0.55;
+  pointer-events: none;
+}
+@media (max-width: 720px) {
+  /* A phone keeps most of its width: a slimmer rail, smaller bubbles. */
+  #app-shell {
+    --rail-width: 52px;
+  }
+  .rail-item {
+    width: 40px;
+    height: 40px;
+  }
+  #server-rail {
+    gap: 6px;
+    padding: 8px 0;
+  }
+}
+
 /* ---------- controls ---------- */
 
 button {
@@ -6341,8 +6637,9 @@ input[data-saved] {
   height: 100%;
   object-fit: cover;
   object-position: center;
-  opacity: 0.8;
-  filter: brightness(0.5);
+  /* --banner-dim is 0 (as it is) to 100 (nearly black); 50, the default, is the look it always had. */
+  opacity: calc(1 - var(--banner-dim, 50) * 0.004);
+  filter: brightness(calc(1 - var(--banner-dim, 50) / 100));
   -webkit-mask-image: linear-gradient(to right, transparent 0%, rgb(0 0 0 / 0.15) 18%, #000 100%);
   mask-image: linear-gradient(to right, transparent 0%, rgb(0 0 0 / 0.15) 18%, #000 100%);
   pointer-events: none;
@@ -6544,30 +6841,10 @@ input[data-saved] {
 }
 
 /* ---------------------------------------------------------------------------
- * Private conversations: the button in the corner, the list under it, the
- * conversation on the stage and the dialogs for the keys. See dm-ui.js. The
+ * Private conversations: the list, the conversation beside it and the dialogs
+ * for the keys. See dm-ui.js. The
  * messages themselves are drawn with the chat's own classes.
  * ------------------------------------------------------------------------- */
-
-.dm-open {
-  position: relative;
-}
-.dm-badge {
-  position: absolute;
-  top: -0.2rem;
-  right: -0.2rem;
-  min-width: 1rem;
-  height: 1rem;
-  padding: 0 0.25rem;
-  border-radius: 999px;
-  background: var(--danger);
-  color: #fff;
-  font-size: 0.65rem;
-  font-weight: 700;
-  line-height: 1rem;
-  text-align: center;
-  pointer-events: none;
-}
 
 .dm-panel {
   position: fixed;
@@ -7187,6 +7464,10 @@ body.pip-window {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+/* On the card the banner is as it is unless its owner dimmed it. */
+.profile-card-banner[data-dim] img {
+  filter: brightness(calc(1 - var(--banner-dim) / 100));
 }
 .profile-card-actions {
   position: absolute;

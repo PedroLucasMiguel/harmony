@@ -17,6 +17,9 @@ import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
 import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
+import { createServerRail } from './server-rail.js';
+import { createBackgroundSessions } from './server-sessions.js';
+import { serverKeyOf } from './server-key.js';
 import {
   canAdminister, contextOf, nameLookOf, roleByHandle, roleHandle, roleIcon, rolesOf, roleLook, sortRoles,
 } from './roles.js';
@@ -141,6 +144,13 @@ const $ = (id) => document.getElementById(id);
 
 const el = {
   views: document.querySelectorAll('.view'),
+  appShell: $('app-shell'),
+  callBar: $('call-bar'),
+  callBarReturn: $('call-bar-return'),
+  callBarMute: $('call-bar-mute'),
+  callBarDeafen: $('call-bar-deafen'),
+  callBarLeave: $('call-bar-leave'),
+  serverRail: $('server-rail'),
   serverUrl: $('server-url'),
   stepServer: $('step-server'),
   stepAccount: $('step-account'),
@@ -197,6 +207,9 @@ const el = {
   profileBannerAvatar: $('profile-banner-avatar'),
   profileBannerName: $('profile-banner-name'),
   profileBannerChoose: $('profile-banner-choose'),
+  profileBannerDim: $('profile-banner-dim'),
+  profileBannerDimValue: $('profile-banner-dim-value'),
+  profileBannerDimReset: $('profile-banner-dim-reset'),
   profileBannerRemove: $('profile-banner-remove'),
   profileBannerFile: $('profile-banner-file'),
   profileBannerNote: $('profile-banner-note'),
@@ -232,6 +245,7 @@ const el = {
   pipPopOut: $('pip-pop-out'),
   pipResize: $('pip-resize'),
   pauseHiddenCameras: $('pause-hidden-cameras'),
+  autoSignIn: $('auto-sign-in'),
   pttEnabled: $('ptt-enabled'),
   pttOptions: $('ptt-options'),
   pttKey: $('ptt-key'),
@@ -676,6 +690,10 @@ const state = {
    */
   camera: { stream: null, publication: null, session: null, facing: 'user', several: false, effect: null, starting: false },
   voice: new VoiceSession(),
+  /** The server a call is on, which is not always the one on screen. */
+  voiceServer: null,
+  /** What the call bar says about the call: {server, channelId, channelName, serverName, connected, roster}. */
+  voiceCtx: null,
   audioAvailable: false,
   audioUnavailableReason: null,
   /** Can one application be kept out of a screen share's audio? Not the same
@@ -761,6 +779,7 @@ function showView(id) {
   // live, backing out, failing -- ends by naming the view to land on. Closing
   // it here means none of them can leave it open over the result.
   if (el.picker.open) el.picker.close();
+  renderServerRail();
 }
 
 /** Open the source picker over whatever is on screen. */
@@ -964,7 +983,7 @@ async function boot() {
   el.password.value = state.settings.password ?? '';
   // Main holds the password for every request it makes; hand back what was
   // saved before anything asks the server for anything.
-  await harmony.api.setPassword(el.password.value);
+  await harmony.api.setPassword(el.password.value, state.settings.serverUrl);
 
   setCueVolume((state.settings.soundVolume ?? 100) / 100);
   // Mute and deafen are bound from the start; clips join once the soundpad
@@ -983,7 +1002,7 @@ async function boot() {
     // Restore before probeServer, so /api/health is already authenticated and
     // a still-valid token skips the login form entirely.
     state.auth.token = state.settings.sessionToken;
-    await harmony.api.setSessionToken(state.auth.token);
+    await harmony.api.setSessionToken(state.auth.token, state.settings.serverUrl);
   }
   el.fallback.value = state.settings.windowAudioFallback;
   state.clips.enabled = Boolean(state.settings.clipsEnabled);
@@ -1050,10 +1069,18 @@ async function boot() {
     connectServer = { name: '', reachable: false, checking: true };
     showConnectStep('account');
     applyAuthMode();
-    submitServer({ resuming: true });
+    submitServer({ resuming: true }).then(() => {
+      // The saved session was good: in, without pressing Connect.
+      if (state.settings.autoSignIn !== false && state.auth.user && !switchingServer) {
+        el.appShell.dataset.switching = '';
+        return startSession().finally(() => { delete el.appShell.dataset.switching; });
+      }
+      return undefined;
+    });
   } else {
     showConnectStep('server');
   }
+  syncBackgroundSessions();
   redrawTexts();
 }
 
@@ -1248,8 +1275,16 @@ async function saveProfile(extra = {}, { accountSecret } = {}) {
     logo: findProfile(url)?.logo ?? null,
     lastUsed: Date.now(),
   };
-  const others = savedServers().filter((p) => serverKey(p.url) !== serverKey(url));
-  state.settings = await harmony.settings.set({ ...extra, servers: [profile, ...others] });
+  /*
+   * Where it already is, or at the end: the rail lists servers in this order and
+   * a server must not jump to the top because it was the one just opened.
+   */
+  const list = savedServers();
+  const at = list.findIndex((p) => serverKey(p.url) === serverKey(url));
+  const servers = at === -1 ? [...list, profile] : list.map((p, i) => (i === at ? profile : p));
+  state.settings = await harmony.settings.set({ ...extra, servers });
+  renderServerRail();
+  syncBackgroundSessions();
 }
 
 /**
@@ -1352,11 +1387,10 @@ async function adoptServer(server) {
  * `profile` null means a server never seen: everything blank.
  */
 async function loadProfile(profile) {
-  dmUi?.stop();
   state.auth.user = null;
   state.auth.mode = 'login';
   state.auth.token = profile?.sessionToken ?? '';
-  await harmony.api.setSessionToken(state.auth.token);
+  await harmony.api.setSessionToken(state.auth.token, profile?.url ?? el.serverUrl.value.trim());
   el.username.value = profile?.username ?? '';
   el.accountPassword.value = '';
   el.accountConfirm.value = '';
@@ -1401,6 +1435,473 @@ async function switchServer(url) {
   submitServer({ resuming: true });
 }
 
+// --- the rail ---------------------------------------------------------------
+
+/** The server whose session is open on screen, or null on the connect screen and in the stream views. */
+const openServerKey = () => (state.auth.user && state.server ? serverKey(state.server) : null);
+
+/** Views with no room for a rail: the whole window is the picture. */
+const RAIL_HIDDEN_VIEWS = new Set(['view-broadcast', 'view-watch', 'view-mosaic']);
+
+let serverRail = null;
+
+function renderServerRail() {
+  if (!el.serverRail) return;
+  renderCallBar();
+  const profiles = savedServers();
+  const view = document.querySelector('.view[data-active]')?.id;
+  // Nothing to switch to until a server has been saved; and not over a stream.
+  el.serverRail.hidden = !profiles.length || RAIL_HIDDEN_VIEWS.has(view);
+  if (el.serverRail.hidden) return;
+
+  serverRail ??= createServerRail({
+    root: el.serverRail,
+    t,
+    fillBadge: fillServerBadge,
+    onSelect: (url) => resumeServer(url),
+    onHome: () => openPrivateMessages(),
+    onAdd: () => addServerFromRail(),
+    onMenu: (url, event) => openRailMenu(url, event),
+    onMove: (from, to, after) => moveServer(from, to, after),
+  });
+  const open = openServerKey();
+  const onDms = view === 'view-dms';
+  serverRail.render({
+    homeCurrent: onDms,
+    homeUnread: dmUi?.unread ?? 0,
+    homeAvailable: Boolean(dmUi?.anyAvailable),
+    servers: profiles.map((p) => {
+      const key = serverKey(p.url);
+      const status = serverStatus.get(key);
+      const current = key === open && !onDms;
+      let railState = 'up';
+      const live = current ? null : backgrounds.summary(p.url);
+      if (!current && !p.sessionToken) railState = 'locked';
+      else if (live?.status === 'locked') railState = 'locked';
+      else if (live?.status === 'down') railState = 'offline';
+      else if (!current && !live && status && status.reachable === false && !status.pending) railState = 'offline';
+      return {
+        url: p.url,
+        name: serverNames.get(key) || status?.name || serverHost(p.url),
+        logo: p.logo ?? null,
+        current,
+        state: railState,
+        unread: live?.unread ?? 0,
+        mentions: live?.mentions ?? 0,
+        inCall: Boolean(state.voice.channelId && state.voiceServer && serverKey(state.voiceServer) === key),
+      };
+    }),
+  });
+}
+
+/** Private messages: every server's conversations, on a page of their own. */
+function showDmView({ refresh = true } = {}) {
+  if (!dmUi?.anyAvailable) return;
+  showView('view-dms');
+  dmUi.render();
+  // Not when a conversation was just opened: a conversation nobody has written in yet is not in the server's list.
+  if (refresh) dmUi.refreshAll();
+}
+
+/** The rail's first bubble: the list, or back to where it was opened from. */
+function openPrivateMessages() {
+  if (document.querySelector('.view[data-active]')?.id === 'view-dms') {
+    showView(openServerKey() ? 'view-channels' : 'view-connect');
+    return;
+  }
+  showDmView();
+}
+
+/**
+ * Close the session that is open, keeping its sign-in, so another server (or the
+ * form for a new one) can take the screen. A call on it goes on: its connection
+ * is the call's presence, so it is the one thing left open.
+ */
+async function closeOpenSession() {
+  if (!state.auth.user) return true;
+  const closing = state.server;
+  const callContinues = voiceHere();
+  // Signed in still: its private conversations go on behind the list.
+  dmUi?.release(closing);
+  if (!callContinues) await harmony.realtime.disconnect(closing);
+  state.auth.user = null;
+  if (callContinues) hideVoiceUi();
+  // It goes on in the background, with the session it had.
+  syncBackgroundSessions();
+  renderCallBar();
+  return true;
+}
+
+/** The voice panel and its streams belong to the server on screen: put them away, the call goes on. */
+function hideVoiceUi() {
+  closePeerMenu();
+  closeSoundpad();
+  el.voiceActive.hidden = true;
+  el.voiceIdle.hidden = state.chat.channelId !== null;
+  renderChannelVideo();
+  applyStage();
+}
+
+/**
+ * Show the call that is on the server just opened. Its connection was kept, so
+ * the hello it answers with is from when the call began: the lists are asked
+ * for again.
+ */
+async function reattachVoice() {
+  try {
+    const { channels, groups, occupancy, rosters, online } = await harmony.api.channels(state.server);
+    state.channels.list = channels;
+    state.channels.groups = groups ?? [];
+    state.channels.online = new Set(online ?? []);
+    state.channels.occupancy = occupancy ?? {};
+    state.channels.rosters = rosters ?? {};
+  } catch { /* the hello's lists will do */ }
+  const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
+  if (!channel) {
+    // The channel is gone: so is the call.
+    await leaveVoice({ silent: true }).catch(() => {});
+    return;
+  }
+  el.voiceName.textContent = channel.name;
+  el.voiceIdle.hidden = true;
+  el.voiceActive.hidden = false;
+  applyVoiceConnection(state.voiceCtx?.connected !== false);
+  renderVoiceRoster(state.channels.rosters[channel.id] ?? []);
+  applyVoiceButtons();
+  applyStage();
+  renderChannelVideo();
+}
+
+/** The call is over from the server's side while another server is on screen. */
+function endDetachedCall(message) {
+  leaveVoice({ silent: true }).catch(() => {});
+  toast(message);
+}
+
+/** What a call on a server that is not on screen needs from its connection. */
+function voiceBackgroundEvent(msg) {
+  if (!state.voice.channelId || !state.voiceCtx) return;
+  switch (msg.type) {
+    case 'voice:roster':
+      if (msg.channelId !== state.voice.channelId) break;
+      state.voiceCtx.roster = msg.roster;
+      state.voice.syncPeers(msg.roster).catch(() => { /* retried next push */ });
+      state.voice.syncVideo(msg.roster).catch(() => { /* the reconcile timer comes back */ });
+      break;
+    case 'voice:moved':
+      endDetachedCall(t('app.disconnected_you', { by: msg.by }));
+      break;
+    case 'channels':
+      if (!(msg.channels ?? []).some((c) => c.id === state.voice.channelId)) endDetachedCall(t('rail.call_interrupted'));
+      break;
+    case 'realtime:down':
+      state.voiceCtx.connected = false;
+      renderCallBar();
+      break;
+    case 'realtime:up':
+      // A new connection is a new presence: the server has forgotten the call.
+      endDetachedCall(t('rail.call_interrupted'));
+      break;
+    case 'kicked':
+    case 'realtime:rejected':
+      endDetachedCall(t('rail.call_interrupted'));
+      break;
+    default:
+      break;
+  }
+}
+
+/** The bar above everything while a call is on a server that is not the one on screen. */
+function renderCallBar() {
+  const ctx = state.voiceCtx;
+  const show = Boolean(state.voice.channelId && ctx && !voiceHere());
+  el.callBar.hidden = !show;
+  if (!show) return;
+  const server = serverNames.get(serverKey(ctx.server)) || ctx.serverName || serverHost(ctx.server);
+  el.callBar.dataset.state = ctx.connected === false ? 'connecting' : 'connected';
+  el.callBarReturn.textContent = `${ctx.connected === false ? t('app.reconnecting') : t('app.voice_connected')} · ${t('rail.call_in', { channel: ctx.channelName, server })}`;
+  el.callBarReturn.title = t('rail.call_return');
+  setButtonLabel(el.callBarMute, state.voice.muted ? t('app.unmute_mic') : t('app.mute_mic'));
+  el.callBarMute.toggleAttribute('data-on', state.voice.muted);
+  setButtonLabel(el.callBarDeafen, state.voice.deafened ? t('app.undeafen') : t('app.deafen'));
+  el.callBarDeafen.toggleAttribute('data-on', state.voice.deafened);
+  setButtonLabel(el.callBarLeave, t('voice_leave.disconnect'));
+}
+
+el.callBarReturn.addEventListener('click', () => {
+  if (state.voiceCtx) resumeServer(state.voiceCtx.server);
+});
+// The same controls as the strip at the bottom of the channel list: one set of behaviour.
+el.callBarMute.addEventListener('click', () => el.voiceMute.click());
+el.callBarDeafen.addEventListener('click', () => el.voiceDeafen.click());
+el.callBarLeave.addEventListener('click', () => leaveVoice());
+
+/** "+": the connect screen, on step one for a new address. */
+async function addServerFromRail() {
+  if (switchingServer || !(await closeOpenSession())) return;
+  showView('view-connect');
+  addServer();
+  syncBackgroundSessions();
+}
+
+/**
+ * Open a saved server from the rail, with the account it was saved with.
+ *
+ * What a person would do by hand -- pick it on the connect screen, check it is
+ * there, press Connect -- done for them: the saved session if it is still good,
+ * the remembered password if it is not, and the connect screen with the reason
+ * if neither gets in. Until another server can be kept open beside this one,
+ * the session that is open is closed first (its sign-in is kept).
+ */
+let switchingServer = false;
+
+async function resumeServer(url) {
+  if (switchingServer) return;
+  const profile = findProfile(url);
+  if (!profile) return;
+  if (openServerKey() === serverKey(profile.url)) {
+    // Already the open one: from the private messages, this is the way back to it.
+    if (document.querySelector('.view[data-active]')?.id === 'view-dms') showView('view-channels');
+    return;
+  }
+
+  if (!(await closeOpenSession())) return;
+
+  switchingServer = true;
+  el.appShell.dataset.switching = '';
+  try {
+    closeServerMenu();
+    el.serverUrl.value = profile.url;
+    el.password.value = profile.password ?? '';
+    showError('');
+    await loadProfile(profile);
+    await saveProfile(currentFields(profile.url));
+    await submitServer({ resuming: true });
+
+    // The saved session was not good: the remembered password, if there is one.
+    if (!state.auth.user && el.username.value) {
+      await restoreAccountPassword();
+      if (el.accountPassword.value) await startSession();
+    } else if (state.auth.user) {
+      await startSession();
+    }
+  } finally {
+    switchingServer = false;
+    delete el.appShell.dataset.switching;
+    // Not in: the connect screen is where the reason is (see submitServer and startSession).
+    if (!state.auth.user) showView('view-connect');
+    syncBackgroundSessions();
+    renderServerRail();
+  }
+}
+
+// --- what can be done to a server from its bubble ---------------------------------
+
+function openRailMenu(url, event) {
+  const profile = findProfile(url);
+  if (!profile) return;
+  const key = serverKey(url);
+  const isOpen = openServerKey() === key;
+  const name = serverNames.get(key) || serverHost(url);
+  const items = [];
+  if (!isOpen) items.push({ label: t('rail.menu_open'), title: '', run: () => resumeServer(url) });
+  if (profile.sessionToken || isOpen) {
+    items.push({ label: t('rail.menu_sign_out'), title: '', run: () => signOutServer(url) });
+  }
+  // Kept connected behind the open one (the default), or only while it is open.
+  if (!isOpen) {
+    const live = profile.keepLive !== false;
+    items.push({
+      label: live ? t('rail.menu_keep_live_off') : t('rail.menu_keep_live_on'),
+      title: t('rail.menu_keep_live_hint'),
+      run: async () => {
+        await patchProfile(url, { keepLive: !live });
+        syncBackgroundSessions();
+        renderServerRail();
+      },
+    });
+  }
+  items.push({ label: t('rail.menu_forget'), title: '', danger: true, run: () => forgetServerFromRail(url) });
+  openRowMenu(name, items, event);
+}
+
+/** End the session on a server, keeping the remembered password for the next sign-in. */
+async function signOutServer(url) {
+  const profile = findProfile(url);
+  if (!profile) return;
+  if (openServerKey() === serverKey(url)) {
+    el.channelsSignout.click();
+    return;
+  }
+  if (state.voiceServer && serverKey(state.voiceServer) === serverKey(url)) await leaveVoice({ silent: true }).catch(() => {});
+  backgrounds.stop(url);
+  dmUi?.stop(url);
+  await harmony.api.setCredentials(url, { password: profile.password ?? '', token: profile.sessionToken ?? '' });
+  await harmony.api.logout(url).catch(() => {});
+  await patchProfile(url, { sessionToken: '' });
+  syncBackgroundSessions();
+  renderServerRail();
+}
+
+/** Forget a server and its sign-in, after asking. */
+async function forgetServerFromRail(url) {
+  const name = serverNames.get(serverKey(url)) || serverHost(url);
+  const sure = await askConfirm(t('rail.forget_title', { name }), {
+    text: t('rail.forget_text'),
+    okLabel: t('rail.forget_ok'),
+  });
+  if (!sure) return;
+  const wasOpen = openServerKey() === serverKey(url);
+  if (state.voiceServer && serverKey(state.voiceServer) === serverKey(url)) await leaveVoice({ silent: true }).catch(() => {});
+  if (wasOpen) {
+    dmUi?.stop(url);
+    await harmony.realtime.disconnect(url);
+    state.auth.user = null;
+  }
+  const profile = findProfile(url);
+  if (profile?.sessionToken) {
+    await harmony.api.setCredentials(url, { password: profile.password ?? '', token: profile.sessionToken });
+    await harmony.api.logout(url).catch(() => {});
+  }
+  backgrounds.stop(url);
+  dmUi?.stop(url);
+  await forgetServer(url);
+  if (wasOpen) {
+    // Nothing is open any more: the connect screen, on the form for a new address if nothing is left.
+    showView('view-connect');
+    if (!savedServers().length) addServer();
+  }
+}
+
+/** A server dragged to another place on the rail. */
+async function moveServer(from, to, after) {
+  const list = savedServers();
+  const moving = list.find((p) => serverKey(p.url) === serverKey(from));
+  if (!moving) return;
+  const rest = list.filter((p) => p !== moving);
+  const at = rest.findIndex((p) => serverKey(p.url) === serverKey(to));
+  if (at === -1) return;
+  rest.splice(after ? at + 1 : at, 0, moving);
+  state.settings = await harmony.settings.set({ servers: rest });
+  renderServerRail();
+}
+
+// Ctrl (Cmd on a Mac) and a number opens that server on the rail.
+document.addEventListener('keydown', (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || !/^[1-9]$/.test(event.key)) return;
+  if (document.querySelector('dialog[open]') || el.serverRail.hidden) return;
+  const profile = savedServers()[Number(event.key) - 1];
+  if (!profile) return;
+  event.preventDefault();
+  resumeServer(profile.url);
+});
+
+// --- the servers behind the open one -----------------------------------------
+
+/**
+ * The saved servers that are not open, kept connected, for what their bubbles
+ * say. See server-sessions.js.
+ */
+const backgrounds = createBackgroundSessions({
+  harmony,
+  onChange: () => renderServerRail(),
+  onMention: () => {
+    if (state.settings?.mentionSound !== false) playCue('mention');
+  },
+  onRejected: (url) => silentRelogin(url),
+  onUp: (url, user) => startBackgroundDm(url, user),
+});
+
+/** The people of each server kept in the background, for drawing its private conversations. */
+const backgroundUsers = new Map();
+
+/** A server behind the open one is up: its media may be loaded by name, and its conversations are kept. */
+async function startBackgroundDm(url, user) {
+  if (!user?.id) return;
+  const key = serverKeyOf(url);
+  harmony.media.register(url).catch(() => {});
+  try {
+    const { users } = await harmony.api.roster(url);
+    backgroundUsers.set(key, new Map(users.map((u) => [u.id, u])));
+  } catch { /* names fall back to "someone" until the next time */ }
+  dmUi?.startBackground({
+    server: findProfile(url)?.url ?? url,
+    meId: user.id,
+    users: () => backgroundUsers.get(key) ?? new Map(),
+  }).catch(() => { /* the list says so */ });
+}
+
+/** How many servers are kept connected behind the open one: each is a socket and a heartbeat. */
+const MAX_LIVE_SERVERS = 8;
+
+/**
+ * Keep exactly the right servers connected behind the open one: every saved
+ * server with a session to use, except the one on screen (the open server, or
+ * the one the connect screen is asking about) -- that one has a connection of its
+ * own, opened by the screen it belongs to.
+ */
+function syncBackgroundSessions() {
+  const foreground = new Set([openServerKey(), serverKey(el.serverUrl?.value ?? '')].filter(Boolean));
+  // The ones that are asked to be kept (the default), up to a number that stays cheap.
+  const wanted = savedServers()
+    .filter((p) => p.sessionToken && p.keepLive !== false && !foreground.has(serverKey(p.url)))
+    .slice(0, MAX_LIVE_SERVERS);
+  const wantedKeys = new Set(wanted.map((p) => serverKeyOf(p.url)));
+  const callKey = state.voiceServer ? serverKeyOf(state.voiceServer) : null;
+  for (const key of backgrounds.keys()) {
+    if (wantedKeys.has(key)) continue;
+    // A call's connection is its presence: only let go of the record, not the socket.
+    if (key === callKey) backgrounds.release(key);
+    else backgrounds.stop(key);
+    // Its conversations were this session's: unless it is the open one (which keeps its own), they go.
+    if (key !== openServerKey() && key !== serverKey(el.serverUrl?.value ?? '')) {
+      dmUi?.stop(key);
+      backgroundUsers.delete(key);
+    }
+  }
+  for (const p of wanted) {
+    backgrounds.start({ url: p.url, password: p.password ?? '', token: p.sessionToken });
+  }
+}
+
+/** Change one saved server's profile, whichever server is on screen. */
+async function patchProfile(url, patch) {
+  const servers = savedServers().map((p) => (serverKey(p.url) === serverKey(url) ? { ...p, ...patch } : p));
+  // The top-level fields are the last-opened server's own; a new session goes there too.
+  const topLevel = serverKey(url) === serverKey(state.settings.serverUrl) && patch.sessionToken !== undefined
+    ? { sessionToken: patch.sessionToken } : {};
+  state.settings = await harmony.settings.set({ servers, ...topLevel });
+}
+
+/** Servers asked to sign in again this run, so a wrong password is tried once and not in a loop. */
+const reloginTried = new Set();
+
+/**
+ * A background server no longer accepts the session: the remembered password,
+ * if the account has one, is the way back in. Otherwise the bubble says to sign
+ * in again.
+ */
+async function silentRelogin(url) {
+  const key = serverKey(url);
+  if (reloginTried.has(key)) return;
+  reloginTried.add(key);
+  const profile = findProfile(url);
+  if (!profile?.accountSecret || !profile.username || profile.rememberAccount === false) return;
+  try {
+    const password = await harmony.secrets.reveal(profile.accountSecret);
+    if (!password) return;
+    // The old session must not ride along with the new sign-in.
+    await harmony.api.setCredentials(url, { password: profile.password ?? '', token: '' });
+    const result = await harmony.api.login(url, profile.username, password);
+    await patchProfile(url, { sessionToken: result.token });
+    reloginTried.delete(key);
+    backgrounds.stop(url);
+    syncBackgroundSessions();
+  } catch {
+    // Stays locked: the person is asked when they open it.
+  }
+}
+
 /*
  * What each saved server said when last asked, for the list: reachable, and
  * its name where it gave one. Memory only. Asked in the background when the
@@ -1442,6 +1943,7 @@ function probeSavedServers() {
       })
       .finally(() => {
         if (!el.serverMenu.hidden) renderServerMenu();
+        renderServerRail();
       });
   }
 }
@@ -1451,6 +1953,8 @@ async function forgetServer(url) {
   state.settings = await harmony.settings.set({ servers });
   serverStatus.delete(serverKey(url));
   renderServerMenu();
+  renderServerRail();
+  syncBackgroundSessions();
 }
 
 // --- the dropdown ---------------------------------------------------------
@@ -1649,7 +2153,7 @@ async function submitServer({ resuming = false } = {}) {
       await loadProfile(findProfile(server));
     }
 
-    await harmony.api.setPassword(el.password.value);
+    await harmony.api.setPassword(el.password.value, server);
     let health;
     try {
       health = await harmony.api.health(server);
@@ -1856,7 +2360,7 @@ function applyAuthMode() {
 /** Hand the token to main, and persist it only if they asked us to. */
 async function adoptSession(token) {
   state.auth.token = token ?? '';
-  await harmony.api.setSessionToken(state.auth.token);
+  await harmony.api.setSessionToken(state.auth.token, el.serverUrl.value.trim());
   const patch = {
     sessionToken: el.rememberAccount.checked ? state.auth.token : '',
     rememberAccount: el.rememberAccount.checked,
@@ -1987,7 +2491,7 @@ async function startSession() {
   try {
     // Before anything else reaches the server, so the very first request of the
     // session already carries it.
-    await harmony.api.setPassword(el.password.value);
+    await harmony.api.setPassword(el.password.value, server);
 
     // A server we have not reached yet has not told us whether it has accounts.
     if (!state.auth.supported) await probeServer();
@@ -2209,7 +2713,25 @@ async function askConfirm(title, { text, okLabel = 'OK' } = {}) {
 const AVATAR_PX = 256;
 const AVATAR_MAX_BYTES = 256 * 1024;
 
-const knownUser = (id) => state.users.get(id) ?? null;
+/*
+ * Whose people the lookups below read: the open server's, unless a private
+ * conversation of another server is being drawn (see inServer).
+ */
+let lookupUsers = null;
+let lookupServer = null;
+const knownUser = (id) => (lookupUsers ?? state.users).get(id) ?? null;
+
+/** Run something that draws names and pictures against another server's people. */
+function inServer(home, fn) {
+  const before = [lookupUsers, lookupServer];
+  lookupUsers = home.users();
+  lookupServer = serverKeyOf(home.server) === serverKeyOf(state.server ?? '') ? null : home.server;
+  try {
+    return fn();
+  } finally {
+    [lookupUsers, lookupServer] = before;
+  }
+}
 
 /**
  * Private conversations: the page for them (dm-ui.js). Made at the bottom of
@@ -2290,13 +2812,17 @@ function ghostBackground(node, user) {
  * by every mute somebody toggles. The <img> is the row's first child and is
  * placed behind the rest by CSS (.profile-banner).
  */
-function showBanner(row, hash) {
+function showBanner(row, hash, dim = null) {
   let img = row.querySelector(':scope > .profile-banner');
   if (!hash) {
     img?.remove();
     row.classList.remove('has-banner');
+    row.style.removeProperty('--banner-dim');
     return;
   }
+  // How dim it is is its owner's to choose; none chosen leaves the look it always had.
+  if (dim === null || dim === undefined) row.style.removeProperty('--banner-dim');
+  else row.style.setProperty('--banner-dim', String(dim));
   const src = harmony.mediaUrl(hash);
   if (!img) {
     img = document.createElement('img');
@@ -2321,7 +2847,7 @@ function avatarEl(user, extraClass = '') {
   span.className = `avatar ${extraClass}`.trim();
   if (user?.avatarHash) {
     const img = document.createElement('img');
-    img.src = harmony.mediaUrl(user.avatarHash);
+    img.src = harmony.mediaUrl(user.avatarHash, lookupServer ?? undefined);
     img.alt = '';
     span.append(img);
   } else {
@@ -2406,8 +2932,17 @@ function renderProfileStyle() {
   el.profileBannerAvatar.replaceChildren(...avatarEl(me).childNodes);
   el.profileBannerName.textContent = sample;
   nameFont(el.profileBannerName, me.id, me);
-  showBanner(el.profileBannerPreview, me.bannerHash);
+  // While the slider is being moved it is the truth: what comes back from the server lags behind the hand.
+  const dragging = document.activeElement === el.profileBannerDim;
+  const dim = dragging ? Number(el.profileBannerDim.value) : (me.bannerDim ?? null);
+  showBanner(el.profileBannerPreview, me.bannerHash, dim);
   el.profileBannerRemove.disabled = !me.bannerHash;
+  if (!dragging) el.profileBannerDim.value = String(dim ?? DEFAULT_BANNER_DIM);
+  paintRange(el.profileBannerDim);
+  el.profileBannerDimValue.textContent = `${dim ?? DEFAULT_BANNER_DIM}%`;
+  // Nothing to dim without a banner.
+  el.profileBannerDim.disabled = !me.bannerHash;
+  el.profileBannerDimReset.disabled = !me.bannerHash || me.bannerDim == null;
 
   const choices = [{ id: null, label: t('profile.font_default') }, ...NAME_FONTS];
   el.profileFontGrid.replaceChildren(...choices.map((font) => {
@@ -2492,6 +3027,66 @@ async function clearOwnBanner() {
   } catch (err) {
     profileNote(el.profileBannerNote, err.message, true);
   }
+}
+
+/** What the banner's dimming is when its owner has not chosen: the look it always had. */
+const DEFAULT_BANNER_DIM = 50;
+
+/**
+ * Dimming, saved as the slider moves.
+ *
+ * Everything follows the hand at once -- the preview, our own rows and card --
+ * and the server is told at most about once every moment: it pushes the change
+ * to everybody, so their lists change while it is still being moved. One request
+ * is in flight at a time and the latest value is what the next one carries, so
+ * answers that arrive out of order cannot put an old value back.
+ */
+let dimWanted = null;
+let dimSent = null;
+let dimSending = false;
+let dimTimer = null;
+/** From the first move until the last value has been sent: what the server pushes back is behind the hand. */
+let dimPending = false;
+
+function followOwnDim(value) {
+  const me = state.auth.user;
+  if (!me) return;
+  // Locally and now: the lists are drawn again from what we hold.
+  state.auth.user = { ...me, bannerDim: value };
+  state.users.set(me.id, state.auth.user);
+  renderProfileStyle();
+  renderMembers();
+  renderVoiceRoster(state.channels.roster);
+  profileCard?.refresh();
+}
+
+async function sendDim() {
+  if (dimSending) return;
+  dimSending = true;
+  try {
+    while (dimWanted !== dimSent) {
+      const value = dimWanted;
+      dimSent = value;
+      try {
+        await harmony.api.setBannerDim(state.server, value);
+      } catch (err) {
+        profileNote(el.profileBannerNote, err.message, true);
+        dimSent = undefined;
+        break;
+      }
+    }
+  } finally {
+    dimSending = false;
+    if (dimWanted === dimSent) dimPending = false;
+  }
+}
+
+function setOwnDim(value, { now = false } = {}) {
+  dimWanted = value;
+  dimPending = true;
+  followOwnDim(value);
+  clearTimeout(dimTimer);
+  dimTimer = setTimeout(sendDim, now ? 0 : 80);
 }
 
 /**
@@ -2808,6 +3403,9 @@ function renderProfile() {
  * deployment and its tests carry on unchanged.
  */
 async function enterChannels() {
+  // This server is the open one now: its own connection is made below, and a
+  // background one beside it would be a second socket for the same session.
+  syncBackgroundSessions();
   el.channelsWho.textContent = state.auth.user.displayName || state.auth.user.nickname;
   nameFont(el.channelsWho, state.auth.user.id, state.auth.user);
   el.channelsRole.textContent = ownRoleText(state.auth.user);
@@ -2862,6 +3460,9 @@ async function enterChannels() {
       state.channels.rosters = rosters ?? {};
     } catch { /* nothing more to try */ }
   }
+  // A call on this server that went on while another was open: its connection was
+  // kept, and it is drawn again.
+  if (voiceHere()) await reattachVoice();
   renderChannels();
   // After the accounts are known (names and faces) and the socket is up, so a
   // push that arrives while the keys are being fetched is not missed.
@@ -3204,8 +3805,9 @@ function channelNodes(channel) {
    * highlight; it used to be data-active alone, so opening a text channel
    * highlighted nothing new and the voice channel stayed lit the whole call.
    */
-  if (channel.id === state.voice.channelId) li.setAttribute('data-active', '');
-  const viewing = state.chat.channelId ?? state.voice.channelId;
+  const callHere = voiceHere() ? state.voice.channelId : null;
+  if (channel.id === callHere) li.setAttribute('data-active', '');
+  const viewing = state.chat.channelId ?? callHere;
   if (channel.id === viewing) li.setAttribute('data-viewing', '');
   const mentions = state.mentioned.get(channel.id) ?? 0;
   if (mentions) {
@@ -3362,7 +3964,7 @@ function channelNodes(channel) {
     who.textContent = displayOf(member.userId, member.nickname);
     nameFont(who, member.userId);
     row.append(who);
-    showBanner(row, knownUser(member.userId)?.bannerHash);
+    showBanner(row, knownUser(member.userId)?.bannerHash, knownUser(member.userId)?.bannerDim);
 
     // Exactly the indicators the voice pane shows, from the same helper --
     // the two lists are looked at side by side, and nothing is more
@@ -3476,8 +4078,7 @@ function acceptGroupDrop(node, channel) {
 
 /** The same request as the peer menu's "Move...": the server does the rest. */
 function moveMember(userId, toChannelId) {
-  harmony.realtime
-    .request('admin:move', { userId, toChannelId })
+  rt('admin:move', { userId, toChannelId })
     .catch((err) => showChannelsError(err.message));
 }
 
@@ -3919,6 +4520,11 @@ async function loadServerInfo() {
       maxFileBytes: undefined, storageBytes: undefined, usedBytes: undefined, diskFreeBytes: undefined,
       ...server,
     });
+    // The rail names the server by it, as the connect screen's list does.
+    if (server?.name) {
+      serverNames.set(serverKey(state.server), server.name);
+      renderServerRail();
+    }
   } catch {
     // Not fatal: the brand falls back to what the markup says.
   }
@@ -4111,7 +4717,7 @@ async function saveServerSettings() {
      * locks themselves out the moment they press Save.
      */
     if (body.password !== undefined) {
-      await harmony.api.setPassword(body.password);
+      await harmony.api.setPassword(body.password, state.server);
       // Into this server's profile as well, or switching away and back
       // would bring the old password with it.
       el.password.value = body.password;
@@ -4164,7 +4770,7 @@ function renderMembers() {
     name.textContent = displayOf(user.id, user.nickname);
     nameFont(name, user.id);
     li.append(name);
-    showBanner(li, user.bannerHash);
+    showBanner(li, user.bannerHash, user.bannerDim);
 
     // An icon, not a word: a crown for the owner, a shield for a super admin.
     if (user.role === 'owner' || user.role === 'admin') li.append(roleIcon(user.role, roleLabel(user.role)));
@@ -4256,8 +4862,7 @@ async function onChannelClick(channel) {
   // streams after reading a text channel. It used to do nothing at all,
   // which left the chat covering the thing you were trying to watch with no
   // obvious way to put it away.
-  if (channel.id === state.voice.channelId) {
-    dmUi?.closeConversation();
+  if (voiceHere() && channel.id === state.voice.channelId) {
     closeChat();
     return undefined;
   }
@@ -4289,15 +4894,10 @@ function applyStage() {
   const tiles = el.channelVideo.dataset.layout !== 'pip'
     && Boolean(el.channelVideo.querySelector('.channel-tile'));
 
-  // A private conversation is a third thing the stage can hold, and like the
-  // other two it is never shown with them: dm-ui.js shows and hides its own
-  // panel, and this only makes room for it.
-  const conversing = Boolean(dmUi?.isOpen());
-
   el.chatActive.hidden = !chatting;
-  el.channelVideo.hidden = chatting || conversing || !tiles;
+  el.channelVideo.hidden = chatting || !tiles;
 
-  const stage = chatting || conversing || tiles;
+  const stage = chatting || tiles;
   el.channelStage.hidden = !stage;
 
   // Whether the middle column exists at all comes off these -- see the
@@ -4320,11 +4920,35 @@ function applyStage() {
  */
 async function requestAgain(type, payload) {
   try {
-    return await harmony.realtime.request(type, payload);
+    return await rt(type, payload);
   } catch (err) {
     if (!/did not answer/i.test(err.message)) throw err;
-    return harmony.realtime.request(type, payload);
+    return rt(type, payload);
   }
+}
+
+/**
+ * A request over a server's realtime connection: the current server's unless
+ * one is named. Each server has a connection of its own, so the request has to
+ * say whose it is.
+ */
+function rt(type, payload, server = state.server) {
+  return harmony.realtime.request(server, type, payload);
+}
+
+/**
+ * Whether the call is on the server on screen. A call goes on when another
+ * server is opened, and what is drawn of it (the roster, the streams, which
+ * channel is lit) belongs to its own server's lists, so it is only drawn while
+ * those are the ones showing.
+ */
+function voiceHere() {
+  return Boolean(state.voice.channelId && state.voiceServer && openServerKey() === serverKey(state.voiceServer));
+}
+
+/** A request about the call, over the connection of the server the call is on. */
+function voiceRt(type, payload) {
+  return rt(type, payload, state.voiceServer ?? state.server);
 }
 
 async function joinVoice(channel, password) {
@@ -4336,7 +4960,8 @@ async function joinVoice(channel, password) {
   let admitted = false;
 
   try {
-    if (state.voice.channelId) await leaveVoice({ silent: true });
+    // On this server the join itself leaves the old room; a call on another one is ended properly.
+    if (state.voice.channelId) await leaveVoice({ silent: voiceHere() });
 
     const reply = await requestAgain('voice:join', {
       channelId: channel.id,
@@ -4373,6 +4998,15 @@ async function joinVoice(channel, password) {
       publish: reply.publish,
       iceServers: state.session?.iceServers ?? state.mosaic?.iceServers ?? [],
     });
+    state.voiceServer = state.server;
+    state.voiceCtx = {
+      server: state.server,
+      channelId: channel.id,
+      channelName: channel.name,
+      serverName: serverInfo.name || serverNames.get(serverKey(state.server)) || '',
+      connected: true,
+      roster: reply.roster ?? [],
+    };
 
     // Joining a voice channel puts the streams back on the stage. Clicking a
     // voice channel is the only way back from a text channel, so leaving the
@@ -4423,7 +5057,7 @@ async function joinVoice(channel, password) {
      * was invisible from this side.
      */
     if (state.voice.muted || state.voice.deafened) {
-      await harmony.realtime.request('voice:mute', {
+      await voiceRt('voice:mute', {
         channelId: channel.id,
         muted: state.voice.muted,
         deafened: state.voice.deafened,
@@ -4535,7 +5169,7 @@ async function joinVoice(channel, password) {
     // Silent leaves are the first half of a move and say nothing to the server;
     // this one is a join that did not happen, and everybody else would
     // otherwise see somebody in the room who is not.
-    if (admitted) await harmony.realtime.request('voice:leave', { channelId: channel.id }).catch(() => {});
+    if (admitted) await voiceRt('voice:leave', { channelId: channel.id }).catch(() => {});
   } finally {
     state.channels.joining = false;
   }
@@ -4590,7 +5224,7 @@ async function checkMicHealth() {
   if (!state.voice.channelId || micRecovering) return;
   const health = state.voice.micHealth();
   if (health === 'ok' || health === 'none') return;
-  const me = state.channels.roster.find((m) => m.mid === state.voice.mid);
+  const me = (voiceHere() ? state.channels.roster : (state.voiceCtx?.roster ?? [])).find((m) => m.mid === state.voice.mid);
   if (me?.forceMuted) return;
   if (Date.now() < micRetryAt) return;
 
@@ -4608,8 +5242,7 @@ async function checkMicHealth() {
       return;
     }
     applyMicTuning();
-    await harmony.realtime
-      .request('voice:publishing', { channelId, kind: 'v', on: true })
+    await voiceRt('voice:publishing', { channelId, kind: 'v', on: true })
       .catch(() => { /* the others' retry timer finds the path anyway */ });
     micRetryAt = 0;
     console.warn('[voice] microphone is back');
@@ -4625,7 +5258,7 @@ async function refreshVoiceTokens() {
   const channelId = state.voice.channelId;
   if (!channelId) return false;
   try {
-    const reply = await harmony.realtime.request('voice:refresh', { channelId });
+    const reply = await voiceRt('voice:refresh', { channelId });
     if (reply.type !== 'voice:tokens') return false;
     state.voice.retoken(reply);
     return true;
@@ -4651,8 +5284,11 @@ async function leaveVoice({ silent = false } = {}) {
     // Not on a silent leave: that is the first half of moving to another
     // channel, whose own "connect" is the sound that move should make.
     voiceCue('disconnect');
-    await harmony.realtime.request('voice:leave', { channelId }).catch(() => {});
+    await voiceRt('voice:leave', { channelId }).catch(() => {});
   }
+  const callServer = state.voiceServer;
+  state.voiceServer = null;
+  state.voiceCtx = null;
   state.channels.roster = [];
   resetCues();
   stopJoinSounds();
@@ -4665,6 +5301,13 @@ async function leaveVoice({ silent = false } = {}) {
   renderChannelVideo();
   applyVoiceButtons();
   renderChannels();
+  renderCallBar();
+  // A call on a server that is not the open one was what kept its connection:
+  // keep it only if it is wanted for the rail, and close it if not.
+  if (callServer && serverKey(callServer) !== openServerKey()) {
+    if (!backgrounds.has(callServer)) harmony.realtime.disconnect(callServer).catch(() => {});
+    syncBackgroundSessions();
+  }
 }
 
 /**
@@ -4705,6 +5348,7 @@ function applyVoiceButtons() {
   const live = Boolean(state.voice.channelId);
   el.voiceMute.disabled = !live;
   el.voiceDeafen.disabled = !live;
+  renderCallBar();
 
   const sharing = Boolean(state.voice.channelId) && (
     state.share.target?.channelId === state.voice.channelId
@@ -4734,7 +5378,7 @@ function applyVoiceButtons() {
   el.selfStatus.toggleAttribute('data-talking', inVoice && state.voice.pushToTalk && state.voice.pttHeld);
 
   const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
-  el.voiceWhere.textContent = channel ? channel.name : '';
+  el.voiceWhere.textContent = state.voiceCtx?.channelName ?? (channel ? channel.name : '');
 
   syncVoiceTray();
 }
@@ -4759,7 +5403,7 @@ function syncVoiceTray() {
     muted: inVoice && state.voice.muted,
     deafened: inVoice && state.voice.deafened,
     speaking: inVoice && performance.now() - selfSpokeAt < TRAY_TALK_HOLD_MS,
-    channel: channel?.name ?? '',
+    channel: state.voiceCtx?.channelName ?? channel?.name ?? '',
   };
   const key = JSON.stringify(now);
   if (key === voiceTrayKey) return;
@@ -5064,7 +5708,7 @@ function openPeerMenu(channelId, mid, event) {
       const live = (channelId === state.voice.channelId
         ? state.channels.roster
         : (state.channels.rosters[channelId] ?? [])).find((m) => m.mid === mid);
-      harmony.realtime.request('admin:force-mute', {
+      rt('admin:force-mute', {
         channelId, mid, muted: !live?.forceMuted,
       }).catch((err) => showChannelsError(err.message));
       closePeerMenu();
@@ -5091,7 +5735,7 @@ function openPeerMenu(channelId, mid, event) {
       const choice = move.value;
       move.value = '';
       if (!choice) return;
-      harmony.realtime.request('admin:move', {
+      rt('admin:move', {
         userId,
         toChannelId: choice === 'none' ? null : Number(choice),
       }).catch((err) => showChannelsError(err.message));
@@ -5246,7 +5890,7 @@ function renderVoiceRoster(roster) {
       displayOf(member.userId, member.nickname)
       + (member.mid === state.voice.mid ? ' (you)' : '');
     nameFont(li.querySelector('.member-name'), member.userId);
-    showBanner(li, knownUser(member.userId)?.bannerHash);
+    showBanner(li, knownUser(member.userId)?.bannerHash, knownUser(member.userId)?.bannerDim);
 
     // Who can throw you out is worth being able to see without opening a
     // menu on every person in turn.
@@ -5285,6 +5929,8 @@ function renderSpeaking() {
   const speaking = state.voice.speakingMids();
   if (speaking.has(state.voice.mid)) selfSpokeAt = performance.now();
   syncVoiceTray();
+  // The rest is drawn from the server on screen: a call on another has no roster here.
+  if (!voiceHere()) return;
   refreshPip();
   for (const figure of everyTile()) {
     figure.toggleAttribute('data-speaking', speaking.has(Number(figure.dataset.mid)));
@@ -6583,7 +7229,7 @@ const pipEnabled = () => state.settings?.pictureInPicture === true;
  * would be the same picture twice.
  */
 const pipWanted = () => pipEnabled() && pip.figures.length > 0
-  && (Boolean(state.chat.channelId) || Boolean(dmUi?.isOpen()) || pipDetached());
+  && (Boolean(state.chat.channelId) || pipDetached());
 /** What the window should show now: the camera of somebody talking, else the pick. */
 function pipChoice() {
   const keys = pip.figures.map((f) => f.dataset.key);
@@ -6761,7 +7407,6 @@ el.pipNext.addEventListener('click', () => stepPip(1));
 // Opening a text channel brings the window back, as it always does.
 el.pipStage.addEventListener('click', () => {
   returnPip({ render: false });
-  dmUi?.closeConversation();
   closeChat();
   renderChannelVideo();
 });
@@ -6947,7 +7592,7 @@ function paintTileWho(figure) {
 }
 
 function renderChannelVideo() {
-  const tiles = state.voice.channelId
+  const tiles = voiceHere()
     ? [...ownChannelTiles(), ...state.voice.videoTiles]
     : [];
 
@@ -7316,8 +7961,6 @@ function renderChannelVideo() {
 // ---------------------------------------------------------------------------
 
 async function openTextChannel(channel) {
-  // The stage holds one thing: the conversation gives way to the channel.
-  dmUi?.closeConversation();
   // Before channelId changes and before anything is redrawn: the log still
   // shows the channel being left, and this is the only moment it can be read.
   rememberChatScroll();
@@ -7361,6 +8004,7 @@ async function openTextChannel(channel) {
     state.chat.pinned = pinned;
     state.chat.showsHistory = true;
     renderChat({ scrollToBottom: true, restore: wantsPlace ? saved : null });
+    markOpenChannelRead();
     // Pinned attachments are part of the keep-set: they are the things
     // somebody decided were worth coming back to, so they survive eviction.
     await refreshKeepSet();
@@ -7368,6 +8012,26 @@ async function openTextChannel(channel) {
     showChannelsError(err.message);
   }
 }
+
+/**
+ * Tell the server how far the open channel has been read, so what is new on
+ * other devices and in the rail's counts stays true. Held back a moment: a busy
+ * channel would otherwise send one for every message.
+ */
+let readTimer = null;
+function markOpenChannelRead() {
+  clearTimeout(readTimer);
+  readTimer = setTimeout(() => {
+    const id = state.chat.channelId;
+    const newest = state.chat.messages.at(-1)?.id;
+    // Not looked at: a channel open behind a minimised window has not been read.
+    if (!state.auth.user || !id || !newest || state.chat.searching || document.hidden) return;
+    harmony.api.markRead(state.server, id, newest).catch(() => { /* the next message tries again */ });
+  }, 400);
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) markOpenChannelRead();
+});
 
 const CHAT_BOTTOM_PX = 40;
 
@@ -9762,7 +10426,8 @@ function closeSoundpad() {
  * Soundpad comment in the server's chat.js for why.
  */
 function playSoundpadClip(clip, button = null) {
-  if (!state.voice.channelId) {
+  // The clips are this server's, and the call has to be on it to hear them.
+  if (!voiceHere()) {
     showChannelsError(t('app.join_a_voice_channel_first'));
     return undefined;
   }
@@ -9773,8 +10438,7 @@ function playSoundpadClip(clip, button = null) {
     button.setAttribute('data-playing', '');
     setTimeout(() => button.removeAttribute('data-playing'), 350);
   }
-  return harmony.realtime
-    .request('soundpad:play', { channelId: state.voice.channelId, clipId: clip.id })
+  return voiceRt('soundpad:play', { channelId: state.voice.channelId, clipId: clip.id })
     .catch((err) => showChannelsError(err.message));
 }
 
@@ -10598,7 +11262,7 @@ async function startCamera() {
         return undefined;
       }
       opened = null;
-      await harmony.realtime.request('voice:publishing', {
+      await voiceRt('voice:publishing', {
         channelId: state.voice.channelId, kind: 'c', on: true,
       });
       return undefined;
@@ -10651,7 +11315,7 @@ async function stopCamera() {
     const channelId = state.voice.channelId;
     await state.voice.stopCam();
     if (channelId) {
-      await harmony.realtime.request('voice:publishing', {
+      await voiceRt('voice:publishing', {
         channelId, kind: 'c', on: false,
       }).catch(() => { /* leaving the channel says the same thing */ });
     }
@@ -10686,8 +11350,19 @@ async function stopCamera() {
  * unmutes ten minutes later is just another roster push.
  */
 function onRealtimeEvent(msg) {
-  // Private conversations and their keys are dm-ui's: nothing below knows them.
+  /*
+   * Every connection says which server it belongs to. Only the open server's
+   * frames are for the lists below; the rest are the background servers' counts
+   * or, from a connection that was closed a moment ago, nothing at all.
+   */
+  // Private conversations and their keys are dm-ui's, on whichever server they arrive.
   if (dmUi?.handleEvent(msg)) return;
+  if (msg.server && msg.server !== (openServerKey() ? serverKeyOf(state.server) : null)) {
+    // A call goes on over its own server's connection, whatever is on screen.
+    if (state.voiceServer && serverKeyOf(msg.server) === serverKeyOf(state.voiceServer)) voiceBackgroundEvent(msg);
+    backgrounds.handleEvent(msg);
+    return;
+  }
   switch (msg.type) {
     case 'presence':
       state.channels.online = new Set(msg.online ?? []);
@@ -10732,7 +11407,7 @@ function onRealtimeEvent(msg) {
       // deciding whether to join it.
       state.channels.rosters[msg.channelId] = msg.roster;
       state.channels.occupancy[msg.channelId] = msg.roster.length;
-      if (msg.channelId !== state.voice.channelId) {
+      if (!voiceHere() || msg.channelId !== state.voice.channelId) {
         renderChannels();
         break;
       }
@@ -10761,6 +11436,7 @@ function onRealtimeEvent(msg) {
       if (msg.message.channelId === state.chat.channelId && !state.chat.searching) {
         state.chat.messages.push(msg.message);
         renderChat();
+        markOpenChannelRead();
       }
       break;
 
@@ -10816,6 +11492,8 @@ function onRealtimeEvent(msg) {
      */
     case 'kicked':
       dmUi?.stop();
+      // The server closes the connection: the call is over with it.
+      if (voiceHere()) leaveVoice({ silent: true }).catch(() => {});
       state.auth.user = null;
       showView('view-connect');
       showError(msg.reason === 'account removed'
@@ -10855,6 +11533,8 @@ function onRealtimeEvent(msg) {
       break;
 
     case 'user:updated':
+      // Our own dimming is still being moved: the push carries an older value than the hand.
+      if (dimPending && msg.user.id === state.auth.user?.id) msg.user = { ...msg.user, bannerDim: dimWanted };
       state.users.set(msg.user.id, msg.user);
       refreshKeepSet();
       if (msg.user.id === state.auth.user?.id) {
@@ -10892,6 +11572,7 @@ function onRealtimeEvent(msg) {
       break;
 
     case 'voice:moved':
+      if (!voiceHere()) break;
       if (msg.channelId == null) {
         leaveVoice();
         showChannelsError(t('app.disconnected_you', { by: msg.by }));
@@ -10915,12 +11596,12 @@ function onRealtimeEvent(msg) {
 
     case 'realtime:down':
       showChannelsError(t('app.reconnecting'));
-      applyVoiceConnection(false);
+      if (voiceHere() || !state.voice.channelId) applyVoiceConnection(false);
       break;
 
     case 'realtime:up':
       showChannelsError('');
-      applyVoiceConnection(true);
+      if (voiceHere() || !state.voice.channelId) applyVoiceConnection(true);
       // Everything the hello carries, not just the channel list: a client
       // that was away has missed every roster broadcast in between, and the
       // hello is the one message that brings the whole picture back.
@@ -10941,7 +11622,7 @@ function onRealtimeEvent(msg) {
       // overwritten by the hello's own, so it arrived as 'hello-ok' and fell
       // through to default. A client that dropped came back connected but
       // silently out of its voice channel, still showing "Reconnecting...".
-      if (state.voice.channelId) {
+      if (voiceHere()) {
         const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
         if (channel) joinVoice(channel);
       }
@@ -11099,8 +11780,7 @@ async function shareScreenNative() {
     return undefined;
   }
   state.nativeShare = { channelId };
-  await harmony.realtime
-    .request('voice:publishing', { channelId, kind: 's', on: true })
+  await voiceRt('voice:publishing', { channelId, kind: 's', on: true })
     .catch(() => { /* the roster is cosmetic; the stream is up */ });
   voiceCue('streamStart');
   applyVoiceButtons();
@@ -11112,8 +11792,7 @@ async function stopNativeShare({ alreadyStopped = false } = {}) {
   if (!share) return;
   state.nativeShare = null;
   if (!alreadyStopped) await harmony.screenShare.stop();
-  await harmony.realtime
-    .request('voice:publishing', { channelId: share.channelId, kind: 's', on: false })
+  await voiceRt('voice:publishing', { channelId: share.channelId, kind: 's', on: false })
     .catch(() => { /* leaving the channel says the same thing */ });
   voiceCue('streamStop');
   applyVoiceButtons();
@@ -11750,7 +12429,7 @@ async function startBroadcast() {
      * channel we are publishing, which is what makes everyone else subscribe.
      */
     if (state.share.target) {
-      await harmony.realtime.request('voice:publishing', {
+      await voiceRt('voice:publishing', {
         channelId: state.share.target.channelId, kind: 's', on: true,
       });
     } else {
@@ -12987,8 +13666,7 @@ async function teardown() {
   const channelShare = state.share.target;
   state.share.target = null;
   if (channelShare) {
-    await harmony.realtime
-      .request('voice:publishing', { channelId: channelShare.channelId, kind: 's', on: false })
+    await voiceRt('voice:publishing', { channelId: channelShare.channelId, kind: 's', on: false })
       .catch(() => { /* leaving the channel says the same thing */ });
   }
 
@@ -13113,6 +13791,16 @@ dmUi = createDmUi({
   applyStage,
   closeChat,
   showError: showChannelsError,
+  onUnread: () => renderServerRail(),
+  inServer,
+  // Told apart by address when two servers go by the same name.
+  serverName: (server) => {
+    const name = (url) => serverNames.get(serverKey(url)) || serverHost(url);
+    const mine = name(server);
+    return savedServers().filter((p) => name(p.url) === mine).length > 1 ? `${mine} (${serverHost(server)})` : mine;
+  },
+  listDocked: () => document.querySelector('.view[data-active]')?.id === 'view-dms',
+  showConversation: () => showDmView({ refresh: false }),
 });
 
 securityUi = createSecurityUi({
@@ -13195,7 +13883,7 @@ el.forgotPassword.addEventListener('click', async () => {
   if (!server) return showError(t('connect.enter_address'));
   showError('');
   // The server's own door password, if it has one, comes first as always.
-  await harmony.api.setPassword(el.password.value);
+  await harmony.api.setPassword(el.password.value, server);
   const result = await recoverAccount({
     ask, harmony, t, server, nickname: normalizeName(el.username.value),
   });
@@ -13435,8 +14123,9 @@ el.channelsMembers.addEventListener('click', async () => {
 
 el.channelsSignout.addEventListener('click', async () => {
   dmUi?.stop();
-  await leaveVoice({ silent: true }).catch(() => {});
-  await harmony.realtime.disconnect();
+  // Signing out of this server ends a call on it; a call on another carries on.
+  if (voiceHere()) await leaveVoice({ silent: true }).catch(() => {});
+  await harmony.realtime.disconnect(state.server);
   await harmony.api.logout(state.server).catch(() => {});
   state.auth.user = null;
   await adoptSession('');
@@ -13458,8 +14147,7 @@ el.channelsSignout.addEventListener('click', async () => {
  */
 let mutedByDeafen = false;
 
-const sendMuteState = () => harmony.realtime
-  .request('voice:mute', {
+const sendMuteState = () => voiceRt('voice:mute', {
     channelId: state.voice.channelId,
     muted: state.voice.muted,
     deafened: state.voice.deafened,
@@ -13555,6 +14243,8 @@ el.selfName.addEventListener('click', async () => {
 /** The Profile page's own controls. */
 el.profileChoose.addEventListener('click', () => el.avatarFile.click());
 el.profileRemove.addEventListener('click', () => clearOwnAvatar());
+el.profileBannerDim.addEventListener('input', () => setOwnDim(Number(el.profileBannerDim.value)));
+el.profileBannerDimReset.addEventListener('click', () => setOwnDim(null, { now: true }));
 el.profileBannerChoose.addEventListener('click', () => el.profileBannerFile.click());
 el.profileBannerRemove.addEventListener('click', () => clearOwnBanner());
 el.profileBannerFile.addEventListener('change', () => {
@@ -13569,6 +14259,9 @@ el.profileSoundFile.addEventListener('change', () => {
   const file = el.profileSoundFile.files?.[0];
   el.profileSoundFile.value = '';
   if (file) setOwnJoinSound(file);
+});
+el.autoSignIn.addEventListener('change', async () => {
+  await harmony.settings.set({ autoSignIn: el.autoSignIn.checked });
 });
 el.pauseHiddenCameras.addEventListener('change', async () => {
   await harmony.settings.set({ pauseHiddenCameras: el.pauseHiddenCameras.checked });
@@ -13753,6 +14446,7 @@ el.voiceConfig.addEventListener('click', () => {
   el.mentionSound.checked = state.settings?.mentionSound !== false;
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
   el.pauseHiddenCameras.checked = state.settings?.pauseHiddenCameras !== false;
+  el.autoSignIn.checked = state.settings?.autoSignIn !== false;
   el.pictureInPicture.checked = pipEnabled();
   el.pipPopOut.checked = state.settings?.pipPopOut !== false;
   renderPttSettings();
@@ -14194,7 +14888,7 @@ function chatAcceptsDrop() {
 /** Where a dropped file would go: the open channel's chat, or the open private conversation. */
 function dropTarget() {
   if (chatAcceptsDrop()) return 'chat';
-  if (document.getElementById('view-channels')?.hasAttribute('data-active') && dmUi?.acceptsFiles()) return 'dm';
+  if (document.getElementById('view-dms')?.hasAttribute('data-active') && dmUi?.acceptsFiles()) return 'dm';
   return null;
 }
 
@@ -14571,7 +15265,7 @@ el.serverUrl.addEventListener('input', () => {
 });
 // Typing a new password is a reason to retry the list that just failed.
 el.password.addEventListener('change', async () => {
-  await harmony.api.setPassword(el.password.value);
+  await harmony.api.setPassword(el.password.value, el.serverUrl.value.trim());
   refreshLiveList();
 });
 

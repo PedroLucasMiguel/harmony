@@ -290,6 +290,29 @@ async function run() {
   check('Ana sees a banner behind Pedro in the member list', seen?.has && seen.banner?.loaded, JSON.stringify(seen?.banner));
   check('the banner is dimmed', /brightness\(0\.5\)/.test(seen?.banner?.filter ?? '') && seen.banner.opacity < 1, JSON.stringify(seen?.banner));
   check('and fades out toward the left', /linear-gradient\(to right, rgba?\(0, 0, 0, 0\)/.test(seen?.banner?.mask ?? ''), seen?.banner?.mask);
+
+  // --- dimming: Pedro moves the slider, and Ana's list follows while he does ---------------------------------------
+  const moveDim = (value) => pedro.evaluate(`const s = document.getElementById('profile-banner-dim'); s.focus(); s.value = '${value}';
+    s.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
+  const dimOf = (r) => Number(/brightness\(([\d.]+)\)/.exec(r?.banner?.filter ?? '')?.[1]);
+  await open();
+  check('the slider starts at the default', await pedro.evaluate("return document.getElementById('profile-banner-dim').value") === '50');
+  await moveDim(10);
+  const dimVar = await pedro.evaluate("return document.getElementById('profile-banner-preview').style.getPropertyValue('--banner-dim')");
+  check('his own preview follows the slider at once', dimVar === '10', dimVar);
+  await sleep(700);
+  seen = await rowOf(ana, '#member-items .member-row');
+  check('Ana\'s list follows without a reload: lighter', Math.abs(dimOf(seen) - 0.9) < 0.01, JSON.stringify(seen?.banner));
+  // A quick drag: only where the hand stops counts, and nothing jumps back.
+  for (const v of [30, 70, 90, 60, 30]) { await moveDim(v); await sleep(30); }
+  await sleep(900);
+  seen = await rowOf(ana, '#member-items .member-row');
+  check('after a quick drag Ana has the value the hand stopped on', Math.abs(dimOf(seen) - 0.7) < 0.01, JSON.stringify(seen?.banner));
+  check('and so does his slider', await pedro.evaluate("return document.getElementById('profile-banner-dim').value") === '30');
+  await pedro.evaluate("document.getElementById('profile-banner-dim').blur(); document.getElementById('profile-banner-dim-reset').click(); return true;");
+  await sleep(900);
+  seen = await rowOf(ana, '#member-items .member-row');
+  check('back to the default puts it back for Ana', Math.abs(dimOf(seen) - 0.5) < 0.01 && await pedro.evaluate("return document.getElementById('profile-banner-dim').value") === '50', JSON.stringify(seen?.banner));
   const sent = await pedro.evaluate(`
     const me = (await harmony.api.roster(${JSON.stringify(BASE)})); const u = (me.data ?? me).users.find((x) => x.nickname === 'pedro');
     const res = await fetch('harmony://app/media/' + u.bannerHash); const buf = new Uint8Array(await res.arrayBuffer());
