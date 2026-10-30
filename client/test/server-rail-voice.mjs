@@ -134,6 +134,13 @@ const roster = async (token) => {
   return body.rosters?.[room.id] ?? [];
 };
 
+/** The member column as drawn: who is under "online" and who under "offline". */
+const members = (page) => page.evaluate(`
+  const out = { online: [], offline: [], count: document.getElementById('member-count')?.textContent };
+  for (const row of document.querySelectorAll('#member-items .member-row')) (row.hasAttribute('data-off') ? out.offline : out.online).push(row.querySelector('.member-name').textContent);
+  out.online.sort(); out.offline.sort();
+  return out;`);
+
 const bar = (page) => page.evaluate(`
   const b = document.getElementById('call-bar');
   return { hidden: b.hidden, text: document.getElementById('call-bar-return').textContent, state: b.dataset.state };`);
@@ -189,6 +196,9 @@ async function run() {
   check('and the call bar says where it is', (await bar(page)).hidden === false && (await bar(page)).text.includes('voice'), JSON.stringify(await bar(page)));
   await signIn(page, BASE_B, 'pedro');
 
+  await sleep(800);
+  const onB = await members(page);
+  check('server B\'s members: the one signed in is online', onB.online.includes('pedro'), JSON.stringify(onB));
   check('with server B open, the call bar is there', (await bar(page)).hidden === false, JSON.stringify(await bar(page)));
   check('and says the call is connected', (await bar(page)).state === 'connected', JSON.stringify(await bar(page)));
   check('the voice panel of A is not drawn over B', await page.evaluate("return document.getElementById('voice-active').hidden"));
@@ -222,6 +232,9 @@ async function run() {
   await waitFor(page, "!document.getElementById('voice-active').hidden && document.querySelectorAll('#voice-roster li').length >= 2",
     { label: 'back on server A with the call', timeoutMs: 30_000 });
   check('clicking the bar comes back to A with the call\'s panel', true);
+  await sleep(1000);
+  const backOnA = await members(page);
+  check('back on A, the people in the call are online in the member list, not offline', backOnA.online.includes('ana') && backOnA.online.includes('pedro') && !backOnA.offline.includes('pedro'), JSON.stringify(backOnA));
   check('the call bar is put away there', (await bar(page)).hidden === true);
   check('and the call never dropped', (await roster(tokenAna)).some((m) => m.nickname === 'pedro'));
 

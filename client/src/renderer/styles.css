@@ -2462,6 +2462,23 @@ button.danger {
   box-shadow: inset 3px 0 0 var(--warn);
   background: color-mix(in srgb, var(--warn) 7%, transparent);
 }
+/*
+ * A line that continues the one above has no picture, only an empty column where
+ * it would be, and a bar across that column says nothing. The light starts where
+ * the words do: on the text's own box, reaching out a little to either side and
+ * above and below so it fills the row as the other does.
+ */
+.chat-msg[data-grouped][data-mentions-me] {
+  box-shadow: none;
+  background: none;
+}
+.chat-msg[data-grouped][data-mentions-me] .msg-main {
+  box-shadow: inset 3px 0 0 var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  border-radius: 4px;
+  margin: -0.15rem -0.4rem -0.15rem -0.6rem;
+  padding: 0.15rem 0.4rem 0.15rem 0.6rem;
+}
 
 /* How long a voice channel has had somebody in it. */
 .channel-list li .voice-timer {
@@ -8293,6 +8310,15 @@ body.pip-window {
   box-sizing: content-box;
   border-radius: 50%;
   overflow: hidden;
+}
+/*
+ * The initials of somebody with no picture sit on a tint of the page, so what is
+ * behind them shows through: on the card, the banner. Over a banner the circle is
+ * the same tint on the card's own colour instead.
+ */
+.avatar.profile-card-avatar,
+.has-banner .avatar {
+  background: linear-gradient(rgb(var(--tint-rgb) / 0.12) 0 0), var(--surface);
 }
 .avatar.profile-card-avatar img {
   width: 100%;

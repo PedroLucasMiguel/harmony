@@ -260,6 +260,9 @@ async function run() {
       banner: Boolean(c.querySelector('.profile-card-banner')),
       avatar: Boolean(c.querySelector('.profile-card-avatar')),
       round: (() => { const a = getComputedStyle(c.querySelector('.profile-card-avatar')); return a.borderRadius === '50%' && a.overflow === 'hidden'; })(),
+      initials: !c.querySelector('.profile-card-avatar img'),
+      // The circle of somebody with no picture must not let the banner behind it show through.
+      avatarFill: getComputedStyle(c.querySelector('.profile-card-avatar')).backgroundColor,
       buttons: [...c.querySelectorAll('.profile-card-actions button')].map((b) => b.getAttribute('aria-label')),
       inside: (() => { const r = c.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })(),
     };
@@ -267,6 +270,8 @@ async function run() {
   await shot(owner, 'card');
   check('clicking a member opens a card with their name, picture, banner and both roles',
     card.name === 'bob' && card.banner && card.avatar && card.round && card.chips.includes('Helper') && card.chips.includes('VIP'), JSON.stringify(card));
+  check('a face that is only initials is solid, not see-through onto the banner',
+    card.initials && /^rgb\(/.test(card.avatarFill) || /, 1\)$/.test(card.avatarFill), JSON.stringify({ initials: card.initials, fill: card.avatarFill }));
   check('with a shortcut to manage roles, and the card stays inside the window', card.buttons.some((b) => /manage/i.test(b)) && card.inside, JSON.stringify(card.buttons));
 
   // Roles taken off and put back from the card itself.

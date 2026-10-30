@@ -174,6 +174,18 @@ async function run() {
   check('a grouped line has no room above or below its words but the row\'s own padding',
     heights.length >= 3 && heights.every((h) => h.row - h.words <= 8), JSON.stringify(heights));
 
+  // A lit line that continues the one above is lit from where its words start, not across the empty column before them.
+  const litGrouped = await cdp.evaluate(`
+    const m = [...document.querySelectorAll('.chat-msg[data-grouped][data-mentions-me]')][0];
+    const main = m.querySelector('.msg-main').getBoundingClientRect(); const text = m.querySelector('.text').getBoundingClientRect(); const row = m.getBoundingClientRect();
+    return { rowShadow: getComputedStyle(m).boxShadow, mainShadow: getComputedStyle(m.querySelector('.msg-main')).boxShadow,
+      before: Math.round(text.left - main.left), fromRow: Math.round(main.left - row.left), rowH: Math.round(row.height), mainH: Math.round(main.height) };`);
+  check('a lit grouped line starts its light at its words, a little before them',
+    litGrouped.rowShadow === 'none' && litGrouped.mainShadow !== 'none' && litGrouped.before >= 6 && litGrouped.before <= 14 && litGrouped.fromRow > 20 && litGrouped.mainH >= litGrouped.rowH - 2, JSON.stringify(litGrouped));
+  await cdp.send('Page.enable');
+  const lit = await cdp.send('Page.captureScreenshot', { format: 'png' });
+  (await import('node:fs')).writeFileSync(join(tmpdir(), 'harmony-lit-grouped.png'), Buffer.from(lit.data, 'base64'));
+
   const press = (needle) => cdp.evaluate(`
     const row = [...document.querySelectorAll('.chat-msg')].find((m) => m.querySelector('.text')?.textContent.includes(${JSON.stringify(needle)}));
     row.querySelector('.mention').click(); return true;`);

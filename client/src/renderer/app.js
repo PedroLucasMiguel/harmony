@@ -3516,6 +3516,9 @@ async function enterChannels() {
     // A client that just connected has missed every roster broadcast, so the
     // whole picture arrives once with the hello.
     state.channels.rosters = hello.rosters ?? {};
+    // Who is online too: this server's, not the one that was open before it. A fresh
+    // connection also says so in its realtime:up; one that was kept (a call's) does not.
+    state.channels.online = new Set(hello.online ?? []);
     setOccupied(hello.occupiedFor);
     setReads(hello.unread);
   } catch (err) {
@@ -3537,6 +3540,8 @@ async function enterChannels() {
   // kept, and it is drawn again.
   if (voiceHere()) await reattachVoice();
   renderChannels();
+  // The column was drawn with the people known before the server's own list of who is on.
+  renderMembers();
   // After the accounts are known (names and faces) and the socket is up, so a
   // push that arrives while the keys are being fetched is not missed.
   dmUi?.start().catch((err) => console.warn('[dm] could not start:', err));
@@ -12145,6 +12150,8 @@ function onRealtimeEvent(msg) {
       if (msg.occupiedFor) setOccupied(msg.occupiedFor);
       if (msg.unread) setReads(msg.unread);
       renderChannels();
+      // Who is online came with it too: the column is drawn from it.
+      renderMembers();
 
       // A reconnect means the server has forgotten our presence, because
       // presence IS the socket. Rejoin rather than appearing to be in a channel
