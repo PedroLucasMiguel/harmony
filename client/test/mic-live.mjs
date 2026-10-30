@@ -211,6 +211,8 @@ async function run() {
   const quiet = await heard();
   await pedro.evaluate(`${setInput('mic-gain', '200')} return true;`);
   const loud = await heard();
+  check('and the call applies it in the worker, not through an audio thread',
+    (await pedro.evaluate('return window.__harmony().voice.micGate')) === 'worker');
   check('turning the input volume from 25% to 200% is heard without leaving', loud > quiet * 1.4, `${quiet.toFixed(4)} -> ${loud.toFixed(4)}`);
   await pedro.evaluate(`${setInput('mic-gain', '100')} return true;`);
 

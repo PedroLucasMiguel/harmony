@@ -8777,6 +8777,9 @@ function fitsUploadLimit(file) {
   return false;
 }
 
+/** What a server from before upload sessions takes in one request (server/src/chat.js MAX_UPLOAD_BYTES). */
+const ONE_REQUEST_BYTES = 25 * 1024 * 1024;
+
 /** The upload in progress, if there is one: { cancelled, id }. One at a time. */
 let activeUpload = null;
 
@@ -8815,6 +8818,11 @@ async function uploadAttachment(file) {
       session = await harmony.media.uploadOpen(state.server, file.size, type);
     } catch (err) {
       if (err.status !== 404) throw err;
+      // A server that cannot take a file in pieces takes one request of at most
+      // 25 MB; sending more is only to be refused after the whole upload.
+      if (file.size > ONE_REQUEST_BYTES) {
+        throw new Error(t('upload.server_needs_update', { name: file.name, limit: formatBytes(ONE_REQUEST_BYTES) }));
+      }
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await harmony.media.upload(state.server, bytes, type);
       showUploadProgress(file.size, file.size);

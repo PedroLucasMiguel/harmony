@@ -13,7 +13,10 @@
 
 import { harmony } from './bridge.js';
 import { publish, watch, applySenderSettings, setSenderPriority, describePc } from './webrtc.js';
-import { createSink, createMeter, createMicChain, createMicValve, MAX_GAIN, audioContextStats } from './gain.js';
+import {
+  createSink, createMeter, createMicChain, createMicValve, workerMicChain, canProcessInWorker, MAX_GAIN,
+  audioContextStats,
+} from './gain.js';
 
 /**
  * Microphone constraints that do not depend on a setting.
@@ -135,6 +138,8 @@ export class VoiceSession {
   #valveTrack = null;
   /** The valve could not run here, so the gate lives in the chain. */
   #valveFailed = false;
+  /** The worker that applies volume and gate to the frames could not run here (or stopped). */
+  #workerFailed = false;
   #cam = null;
   #camStream = null;
   /** True while a camera's publish is in flight, so a second start is refused. */
@@ -644,7 +649,8 @@ export class VoiceSession {
       muted: this.muted,
       deafened: this.deafened,
       micLive: this.micLive,
-      // Where the noise gate runs: 'worklet' is the audio thread, 'polled' a timer.
+      // Where volume and gate run: 'worker' on the frames of the track, 'worklet' on an audio thread,
+      // 'polled' a timer, 'valve' a switch on the track.
       micGate: this.#micGateKind,
       camerasPaused: this.#camerasPaused,
       events: this.#events.map((e) => ({ ago: Date.now() - e.at, what: e.what })),
@@ -794,6 +800,19 @@ export class VoiceSession {
     this.#micChain?.close();
     this.#micChain = null;
     this.#closeValve();
+    if (this.#wantsWorker()) {
+      try {
+        this.#micChain = await workerMicChain(stream, {
+          gain: this.micGain,
+          threshold: this.micThreshold,
+          onBroken: () => this.#workerStopped(),
+        });
+        return new MediaStream([this.#micChain.track]);
+      } catch (err) {
+        this.#workerFailed = true;
+        this.note(`mic: volume and gate could not run in a worker (${err?.message ?? err})`);
+      }
+    }
     // Volume at 100% is no volume at all, and then the gate needs nothing in
     // the path: the microphone goes out untouched and the gate switches it.
     if (!this.#wantsChain()) {
@@ -812,8 +831,27 @@ export class VoiceSession {
   }
 
   /**
+   * Whether volume and gate are applied to the frames of the track in a worker:
+   * the way that neither depends on an audio thread being on time (the chain,
+   * where a busy machine leaves gaps) nor cuts the sound where it stands (the
+   * valve, where every opening and closing of the gate is a click).
+   */
+  #wantsWorker() {
+    return !this.#workerFailed && canProcessInWorker() && (this.micGain !== 1 || this.micThreshold > 0);
+  }
+
+  /** The worker died in the middle of a call: the sound is put back through what the engine can do. */
+  #workerStopped() {
+    this.#workerFailed = true;
+    this.note('mic: the volume and gate worker stopped; rewiring');
+    this.#micChain = null;
+    void this.#serial(() => this.#rewireMic({ force: true }));
+  }
+
+  /**
    * Whether what is sent has to pass through Web Audio: only an input volume
-   * other than 100% needs it, or a gate that could not be run on the side.
+   * other than 100% needs it, or a gate that could not be run on the side --
+   * and neither once the worker can do it.
    * Everything that goes through that chain goes through an audio thread, and
    * on a machine that is busy a thread like that leaves gaps in the sound.
    */
@@ -860,6 +898,8 @@ export class VoiceSession {
   /** Whether volume and gate are wired the way the settings now ask. */
   #micWiringStale() {
     if (!this.#mic) return false;
+    if (this.#wantsWorker()) return this.#micChain?.kind !== 'worker';
+    if (this.#micChain?.kind === 'worker') return true;
     const chain = this.#wantsChain();
     if (chain !== Boolean(this.#micChain)) return true;
     return !chain && (this.micThreshold > 0) !== Boolean(this.#valve);
@@ -870,8 +910,8 @@ export class VoiceSession {
    * off, changes what sits between the microphone and the publish. The old
    * track is replaced while it is still the one being sent, as for a device change.
    */
-  async #rewireMic() {
-    if (!this.#micWiringStale() || !this.#micStream) return;
+  async #rewireMic({ force = false } = {}) {
+    if (!(force || this.#micWiringStale()) || !this.#micStream) return;
     const sender = this.#mic.pc.getSenders().find((s) => s.track?.kind === 'audio');
     if (!sender) return;
     const processed = await this.#processed(this.#micStream);

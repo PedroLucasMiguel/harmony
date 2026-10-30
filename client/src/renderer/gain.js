@@ -302,6 +302,101 @@ function workletMicChain(stream, { gain = 1, threshold = 0 }, capture) {
   };
 }
 
+/** Whether the engine can process the frames of a track in a worker (Chromium's insertable streams for audio). */
+export const canProcessInWorker = () => typeof MediaStreamTrackProcessor === 'function'
+  && typeof MediaStreamTrackGenerator === 'function' && typeof Worker === 'function';
+
+/** How long the worker has to show that sound is passing through it before it is given up on. */
+const WORKER_PROOF_MS = 3000;
+
+/**
+ * Input volume and the gate applied to the frames of the track itself, in a
+ * worker -- see gate-worker.js for why that, and not the chain above or a switch
+ * on the published track, is what a busy machine does not turn into crackle.
+ *
+ * Same shape as the chain, so the caller does not care which it holds. It
+ * resolves once sound has actually come out of the worker, and rejects if it
+ * cannot run or nothing comes out: publishing a track that never carries
+ * anything would be worse than not having a volume, and the caller falls back.
+ *
+ * @param {object} options
+ * @param {() => void} [options.onBroken]  the worker stopped after it had started
+ * @returns {Promise<object>}
+ */
+export function workerMicChain(stream, { gain = 1, threshold = 0, onBroken } = {}) {
+  const input = stream.getAudioTracks()[0];
+  if (!input || !canProcessInWorker()) return Promise.reject(new Error('no audio frames to process'));
+
+  return new Promise((resolve, reject) => {
+    const worker = new Worker('gate-worker.js');
+    let generator;
+    let level = 0;
+    let open = threshold <= 0;
+    let started = false;
+    let timer = null;
+
+    const chain = {
+      kind: 'worker',
+      get track() {
+        return generator;
+      },
+      setGain(value) {
+        worker.postMessage({ gain: Math.max(0, Math.min(MAX_GAIN, Number(value) || 0)) });
+      },
+      setThreshold(value) {
+        worker.postMessage({ threshold: Math.max(0, Number(value) || 0) });
+      },
+      get level() {
+        return level;
+      },
+      get open() {
+        return open;
+      },
+      close() {
+        clearTimeout(timer);
+        worker.onmessage = null;
+        worker.onerror = null;
+        worker.terminate();
+        generator?.stop();
+      },
+    };
+
+    const fail = (reason) => {
+      chain.close();
+      if (started) onBroken?.(reason);
+      else reject(new Error(String(reason?.message ?? reason)));
+    };
+
+    worker.onerror = (event) => fail(event.message || 'the gate worker failed');
+    worker.onmessage = (event) => {
+      if (event.data.error) {
+        fail(event.data.error);
+        return;
+      }
+      level = event.data.level;
+      open = event.data.open;
+      if (!started) {
+        started = true;
+        clearTimeout(timer);
+        resolve(chain);
+      }
+    };
+    timer = setTimeout(() => fail('no sound came out of the gate worker'), WORKER_PROOF_MS);
+
+    try {
+      const processor = new MediaStreamTrackProcessor({ track: input });
+      generator = new MediaStreamTrackGenerator({ kind: 'audio' });
+      worker.postMessage({ threshold: Math.max(0, threshold), gain: Math.max(0, Math.min(MAX_GAIN, gain)) });
+      worker.postMessage(
+        { readable: processor.readable, writable: generator.writable },
+        [processor.readable, generator.writable],
+      );
+    } catch (err) {
+      fail(err);
+    }
+  });
+}
+
 /**
  * The gate as a valve on the track that is published, not a stage in front of it.
  *

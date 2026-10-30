@@ -2072,6 +2072,18 @@ const sessionSweeper = setInterval(
 );
 sessionSweeper.unref();
 
+/*
+ * A body over a route's limit is told in JSON, as every other refusal is, not
+ * with Express's page of HTML and a stack trace in the server's log.
+ */
+app.use((err, _req, res, next) => {
+  if (res.headersSent || err?.type !== 'entity.too.large') return next(err);
+  return res.status(413).json({
+    error: 'payload_too_large',
+    message: `That request is bigger than this server takes in one go (${formatBytes(err.limit)}).`,
+  });
+});
+
 let realtime = null;
 
 const server = app.listen(config.port, config.host, () => {
