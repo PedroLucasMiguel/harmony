@@ -19,6 +19,10 @@
 // The page sends {readable, writable} once (the two ends of the stream, see
 // workerMicChain in gain.js), then {threshold} and {gain} as the sliders move.
 // It is told {level, open} about every 25 ms of sound, for the meter.
+//
+// In front of the gate there may be a noise suppressor (denoise.js: RNNoise): {denoise: true}
+// switches it on and off, and {ai: 'ready'|'failed'|'unsupported'} says what became of it. It
+// is only loaded when asked for, and only runs at 48 kHz, which is what a microphone gives.
 
 const WINDOW = 1024;
 const HOLD_SECONDS = 0.3;
@@ -32,6 +36,29 @@ const REPORT_SECONDS = 0.025;
 
 let threshold = 0;
 let volume = 1;
+let wantDenoise = false;
+/** @type {Promise<object|null>|null} */
+let denoiserLoading = null;
+let denoiser = null;
+let warnedRate = false;
+
+/** Load the suppressor once, the first time it is wanted. Resolves to null when it cannot run. */
+function loadDenoiser() {
+  if (!denoiserLoading) {
+    denoiserLoading = import('./denoise.js')
+      .then(async (mod) => {
+        const rnnoise = await mod.loadRnnoise();
+        denoiser = { mod, rnnoise, instance: null, rate: mod.RATE };
+        self.postMessage({ ai: 'ready' });
+        return denoiser;
+      })
+      .catch((err) => {
+        self.postMessage({ ai: 'failed', reason: String(err?.message ?? err) });
+        return null;
+      });
+  }
+  return denoiserLoading;
+}
 
 self.onmessage = (event) => {
   const message = event.data;
@@ -43,6 +70,10 @@ self.onmessage = (event) => {
   }
   if ('threshold' in message) threshold = Math.max(0, Number(message.threshold) || 0);
   if ('gain' in message) volume = Math.max(0, Number(message.gain) || 0);
+  if ('denoise' in message) {
+    wantDenoise = Boolean(message.denoise);
+    if (wantDenoise) loadDenoiser();
+  }
 };
 
 async function run(readable, writable) {
@@ -72,6 +103,21 @@ async function run(readable, writable) {
     const samples = new Float32Array(frames * channels);
     for (let c = 0; c < channels; c += 1) {
       data.copyTo(samples.subarray(c * frames, (c + 1) * frames), { planeIndex: c, format: 'f32-planar' });
+    }
+
+    // The noise suppressor first: what the gate and the meter hear is what is left.
+    if (wantDenoise && denoiser && rate === denoiser.rate) {
+      denoiser.instance ??= denoiser.mod.createDenoiser(denoiser.rnnoise);
+      const mono = new Float32Array(frames);
+      for (let c = 0; c < channels; c += 1) {
+        for (let i = 0; i < frames; i += 1) mono[i] += samples[c * frames + i] / channels;
+      }
+      const clean = denoiser.instance.process(mono);
+      for (let c = 0; c < channels; c += 1) samples.set(clean, c * frames);
+    } else if (wantDenoise && denoiser && !warnedRate) {
+      // A microphone that is not at 48 kHz goes through as it is, and the page is told why.
+      warnedRate = true;
+      self.postMessage({ ai: 'unsupported', rate });
     }
 
     const openStep = 1 - Math.exp(-1 / (OPEN_TAU * rate));

@@ -1950,6 +1950,18 @@
                   </span>
                   <input type="checkbox" class="switch" role="switch" id="mic-noise-suppression" />
                 </label>
+
+                <label class="setting-toggle" id="mic-ai-row">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.ai_suppression">Strong noise suppression (AI)</span>
+                    <small data-i18n="settings.voice.ai_suppression_hint">A small neural network, running on this computer, that tells your voice
+                      from the rest of the sound: keyboard and mouse clicks, fans, the room. Better than the
+                      option above at keystrokes, and it uses a little more of the processor. Replaces the
+                      option above while it is on.</small>
+                    <small class="setting-status" id="mic-ai-status" hidden></small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="mic-ai-suppression" />
+                </label>
               </div>
 
               <!--

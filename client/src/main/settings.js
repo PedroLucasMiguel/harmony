@@ -100,6 +100,8 @@ const DEFAULTS = {
    */
   micEchoCancellation: false,
   micNoiseSuppression: false,
+  // Strong noise suppression (renderer/denoise.js): an option beside the browser's, which stays the default.
+  micAiSuppression: false,
   // The join / leave / went-live tones. On, because the whole point of
   // them is to tell you about something you were not looking at.
   voiceSounds: true,

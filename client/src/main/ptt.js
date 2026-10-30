@@ -11,6 +11,8 @@
 //   * and answering only for the one bound key. Nothing else it sees is kept,
 //     logged or sent anywhere, and nothing is passed on but "held" or "not".
 //
+// The binding may be a button of the mouse as well ("Mouse4", the one under the thumb).
+//
 // The hook only LISTENS: the key still reaches whatever has focus, so a bare V
 // bound here still types a V. That is why, unlike a global shortcut, it needs no
 // modifier.
@@ -21,29 +23,20 @@
 // renderer falls back to the key while Harmony has focus.
 
 const { execFile } = require('node:child_process');
-const { app, shell, systemPreferences } = require('electron');
+const { app, shell } = require('electron');
 
 const { parse, createMatcher } = require('./ptt-match');
+const keyHook = require('./key-hook');
 
 const IS_MAC = process.platform === 'darwin';
 const BUNDLE_ID = 'com.harmony.client';
 const SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
 
 let matcher = null;
-let hook = null;
-let listeners = null;
-
-function load() {
-  try {
-    return require('uiohook-napi');
-  } catch (err) {
-    console.warn('[ptt] key hook not available:', err.message);
-    return null;
-  }
-}
+let sub = null;
 
 /**
- * Start watching for one binding.
+ * Start watching for one binding: a key, or a button of the mouse.
  *
  * @param {string} accelerator
  * @param {(held: boolean) => void} onChange
@@ -51,34 +44,23 @@ function load() {
  */
 function start(accelerator, onChange) {
   stop();
-  // Tests, and anybody who wants no keyboard hook at all.
-  if (process.env.HARMONY_NO_KEY_HOOK) return { ok: false, error: 'disabled' };
-
-  const mod = load();
-  if (!mod) return { ok: false, error: 'unavailable' };
-  const binding = parse(accelerator, mod.UiohookKey);
+  const { keys, error } = keyHook.keycodes();
+  if (!keys) return { ok: false, error };
+  const binding = parse(accelerator, keys);
   if (!binding) return { ok: false, error: 'invalid' };
 
-  // True prompts, which is right: somebody has just switched push to talk on.
-  if (IS_MAC && !systemPreferences.isTrustedAccessibilityClient(true)) {
-    return { ok: false, error: 'permission' };
-  }
-
   matcher = createMatcher(binding, onChange);
-  listeners = {
+  const heard = keyHook.subscribe({
     keydown: (e) => matcher?.keydown(e),
     keyup: (e) => matcher?.keyup(e),
-  };
-  hook = mod.uIOhook;
-  hook.on('keydown', listeners.keydown);
-  hook.on('keyup', listeners.keyup);
-  try {
-    hook.start();
-  } catch (err) {
-    console.warn('[ptt] could not start the key hook:', err.message);
-    stop();
-    return { ok: false, error: 'unavailable' };
+    mousedown: (e) => matcher?.mousedown(e),
+    mouseup: (e) => matcher?.mouseup(e),
+  });
+  if (!heard.ok) {
+    matcher = null;
+    return { ok: false, error: heard.error };
   }
+  sub = heard;
   return { ok: true };
 }
 
@@ -86,17 +68,8 @@ function start(accelerator, onChange) {
 function stop() {
   matcher?.reset();
   matcher = null;
-  if (hook) {
-    if (listeners) {
-      hook.removeListener('keydown', listeners.keydown);
-      hook.removeListener('keyup', listeners.keyup);
-    }
-    try {
-      hook.stop();
-    } catch { /* it never started */ }
-  }
-  hook = null;
-  listeners = null;
+  sub?.off();
+  sub = null;
 }
 
 function openSettings() {

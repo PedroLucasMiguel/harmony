@@ -526,6 +526,7 @@ export class VoiceSession {
         channel: this.channelId, mid: this.mid, muted: this.muted, deafened: this.deafened,
         transmitting: this.transmitting, camerasPaused: this.#camerasPaused,
         micGate: this.#micGateKind,
+        ai: this.aiState,
         micLevel: Number((this.#micMeter?.read().level ?? 0).toFixed(4)),
         gate: this.#micChain || this.#valve ? (this.micOpen ? 'open' : 'closed') : 'none',
       },
@@ -694,6 +695,16 @@ export class VoiceSession {
   /** Echo cancellation and noise suppression, both off until asked for. */
   micEchoCancellation = false;
   micNoiseSuppression = false;
+  /**
+   * Strong noise suppression (denoise.js), done on the frames of the microphone in a worker.
+   * An option on top of the browser's, which stays what it is: when this is on the browser's is
+   * not asked for, since two of them in a row only mangle the voice.
+   */
+  micAi = false;
+  /** 'off', 'loading', 'ready', or why it is not running: 'failed', 'unsupported', 'no-worker'. */
+  aiState = 'off';
+  /** Told when `aiState` changes. */
+  onAiState = null;
 
   #micConstraints(deviceId) {
     return {
@@ -714,16 +725,29 @@ export class VoiceSession {
    * @returns {Promise<boolean>} false if the live microphone could not be
    *   reopened, in which case the old one is still published.
    */
-  async setMicProcessing({ echoCancellation, noiseSuppression }) {
-    const same = Boolean(echoCancellation) === this.micEchoCancellation
-      && Boolean(noiseSuppression) === this.micNoiseSuppression;
+  async setMicProcessing({ echoCancellation, noiseSuppression, aiSuppression = false }) {
+    // The browser's is not asked for while the strong one is on.
+    const browserNoise = Boolean(noiseSuppression) && !aiSuppression;
+    const same = Boolean(echoCancellation) === this.micEchoCancellation && browserNoise === this.micNoiseSuppression;
+    const aiChanged = Boolean(aiSuppression) !== this.micAi;
     this.micEchoCancellation = Boolean(echoCancellation);
-    this.micNoiseSuppression = Boolean(noiseSuppression);
-    if (same) return true;
+    this.micNoiseSuppression = browserNoise;
+    this.micAi = Boolean(aiSuppression);
+    this.#setAiState(this.micAi ? (this.#workerFailed || !canProcessInWorker() ? 'no-worker' : 'loading') : 'off');
+    if (this.#micChain?.kind === 'worker') this.#micChain.setDenoise(this.micAi);
     // Queued: the device is read when its turn comes, not now.
-    return this.#serial(() => (this.#mic
-      ? this.#switchMic(this.micDeviceId, { releaseFirst: true })
-      : true));
+    return this.#serial(async () => {
+      if (!this.#mic) return true;
+      if (!same) return this.#switchMic(this.micDeviceId, { releaseFirst: true });
+      if (aiChanged && this.#micWiringStale()) await this.#rewireMic();
+      return true;
+    });
+  }
+
+  #setAiState(state) {
+    if (this.aiState === state) return;
+    this.aiState = state;
+    this.onAiState?.(state);
   }
 
   startMic(publishUrl, deviceId) {
@@ -806,11 +830,20 @@ export class VoiceSession {
         this.#micChain = await workerMicChain(stream, {
           gain: this.micGain,
           threshold: this.micThreshold,
+          denoise: this.micAi,
           onBroken: () => this.#workerStopped(),
+          onAi: (state, detail) => {
+            if (!this.micAi) return;
+            if (state === 'failed') this.note(`mic: strong noise suppression could not load (${detail?.reason ?? 'unknown'})`);
+            if (state === 'unsupported') this.note(`mic: strong noise suppression needs a 48 kHz microphone (this one is ${detail?.rate} Hz)`);
+            this.#setAiState(state);
+          },
         });
+        if (this.micAi && this.aiState === 'off') this.#setAiState('loading');
         return new MediaStream([this.#micChain.track]);
       } catch (err) {
         this.#workerFailed = true;
+        if (this.micAi) this.#setAiState('no-worker');
         this.note(`mic: volume and gate could not run in a worker (${err?.message ?? err})`);
       }
     }
@@ -838,12 +871,13 @@ export class VoiceSession {
    * valve, where every opening and closing of the gate is a click).
    */
   #wantsWorker() {
-    return !this.#workerFailed && canProcessInWorker() && (this.micGain !== 1 || this.micThreshold > 0);
+    return !this.#workerFailed && canProcessInWorker() && (this.micGain !== 1 || this.micThreshold > 0 || this.micAi);
   }
 
   /** The worker died in the middle of a call: the sound is put back through what the engine can do. */
   #workerStopped() {
     this.#workerFailed = true;
+    if (this.micAi) this.#setAiState('no-worker');
     this.note('mic: the volume and gate worker stopped; rewiring');
     this.#micChain = null;
     void this.#serial(() => this.#rewireMic({ force: true }));

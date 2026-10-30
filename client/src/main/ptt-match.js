@@ -14,8 +14,21 @@ const NAMED = {
   '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash',
   ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period', '/': 'Slash', '`': 'Backquote',
   numadd: 'NumpadAdd', numsub: 'NumpadSubtract', nummult: 'NumpadMultiply',
-  numdiv: 'NumpadDivide', numdec: 'NumpadDecimal',
+  numdiv: 'NumpadDivide', numdec: 'NumpadDecimal', numenter: 'NumpadEnter', Numlock: 'NumLock',
 };
+
+/**
+ * What a numpad key says when Num Lock is off: the same key, reported as the
+ * navigation key printed on it. A binding on "Num 7" is the one key either way.
+ */
+const NUMLOCK_OFF = {
+  Numpad0: 'NumpadInsert', Numpad1: 'NumpadEnd', Numpad2: 'NumpadArrowDown', Numpad3: 'NumpadPageDown',
+  Numpad4: 'NumpadArrowLeft', Numpad6: 'NumpadArrowRight', Numpad7: 'NumpadHome',
+  Numpad8: 'NumpadArrowUp', Numpad9: 'NumpadPageUp', NumpadDecimal: 'NumpadDelete',
+};
+
+/** The extra buttons of a mouse, as the recorder writes them: "Mouse4" is the fourth (back), "Mouse5" the fifth. */
+const MOUSE_BUTTON = /^Mouse(\d+)$/;
 
 /** The hook's name for a recorder key, or null if there is none (media keys). */
 function hookKeyName(key) {
@@ -35,21 +48,35 @@ const MODIFIERS = {
 /**
  * @param {string} accelerator
  * @param {Record<string, number>} keycodes the hook's UiohookKey table
- * @returns {{codes: number[], ctrl: boolean, alt: boolean, shift: boolean, meta: boolean} | null}
+ * @returns {{codes: number[], aliases: number[], button: number|null, ctrl: boolean, alt: boolean, shift: boolean, meta: boolean} | null}
+ *   `aliases` are the codes the same key sends with Num Lock off; `button` is set for a mouse button, and then there are no codes
  */
 function parse(accelerator, keycodes) {
   const parts = String(accelerator ?? '').split('+').map((p) => p.trim()).filter(Boolean);
   if (!parts.length) return null;
   const key = parts.pop();
-  const binding = { codes: [], ctrl: false, alt: false, shift: false, meta: false };
+  const binding = { codes: [], aliases: [], button: null, ctrl: false, alt: false, shift: false, meta: false };
   for (const part of parts) {
     const modifier = MODIFIERS[part.toLowerCase()];
     if (!modifier) return null;
     binding[modifier] = true;
   }
+  const mouse = MOUSE_BUTTON.exec(key);
+  if (mouse) {
+    // The left and right buttons are the ones every click uses: never a binding.
+    const button = Number(mouse[1]);
+    if (button < 3) return null;
+    binding.button = button;
+    return binding;
+  }
   const name = hookKeyName(key);
   if (!name || keycodes[name] === undefined) return null;
   binding.codes.push(keycodes[name]);
+  const off = NUMLOCK_OFF[name];
+  if (off && typeof keycodes[off] === 'number') {
+    binding.aliases.push(keycodes[off]);
+    binding.codes.push(keycodes[off]);
+  }
   // The recorder does not tell Enter from the numpad's, so either is it.
   if (name === 'Enter' && typeof keycodes.NumpadEnter === 'number') binding.codes.push(keycodes.NumpadEnter);
   return binding;
@@ -87,6 +114,18 @@ function createMatcher(binding, onChange) {
     keyup(e) {
       if (!held) return;
       if (binding.codes.includes(e.keycode) || !modifiersMatch(binding, e)) {
+        held = false;
+        onChange(false);
+      }
+    },
+    mousedown(e) {
+      if (held || binding.button === null || e.button !== binding.button || !modifiersMatch(binding, e)) return;
+      held = true;
+      onChange(true);
+    },
+    mouseup(e) {
+      if (!held || binding.button === null) return;
+      if (e.button === binding.button || !modifiersMatch(binding, e)) {
         held = false;
         onChange(false);
       }

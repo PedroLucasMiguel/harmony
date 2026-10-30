@@ -392,6 +392,8 @@ const el = {
   micGain: $('mic-gain'),
   micEchoCancellation: $('mic-echo-cancellation'),
   micNoiseSuppression: $('mic-noise-suppression'),
+  micAiSuppression: $('mic-ai-suppression'),
+  micAiStatus: $('mic-ai-status'),
   micGainLabel: $('mic-gain-label'),
   micGate: $('mic-gate'),
   micGateLabel: $('mic-gate-label'),
@@ -1693,8 +1695,7 @@ function renderCallBar() {
   el.callBarMute.dataset.icon = state.voice.muted ? 'microphone-slash' : 'microphone';
   el.callBarMute.toggleAttribute('data-on', state.voice.muted);
   iconLabel(el.callBarDeafen, state.voice.deafened ? t('app.undeafen') : t('app.deafen'));
-  el.callBarDeafen.dataset.icon = state.voice.deafened ? 'speaker-slash' : 'headphones';
-  el.callBarDeafen.toggleAttribute('data-on', state.voice.deafened);
+    el.callBarDeafen.toggleAttribute('data-on', state.voice.deafened);
   iconLabel(el.callBarLeave, t('voice_leave.disconnect'));
 }
 
@@ -5597,7 +5598,7 @@ function applyVoiceConnection(up) {
 const STATUS = [
   { key: 'forced', icon: 'microphone-slash', get title() { return t('status.forced'); } },
   { key: 'muted', icon: 'microphone-slash', get title() { return t('status.muted'); } },
-  { key: 'deaf', icon: 'speaker-slash', get title() { return t('status.deaf'); } },
+  { key: 'deaf', icon: 'headphones', get title() { return t('status.deaf'); } },
   { key: 'cam', icon: 'video-camera', get title() { return t('status.cam'); } },
   { key: 'screen', icon: 'monitor', get title() { return t('status.screen'); } },
 ];
@@ -6357,6 +6358,8 @@ const HOTKEY_ERRORS = {
   get in_use() { return t('hotkeys.err_in_use'); },
   get duplicate() { return t('hotkeys.err_duplicate'); },
   get invalid() { return t('hotkeys.err_invalid'); },
+  get hook() { return t('hotkeys.err_hook'); },
+  get permission() { return t('hotkeys.err_permission'); },
 };
 
 const MODIFIER_CODES = new Set([
@@ -6366,7 +6369,7 @@ const MODIFIER_CODES = new Set([
 
 const CODE_KEYS = {
   NumpadAdd: 'numadd', NumpadSubtract: 'numsub', NumpadMultiply: 'nummult',
-  NumpadDivide: 'numdiv', NumpadDecimal: 'numdec', NumpadEnter: 'Enter',
+  NumpadDivide: 'numdiv', NumpadDecimal: 'numdec', NumpadEnter: 'numenter', NumLock: 'Numlock',
   ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
   Space: 'Space', Tab: 'Tab', Enter: 'Enter', Backspace: 'Backspace',
   Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End',
@@ -6387,10 +6390,11 @@ const CODE_KEYS = {
  * type an M. Shift is not enough either, since Shift+M is how a capital M is
  * typed. These are the keys nobody types text with.
  */
-const STANDALONE_KEY = /^(F([1-9]|1\d|2[0-4])|num\w+|Media\w+|Volume\w+|Insert|Scrolllock|PrintScreen)$/;
+const STANDALONE_KEY = /^(F([1-9]|1\d|2[0-4])|num\w+|Mouse\d+|Media\w+|Volume\w+|Insert|Scrolllock|PrintScreen)$/;
 
 const KEY_NAMES = {
-  numadd: 'Num +', numsub: 'Num -', nummult: 'Num *', numdiv: 'Num /', numdec: 'Num .',
+  numadd: 'Num +', numsub: 'Num -', nummult: 'Num *', numdiv: 'Num /', numdec: 'Num .', numenter: 'Num Enter',
+  Numlock: 'Num Lock', Mouse3: 'Middle button', Mouse4: 'Mouse back', Mouse5: 'Mouse forward',
   Scrolllock: 'Scroll Lock', PrintScreen: 'Print Screen', MediaPlayPause: 'Play/Pause',
   MediaNextTrack: 'Next track', MediaPreviousTrack: 'Previous track', MediaStop: 'Stop',
   VolumeMute: 'Volume mute', VolumeUp: 'Volume up', VolumeDown: 'Volume down',
@@ -6413,7 +6417,7 @@ function formatAccelerator(accelerator) {
   if (!accelerator) return '';
   return accelerator
     .split('+')
-    .map((t) => KEY_NAMES[t] ?? t.replace(/^num(\d)$/, 'Num $1'))
+    .map((t) => KEY_NAMES[t] ?? t.replace(/^num(\d)$/, 'Num $1').replace(/^Mouse(\d+)$/, 'Mouse $1'))
     .join(' + ');
 }
 
@@ -6450,6 +6454,31 @@ function acceleratorFrom(event, { allowBare = false } = {}) {
       display: formatAccelerator(accelerator),
     };
   }
+  return { accelerator, display: formatAccelerator(accelerator) };
+}
+
+/**
+ * The mouse's number for a button of the page's event, as the key hook counts them:
+ * the middle one is 3, the one under the thumb for "back" is 4 and "forward" 5. The left
+ * and right buttons are what every click is, so they are never a binding.
+ */
+function mouseButtonNumber(domButton) {
+  if (domButton === 1) return 3;
+  if (domButton === 3) return 4;
+  if (domButton === 4) return 5;
+  return domButton >= 5 ? domButton + 1 : null;
+}
+
+/** A press of one of the mouse's other buttons as an accelerator, like acceleratorFrom does for a key. */
+function acceleratorFromMouse(event) {
+  const number = mouseButtonNumber(event.button);
+  if (!number) return null;
+  const mods = [];
+  if (event.ctrlKey) mods.push('Ctrl');
+  if (event.altKey) mods.push('Alt');
+  if (event.shiftKey) mods.push('Shift');
+  if (event.metaKey) mods.push(harmony.platform === 'darwin' ? 'Command' : 'Super');
+  const accelerator = [...mods, `Mouse${number}`].join('+');
   return { accelerator, display: formatAccelerator(accelerator) };
 }
 
@@ -6539,7 +6568,7 @@ async function saveHotkey(id, accelerator) {
 function recordHotkey(title, { allowBare = false } = {}) {
   return new Promise((resolve) => {
     el.hotkeyRecorderTitle.textContent = title;
-    el.hotkeyCapture.textContent = t('app.waiting_for_keys');
+    el.hotkeyCapture.textContent = harmony.capabilities.hotkeys ? t('app.waiting_for_keys_or_mouse') : t('app.waiting_for_keys');
     el.hotkeyRecorderError.hidden = true;
     // Every global hotkey released while recording. Windows delivers a
     // registered combination to us INSTEAD of to the focused window, so
@@ -6552,6 +6581,8 @@ function recordHotkey(title, { allowBare = false } = {}) {
       if (done) return;
       done = true;
       document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('mousedown', onMouse, true);
+      document.removeEventListener('auxclick', swallow, true);
       el.hotkeyRecorder.removeEventListener('cancel', onCancel);
       el.hotkeyRecorderClear.onclick = null;
       el.hotkeyRecorderCancel.onclick = null;
@@ -6583,12 +6614,29 @@ function recordHotkey(title, { allowBare = false } = {}) {
       // A beat to show what was caught before the dialog goes.
       setTimeout(() => finish(result.accelerator), 300);
     };
+    // The mouse's other buttons: only where a hook can listen for them while Harmony is behind a game.
+    const onMouse = (event) => {
+      if (!harmony.capabilities.hotkeys) return;
+      const result = acceleratorFromMouse(event);
+      if (!result) return;
+      event.preventDefault();
+      event.stopPropagation();
+      el.hotkeyCapture.textContent = result.display;
+      el.hotkeyRecorderError.hidden = true;
+      setTimeout(() => finish(result.accelerator), 300);
+    };
+    // A back or forward button would also navigate; the recorder takes it.
+    const swallow = (event) => {
+      if (mouseButtonNumber(event.button)) event.preventDefault();
+    };
     const onCancel = (event) => {
       event.preventDefault();
       finish(null);
     };
 
     document.addEventListener('keydown', onKey, true);
+    document.addEventListener('mousedown', onMouse, true);
+    document.addEventListener('auxclick', swallow, true);
     el.hotkeyRecorder.addEventListener('cancel', onCancel);
     el.hotkeyRecorderClear.onclick = () => finish('');
     el.hotkeyRecorderCancel.onclick = () => finish(null);
@@ -6790,6 +6838,13 @@ function pttMatches(event) {
   return Boolean(binding) && codeToKey(event.code) === binding.key && pttModifiersMatch(event, binding);
 }
 
+/** Whether a press of a mouse button is the bound one (a button of the mouse is a binding as well as a key). */
+function pttMouseMatches(event) {
+  const binding = pttBinding();
+  const number = mouseButtonNumber(event.button);
+  return Boolean(binding) && Boolean(number) && binding.key === `Mouse${number}` && pttModifiersMatch(event, binding);
+}
+
 /** The key went down (true) or up (false). Up waits out the tail. */
 function pttSet(held) {
   clearTimeout(ptt.tail);
@@ -6823,6 +6878,15 @@ window.addEventListener('keyup', (event) => {
   // The key itself, or a modifier of the combination letting go first.
   const binding = pttBinding();
   if (!binding || codeToKey(event.code) === binding.key || !pttModifiersMatch(event, binding)) pttSet(false);
+}, true);
+window.addEventListener('mousedown', (event) => {
+  if (!pttInWindow() || !pttMouseMatches(event)) return;
+  pttSet(true);
+}, true);
+window.addEventListener('mouseup', (event) => {
+  if (!pttInWindow() || !ptt.held) return;
+  const binding = pttBinding();
+  if (binding && mouseButtonNumber(event.button) === Number(/^Mouse(\d+)$/.exec(binding.key)?.[1])) pttSet(false);
 }, true);
 // Losing focus while the key is down means its keyup goes to somebody else.
 window.addEventListener('blur', () => {
@@ -7047,7 +7111,29 @@ function applyMicTuning() {
 
   el.micEchoCancellation.checked = state.settings.micEchoCancellation === true;
   el.micNoiseSuppression.checked = state.settings.micNoiseSuppression === true;
+  el.micAiSuppression.checked = state.settings.micAiSuppression === true;
+  renderAiSuppression();
 }
+
+/** The strong suppression's switch: what the browser's row does meanwhile, and how the strong one is doing. */
+function renderAiSuppression() {
+  const on = state.settings?.micAiSuppression === true;
+  // The browser's is not asked for while the strong one is on: it is shown, and not available.
+  el.micNoiseSuppression.disabled = on;
+  el.micNoiseSuppression.closest('.setting-toggle')?.toggleAttribute('data-off', on);
+  const status = on ? state.voice.aiState : 'off';
+  const words = {
+    loading: 'settings.voice.ai_status_loading',
+    ready: 'settings.voice.ai_status_ready',
+    failed: 'settings.voice.ai_status_failed',
+    unsupported: 'settings.voice.ai_status_unsupported',
+    'no-worker': 'settings.voice.ai_status_no_worker',
+  }[status];
+  el.micAiStatus.hidden = !words;
+  el.micAiStatus.textContent = words ? t(words) : '';
+  el.micAiStatus.toggleAttribute('data-error', ['failed', 'unsupported', 'no-worker'].includes(status));
+}
+state.voice.onAiState = () => renderAiSuppression();
 
 /**
  * Hand the microphone processing choice to the voice session. Not part of
@@ -7058,6 +7144,7 @@ async function applyMicProcessing() {
   const ok = await state.voice.setMicProcessing({
     echoCancellation: state.settings.micEchoCancellation === true,
     noiseSuppression: state.settings.micNoiseSuppression === true,
+    aiSuppression: state.settings.micAiSuppression === true,
   });
   if (!ok) deviceNote(t('app.that_microphone_could_not_be'));
 }
@@ -8384,6 +8471,12 @@ const myRoleIds = () => new Set([
   ...(state.auth.user?.roles ?? []),
   ...(state.users.get(state.auth.user?.id)?.roles ?? []),
 ]);
+
+/** Whether it names you, or everybody, or a role you hold: everything but being answered. */
+const mentionsMeByName = (message) => Boolean(
+  message.mentionsEveryone || message.mentions?.includes(state.auth.user?.id)
+  || (message.mentionRoles ?? []).some((id) => myRoleIds().has(id)),
+);
 
 /** True if this message is addressed to the person reading it. */
 const mentionsMe = (message) => Boolean(
@@ -10275,9 +10368,9 @@ function messageRow(message, previous) {
     edited.title = new Date(message.editedAt).toLocaleString();
     text.append(edited);
   }
-  // Your own message is lit only when you named yourself: @everyone, a role you hold or
-  // answering your own message is not news to you.
-  if (mentionsMe(message) && (message.userId !== state.auth.user?.id || message.mentions?.includes(state.auth.user?.id))) {
+  // Lit when it is addressed to you -- by name, by @everyone or by a role you hold -- and it
+  // makes no difference who wrote it. Only answering your own message is not news to you.
+  if (mentionsMe(message) && (message.userId !== state.auth.user?.id || mentionsMeByName(message))) {
     row.setAttribute('data-mentions-me', '');
   }
 
@@ -15088,6 +15181,7 @@ el.micGate.addEventListener('change', micTuningSave);
 for (const [input, key] of [
   [el.micEchoCancellation, 'micEchoCancellation'],
   [el.micNoiseSuppression, 'micNoiseSuppression'],
+  [el.micAiSuppression, 'micAiSuppression'],
 ]) {
   input.addEventListener('change', async () => {
     await harmony.settings.set({ [key]: input.checked });

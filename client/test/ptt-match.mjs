@@ -11,8 +11,12 @@ const require = createRequire(import.meta.url);
 const { parse, createMatcher } = require('../src/main/ptt-match.js');
 
 // The hook's key table, as far as these tests need it.
-const K = { V: 47, F13: 91, Space: 57, Enter: 28, NumpadEnter: 3612, Numpad5: 76, Minus: 12, CapsLock: 58, ArrowUp: 57416 };
+const K = {
+  V: 47, F13: 91, Space: 57, Enter: 28, NumpadEnter: 3612, Numpad5: 76, Numpad7: 71, NumpadHome: 60999, NumpadDecimal: 83, NumpadDelete: 61011,
+  NumLock: 69, Minus: 12, CapsLock: 58, ArrowUp: 57416,
+};
 
+const mouse = (button, mods = {}) => ({ button, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods });
 const ev = (keycode, mods = {}) => ({ keycode, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods });
 const run = (accelerator, steps) => {
   const seen = [];
@@ -81,5 +85,55 @@ describe('held and not held', () => {
     matcher.reset();
     matcher.reset();
     assert.deepEqual(seen, [true, false]);
+  });
+});
+
+describe('the numpad', () => {
+  it('knows the numpad\'s own Enter and Num Lock', () => {
+    assert.deepEqual(parse('numenter', K).codes, [K.NumpadEnter]);
+    assert.deepEqual(parse('Numlock', K).codes, [K.NumLock]);
+  });
+  it('takes a numpad key the same with Num Lock off, when it sends the key printed on it', () => {
+    assert.deepEqual(parse('num7', K).codes, [K.Numpad7, K.NumpadHome]);
+    assert.deepEqual(parse('num7', K).aliases, [K.NumpadHome]);
+    assert.deepEqual(parse('numdec', K).codes, [K.NumpadDecimal, K.NumpadDelete]);
+    // Num 5 has nothing printed under it.
+    assert.deepEqual(parse('num5', K).aliases, []);
+  });
+  it('holds for either', () => {
+    assert.deepEqual(run('num7', [['keydown', ev(K.NumpadHome)], ['keyup', ev(K.NumpadHome)]]), [true, false]);
+    assert.deepEqual(run('num7', [['keydown', ev(K.Numpad7)], ['keyup', ev(K.Numpad7)]]), [true, false]);
+  });
+});
+
+describe('the mouse', () => {
+  it('reads the buttons past left and right, and refuses those two', () => {
+    assert.equal(parse('Mouse4', K).button, 4);
+    assert.equal(parse('Mouse5', K).button, 5);
+    assert.equal(parse('Mouse3', K).button, 3);
+    assert.deepEqual(parse('Mouse4', K).codes, []);
+    assert.equal(parse('Mouse1', K), null);
+    assert.equal(parse('Mouse2', K), null);
+  });
+  it('can be combined with the modifiers', () => {
+    const b = parse('Ctrl+Mouse4', K);
+    assert.deepEqual([b.button, b.ctrl], [4, true]);
+  });
+  const mrun = (accelerator, steps) => {
+    const seen = [];
+    const matcher = createMatcher(parse(accelerator, K), (held) => seen.push(held));
+    for (const [type, event] of steps) matcher[type](event);
+    return seen;
+  };
+  it('is held while the button is down', () => {
+    assert.deepEqual(mrun('Mouse4', [['mousedown', mouse(4)], ['mouseup', mouse(4)]]), [true, false]);
+  });
+  it('ignores the other buttons and the keyboard', () => {
+    assert.deepEqual(mrun('Mouse4', [['mousedown', mouse(5)], ['mouseup', mouse(5)], ['keydown', ev(K.V)], ['keyup', ev(K.V)]]), []);
+    assert.deepEqual(mrun('V', [['mousedown', mouse(4)], ['mouseup', mouse(4)]]), []);
+  });
+  it('takes exact modifiers, and lets go when one comes up first', () => {
+    assert.deepEqual(mrun('Mouse4', [['mousedown', mouse(4, { ctrlKey: true })], ['mouseup', mouse(4, { ctrlKey: true })]]), []);
+    assert.deepEqual(mrun('Ctrl+Mouse4', [['mousedown', mouse(4, { ctrlKey: true })], ['keyup', ev(29)], ['mouseup', mouse(4)]]), [true, false]);
   });
 });

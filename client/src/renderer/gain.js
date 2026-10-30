@@ -321,9 +321,11 @@ const WORKER_PROOF_MS = 3000;
  *
  * @param {object} options
  * @param {() => void} [options.onBroken]  the worker stopped after it had started
+ * @param {boolean} [options.denoise]  strong noise suppression in front of the gate (denoise.js)
+ * @param {(state: 'ready'|'failed'|'unsupported') => void} [options.onAi]  what became of it
  * @returns {Promise<object>}
  */
-export function workerMicChain(stream, { gain = 1, threshold = 0, onBroken } = {}) {
+export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = false, onBroken, onAi } = {}) {
   const input = stream.getAudioTracks()[0];
   if (!input || !canProcessInWorker()) return Promise.reject(new Error('no audio frames to process'));
 
@@ -345,6 +347,9 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, onBroken } = {
       },
       setThreshold(value) {
         worker.postMessage({ threshold: Math.max(0, Number(value) || 0) });
+      },
+      setDenoise(on) {
+        worker.postMessage({ denoise: Boolean(on) });
       },
       get level() {
         return level;
@@ -373,6 +378,10 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, onBroken } = {
         fail(event.data.error);
         return;
       }
+      if (event.data.ai) {
+        onAi?.(event.data.ai, event.data);
+        return;
+      }
       level = event.data.level;
       open = event.data.open;
       if (!started) {
@@ -386,7 +395,7 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, onBroken } = {
     try {
       const processor = new MediaStreamTrackProcessor({ track: input });
       generator = new MediaStreamTrackGenerator({ kind: 'audio' });
-      worker.postMessage({ threshold: Math.max(0, threshold), gain: Math.max(0, Math.min(MAX_GAIN, gain)) });
+      worker.postMessage({ threshold: Math.max(0, threshold), gain: Math.max(0, Math.min(MAX_GAIN, gain)), denoise: Boolean(denoise) });
       worker.postMessage(
         { readable: processor.readable, writable: generator.writable },
         [processor.readable, generator.writable],

@@ -207,6 +207,26 @@ async function run() {
   await sleep(500);
   check('both switches are off by default', (await switches()).join() === 'false,false', (await switches()).join());
   check('and nothing is saved as on', (await saved()).join() === 'false,false', (await saved()).join());
+  // Deafened is the headphones with a slash across them, not another picture.
+  const deaf = await pedro.evaluate(`
+    const b = document.getElementById('voice-deafen');
+    const before = (state) => getComputedStyle(b, '::before').maskImage;
+    const off = { glyph: before(), slash: getComputedStyle(b, '::after').content };
+    b.setAttribute('data-on', '');
+    const on = { glyph: before(), slash: getComputedStyle(b, '::after').content, transform: getComputedStyle(b, '::after').transform };
+    b.removeAttribute('data-on');
+    return { off, on };`);
+  check('the deafen button keeps its headphones when deafened and gains a slash',
+    deaf.off.glyph === deaf.on.glyph && /headphones/.test(deaf.on.glyph) && deaf.off.slash !== '""' && deaf.on.slash === '""' && deaf.on.transform !== 'none', JSON.stringify(deaf));
+
+  // The strong (AI) suppression is an option beside the browser's: off, and the browser's stays available.
+  const ai = await pedro.evaluate(`
+    const box = document.getElementById('mic-ai-suppression');
+    const s = await harmony.settings.get(); const d = s.data ?? s;
+    return { there: Boolean(box), on: box?.checked, saved: d.micAiSuppression, statusHidden: document.getElementById('mic-ai-status').hidden,
+      browserDisabled: document.getElementById('mic-noise-suppression').disabled, state: window.__harmony().voice.ai };`);
+  check('the strong noise suppression (AI) is there, off by default, and the browser\'s option is still available',
+    ai.there && ai.on === false && ai.saved === false && ai.statusHidden && ai.browserDisabled === false && (ai.state === 'off' || ai.state === undefined), JSON.stringify(ai));
   await pedro.evaluate("document.getElementById('devices').close(); return true;");
 
   await joinVoice(pedro);

@@ -2213,6 +2213,12 @@ button.danger {
   padding: 0.15rem 0.4rem;
   border-radius: 6px;
 }
+/* A line that continues the one above sits closer to it than a new block does. */
+.chat-msg[data-grouped] {
+  --row-pad: 0.06rem;
+  padding-top: var(--row-pad);
+  padding-bottom: var(--row-pad);
+}
 .msg-main {
   flex: 1 1 auto;
   min-width: 0;
@@ -2226,8 +2232,8 @@ button.danger {
 /* The picture is a row taller than the text it sits beside, which is what
    gives a block of messages its left margin. */
 .avatar.msg-avatar {
-  width: 2.5em;
-  height: 2.5em;
+  width: var(--face);
+  height: var(--face);
   font-size: 0.72em;
   margin-top: 0.15em;
 }
@@ -2266,8 +2272,15 @@ button.danger {
    class here loses, and the timestamp every grouped row was supposed to
    hide would have been visible on all of them. */
 .chat-msg .when.when-gutter {
-  width: 2.5em;
-  font-size: 0.68rem;
+  /* Its box reaches out into the row's own padding on the left and keeps the same right edge, so the
+     words keep the left edge the picture gave them; the padding on the right is the room between the
+     time and the words. All in rem: the column must not follow this font's size. */
+  box-sizing: border-box;
+  /* Outer width the picture's, so the words of every line share one left edge. */
+  width: calc(var(--face) + 0.4rem);
+  margin-left: -0.4rem;
+  padding-right: 0.25rem;
+  font-size: 0.6rem;
   text-align: right;
   align-self: center;
   /* "04:40 PM" wraps in a column this narrow, and two lines of time were taller
@@ -2279,6 +2292,20 @@ button.danger {
   justify-content: flex-end;
   opacity: 0;
   transition: opacity 90ms ease-out;
+}
+/*
+ * The bar is on the row's left edge and the words are a few pixels past the picture's column,
+ * so the time is centred in the room between them: clear of the bar on one side and of the words
+ * on the other. The box reaches 0.35rem into the gap after the column, and takes it back with a
+ * negative margin, so the words keep their left edge.
+ */
+.chat-msg[data-mentions-me] .when.when-gutter {
+  margin-left: 0.04rem;
+  margin-right: -0.35rem;
+  width: calc(var(--face) + 0.35rem - 0.04rem);
+  padding: 0;
+  justify-content: center;
+  text-align: center;
 }
 .chat-msg:hover .when.when-gutter {
   opacity: 0.45;
@@ -2458,26 +2485,30 @@ button.danger {
  * hover highlight and does not fight the pinned marker -- which is the
  * same bar in the accent colour, on the other side of the same rule.
  */
+.chat-msg {
+  --row-pad: 0.15rem;
+  /* The picture's width: a line without one keeps a column this wide, so every line's words share a left edge. */
+  --face: 1.6rem;
+}
+/*
+ * A message that names you is lit across the whole row, the picture too, from a bar at
+ * the left edge. Lit messages one under another are ONE block: the rows touch, so the
+ * tint and the bar run on without a break, and only the first has a rounded top and
+ * the last a rounded bottom -- the way Discord draws it.
+ */
 .chat-msg[data-mentions-me] {
   box-shadow: inset 3px 0 0 var(--warn);
   background: color-mix(in srgb, var(--warn) 7%, transparent);
 }
-/*
- * A line that continues the one above has no picture, only an empty column where
- * it would be, and a bar across that column says nothing. The light starts where
- * the words do: on the text's own box, reaching out a little to either side and
- * above and below so it fills the row as the other does.
- */
-.chat-msg[data-grouped][data-mentions-me] {
-  box-shadow: none;
-  background: none;
+.chat-msg[data-mentions-me]:has(+ .chat-msg[data-mentions-me]) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
-.chat-msg[data-grouped][data-mentions-me] .msg-main {
-  box-shadow: inset 3px 0 0 var(--warn);
-  background: color-mix(in srgb, var(--warn) 7%, transparent);
-  border-radius: 4px;
-  margin: -0.15rem -0.4rem -0.15rem -0.6rem;
-  padding: 0.15rem 0.4rem 0.15rem 0.6rem;
+.chat-msg[data-mentions-me] + .chat-msg[data-mentions-me] {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  /* Takes back the log's gap between rows, which would be a break in the block. */
+  margin-top: -0.35rem;
 }
 
 /* How long a voice channel has had somebody in it. */
@@ -5120,6 +5151,18 @@ button.danger {
   padding: 0.5rem 0;
   cursor: pointer;
 }
+/* An option that is not available while another one is on: shown, so it is known to be there. */
+.setting-toggle[data-off] {
+  opacity: 0.5;
+}
+.setting-status {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--muted);
+}
+.setting-status[data-error] {
+  color: var(--warn);
+}
 .setting-toggle + .setting-toggle {
   border-top: 1px solid var(--border);
 }
@@ -7249,7 +7292,25 @@ input[data-saved] {
 }
 /* The state a toggle is in, shown by the icon itself as Discord does. */
 #voice-mute[data-on] { --icon: url('icons/microphone-slash.svg'); }
-#voice-deafen[data-on] { --icon: url('icons/speaker-slash.svg'); }
+/* Deafened is the same headphones with a slash across them, not another picture: a speaker is a different thing. */
+#voice-deafen[data-on],
+#call-bar-deafen[data-on] {
+  position: relative;
+}
+#voice-deafen[data-on]::after,
+#call-bar-deafen[data-on]::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  border-top: 2px solid currentColor;
+  border-radius: 2px;
+  /* A thin dark edge, so the slash reads where it crosses the headphones. */
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.45);
+  transform: translate(-50%, -50%) rotate(45deg);
+  pointer-events: none;
+}
 /* No slash on the camera: it is on, and a struck-through camera reads as off.
    The button's highlight (.voice-action[data-on]) says it is running. */
 #voice-mute[data-on],
@@ -7257,7 +7318,7 @@ input[data-saved] {
   color: var(--danger-soft);
 }
 /* The icon carries the slash now; the drawn one would cross it twice. */
-.status-dot::after {
+.status-dot:not([data-kind='deaf'])::after {
   display: none !important;
 }
 .status-dot[data-icon]::before {

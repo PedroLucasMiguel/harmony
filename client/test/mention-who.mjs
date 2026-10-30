@@ -165,7 +165,21 @@ async function run() {
 
   // Your own message is lit when you named yourself, and only then.
   check('a message in which you named yourself is lit', row('a note to')?.lit === true, JSON.stringify(row('a note to')));
-  check('but not one of yours that only reaches the others (@everyone, a role you hold)', row('from me, and')?.lit === false, JSON.stringify(row('from me, and')));
+  check('and one of yours that says @everyone, or names a role you hold, is lit as well', row('from me, and')?.lit === true, JSON.stringify(row('from me, and')));
+
+  // The time that shows when the pointer is on a line that continues the one above stays clear of its words.
+  const gap = await cdp.evaluate(`
+    const m = document.querySelector('.chat-msg[data-grouped]:not([data-mentions-me])');
+    const gutter = m.querySelector('.when-gutter');
+    const r = document.createRange(); r.selectNodeContents(gutter);
+    const time = r.getBoundingClientRect(); const text = m.querySelector('.text').getBoundingClientRect();
+    const avatarRow = [...document.querySelectorAll('.chat-msg:not([data-grouped])')].find((r) => r.querySelector('.text'));
+    return { alignedWithPictureRows: Math.abs(avatarRow.querySelector('.text').getBoundingClientRect().left - text.left) < 3, gap: Math.round((text.left - time.right) * 10) / 10, timeLeft: Math.round(time.left * 10) / 10, rowLeft: Math.round(m.getBoundingClientRect().left * 10) / 10 };`);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 600, y: await cdp.evaluate("const r = document.querySelector('.chat-msg[data-grouped]').getBoundingClientRect(); return r.top + r.height / 2;"), button: 'none', buttons: 0 });
+  await sleep(400);
+  await cdp.send('Page.enable');
+  (await import('node:fs')).writeFileSync(join(tmpdir(), 'harmony-gutter.png'), Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  check('the time on a grouped line is well clear of the words (at least 13px, and not cut off at the left)', gap.gap >= 13 && gap.timeLeft >= gap.rowLeft - 0.5 && gap.alignedWithPictureRows, JSON.stringify(gap));
 
   // A line under your own, grouped with it, is as tall as its words: the time in its gutter has no height.
   const heights = await cdp.evaluate(`
@@ -174,14 +188,46 @@ async function run() {
   check('a grouped line has no room above or below its words but the row\'s own padding',
     heights.length >= 3 && heights.every((h) => h.row - h.words <= 8), JSON.stringify(heights));
 
-  // A lit line that continues the one above is lit from where its words start, not across the empty column before them.
-  const litGrouped = await cdp.evaluate(`
-    const m = [...document.querySelectorAll('.chat-msg[data-grouped][data-mentions-me]')][0];
-    const main = m.querySelector('.msg-main').getBoundingClientRect(); const text = m.querySelector('.text').getBoundingClientRect(); const row = m.getBoundingClientRect();
-    return { rowShadow: getComputedStyle(m).boxShadow, mainShadow: getComputedStyle(m.querySelector('.msg-main')).boxShadow,
-      before: Math.round(text.left - main.left), fromRow: Math.round(main.left - row.left), rowH: Math.round(row.height), mainH: Math.round(main.height) };`);
-  check('a lit grouped line starts its light at its words, a little before them',
-    litGrouped.rowShadow === 'none' && litGrouped.mainShadow !== 'none' && litGrouped.before >= 6 && litGrouped.before <= 14 && litGrouped.fromRow > 20 && litGrouped.mainH >= litGrouped.rowH - 2, JSON.stringify(litGrouped));
+  // Every line of a block has its words on one left edge, a picture or none, lit or not.
+  const edges = await cdp.evaluate(`
+    const rows = [...document.querySelectorAll('.chat-msg')];
+    return { text: [...new Set(rows.map((r) => Math.round(r.querySelector('.text').getBoundingClientRect().left * 10) / 10))] };`);
+  check('the words of every line share one left edge', edges.text.length === 1, JSON.stringify(edges));
+
+  // A lit message is lit across the whole row, picture included, from a bar at the left edge...
+  const litRows = await cdp.evaluate(`
+    const rows = [...document.querySelectorAll('.chat-msg')];
+    const lit = rows.filter((r) => r.hasAttribute('data-mentions-me'));
+    const shadow = (r) => getComputedStyle(r).boxShadow;
+    const first = lit.find((r) => r.querySelector('.msg-avatar'));
+    const avatar = first.querySelector('.msg-avatar').getBoundingClientRect();
+    const row = first.getBoundingClientRect();
+    return { allBars: lit.every((r) => shadow(r) !== 'none'), mainClear: lit.every((r) => getComputedStyle(r.querySelector('.msg-main')).boxShadow === 'none'),
+      pictureInside: avatar.left > row.left && avatar.right < row.right,
+      edges: [...new Set(lit.map((r) => Math.round(r.getBoundingClientRect().left)))], rights: [...new Set(lit.map((r) => Math.round(r.getBoundingClientRect().right)))] };`);
+  check('a lit message is lit across the whole row, picture and all, from a bar at the same left edge to the same right edge',
+    litRows.allBars && litRows.mainClear && litRows.pictureInside && litRows.edges.length === 1 && litRows.rights.length === 1, JSON.stringify(litRows));
+
+  // ...and lit messages one under another are one block: the rows touch, square where they meet.
+  const block = await cdp.evaluate(`
+    const rows = [...document.querySelectorAll('.chat-msg')];
+    const pairs = [];
+    for (let i = 0; i + 1 < rows.length; i += 1) {
+      if (rows[i].hasAttribute('data-mentions-me') && rows[i + 1].hasAttribute('data-mentions-me')) {
+        const a = rows[i].getBoundingClientRect(); const b = rows[i + 1].getBoundingClientRect();
+        pairs.push({ gap: Math.round((b.top - a.bottom) * 10) / 10, upper: getComputedStyle(rows[i]).borderBottomLeftRadius, lower: getComputedStyle(rows[i + 1]).borderTopLeftRadius });
+      }
+    }
+    return { pairs };`);
+  check('lit messages one under another touch, with square corners where they meet',
+    block.pairs.length >= 2 && block.pairs.every((p) => Math.abs(p.gap) < 0.5 && p.upper === '0px' && p.lower === '0px'), JSON.stringify(block));
+
+  const litTime = await cdp.evaluate(`
+    const m = document.querySelector('.chat-msg[data-grouped][data-mentions-me]');
+    const r = document.createRange(); r.selectNodeContents(m.querySelector('.when-gutter'));
+    const t = r.getBoundingClientRect(); const text = m.querySelector('.text').getBoundingClientRect();
+    return { fromBar: Math.round((t.left - m.getBoundingClientRect().left - 3) * 10) / 10, fromWords: Math.round((text.left - t.right) * 10) / 10 };`);
+  check('the time on a lit grouped line has room on both sides: at least 4px from the bar and from the words', litTime.fromBar >= 4 && litTime.fromWords >= 4, JSON.stringify(litTime));
   await cdp.send('Page.enable');
   const lit = await cdp.send('Page.captureScreenshot', { format: 'png' });
   (await import('node:fs')).writeFileSync(join(tmpdir(), 'harmony-lit-grouped.png'), Buffer.from(lit.data, 'base64'));

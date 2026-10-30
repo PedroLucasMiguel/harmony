@@ -8,9 +8,14 @@
  * arrives. They are local files: nothing here is fetched from a font host.
  * Licences: fonts/LICENSES.txt.
  *
- * Each rule also nudges the size: faces differ a lot in how big their letters
- * are at the same font-size, and Press Start at 1em is twice the width of the
- * text around it.
+ * Each rule also sets the size, one face at a time: faces differ a lot in how big
+ * their letters are at the same font-size, and Press Start at 1em is twice the
+ * width of the text around it. The figure for each is measured against the
+ * ordinary font of a name: the mean of its lowercase and capital heights is made
+ * the same, and a face that would then be much wider than the ordinary one (Press
+ * Start, Orbitron) is held to a width a name can live with. Measured with a
+ * canvas at 100px on the faces in fonts/ -- see test/name-font-size.mjs, which
+ * keeps them within a few percent of each other.
  */
 @font-face {
   font-family: 'Pacifico';
@@ -85,51 +90,81 @@
 
 [data-name-font='pacifico'] {
   font-family: 'Pacifico', system-ui, sans-serif;
-  font-size: 1.0em;
+  --name-scale: 0.91;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='press-start'] {
   font-family: 'Press Start 2P', system-ui, sans-serif;
-  font-size: 0.72em;
+  --name-scale: 0.7;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='orbitron'] {
   font-family: 'Orbitron', system-ui, sans-serif;
-  font-size: 0.95em;
+  --name-scale: 0.94;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='playfair'] {
   font-family: 'Playfair Display', system-ui, sans-serif;
-  font-size: 1.0em;
+  --name-scale: 1;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='bebas'] {
   font-family: 'Bebas Neue', system-ui, sans-serif;
-  font-size: 1.1em;
+  --name-scale: 0.87;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='caveat'] {
   font-family: 'Caveat', system-ui, sans-serif;
-  font-size: 1.15em;
+  --name-scale: 1.16;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='fredoka'] {
   font-family: 'Fredoka', system-ui, sans-serif;
-  font-size: 1.0em;
+  --name-scale: 1.04;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='cinzel'] {
   font-family: 'Cinzel', system-ui, sans-serif;
-  font-size: 0.95em;
+  --name-scale: 0.94;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='typewriter'] {
   font-family: 'Special Elite', system-ui, sans-serif;
-  font-size: 1.0em;
+  --name-scale: 1.04;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }
 [data-name-font='marker'] {
   font-family: 'Permanent Marker', system-ui, sans-serif;
-  font-size: 0.95em;
+  --name-scale: 0.92;
+  font-size: calc(var(--name-scale) * 1em);
+  /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
+  line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
 }

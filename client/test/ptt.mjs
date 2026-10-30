@@ -321,6 +321,54 @@ async function run() {
   check('and opens when the key is held', (await heard(500)) > base * 0.6);
   await release(pedro, 'KeyV', 2 | 8);
 
+  // --- a button of the mouse ---------------------------------------------------------------------------------------------------------
+  const click = (button, type) => pedro.send('Input.dispatchMouseEvent', { type, x: 300, y: 300, button, buttons: type === 'mousePressed' ? 8 : 0, clickCount: 1 });
+  await open('voice');
+  await pedro.evaluate("document.getElementById('ptt-key').click(); return true;");
+  await sleep(400);
+  await click('back', 'mousePressed');
+  await click('back', 'mouseReleased');
+  await sleep(900);
+  check('the button under the thumb can be the key (Mouse back)', (await settings()).key === 'Mouse4', JSON.stringify(await settings()));
+  check('the key shows as a button, not a code', /Mouse back/.test(await pedro.evaluate("return document.getElementById('ptt-key').textContent")), await pedro.evaluate("return document.getElementById('ptt-key').textContent"));
+  await pedro.evaluate("document.getElementById('devices').close(); document.activeElement?.blur(); return true;");
+  check('with it set the microphone is silent', (await heard(900)) < base * 0.1);
+  await click('back', 'mousePressed');
+  const mouseOpen = await heard(500);
+  check('holding the button opens it', mouseOpen > base * 0.6, `${base.toFixed(4)} -> ${mouseOpen.toFixed(4)}`);
+  await click('back', 'mouseReleased');
+  const mouseClosed = await heard(900);
+  check('and letting go closes it', mouseClosed < base * 0.1, `${base.toFixed(4)} -> ${mouseClosed.toFixed(4)}`);
+
+  // --- keys of the numpad -----------------------------------------------------------------------------------------------------------
+  await open('voice');
+  await pedro.evaluate("document.getElementById('ptt-key').click(); return true;");
+  await record('Numpad7');
+  check('a numpad key can be the key (Num 7)', (await settings()).key === 'num7', JSON.stringify(await settings()));
+  await pedro.evaluate("document.getElementById('devices').close(); document.activeElement?.blur(); return true;");
+  await hold(pedro, 'Numpad7');
+  const numpad = await heard(500);
+  check('and holding it opens the microphone', numpad > base * 0.6, `${base.toFixed(4)} -> ${numpad.toFixed(4)}`);
+  await release(pedro, 'Numpad7');
+  await heard(900);
+  await open('hotkeys');
+  await pedro.evaluate(`[...document.querySelectorAll('#hotkey-list .hotkey-row')]
+    .find((r) => r.textContent.includes('Turn camera')).querySelector('.hotkey-key').click(); return true;`);
+  await record('NumpadEnter');
+  check('the numpad\'s own Enter is a hotkey with no modifier', (await settings()).cam === 'numenter', JSON.stringify(await settings()));
+  await pedro.evaluate(`[...document.querySelectorAll('#hotkey-list .hotkey-row')]
+    .find((r) => r.textContent.includes('Turn camera')).querySelector('.hotkey-key').click(); return true;`);
+  await sleep(400);
+  await click('forward', 'mousePressed');
+  await click('forward', 'mouseReleased');
+  await sleep(900);
+  check('and so is a button of the mouse (Mouse forward)', (await settings()).cam === 'Mouse5', JSON.stringify(await settings()));
+  await pedro.evaluate("document.getElementById('devices').close(); return true;");
+  await open('voice');
+  await pedro.evaluate("document.getElementById('ptt-key').click(); return true;");
+  await record('KeyV', 2 | 8);
+  await pedro.evaluate("document.getElementById('devices').close(); document.activeElement?.blur(); return true;");
+
   // --- off again ------------------------------------------------------------------------------------------------------------------------
   await open('voice');
   await pedro.evaluate("const i = document.getElementById('ptt-enabled'); i.checked = false; i.dispatchEvent(new Event('change', { bubbles: true })); document.getElementById('devices').close(); return true;");

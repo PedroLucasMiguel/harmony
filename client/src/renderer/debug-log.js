@@ -40,7 +40,7 @@ const SECOND_VALUES = new Set(['jitter', 'roundTripTime']);
 /** Settings worth knowing about when reading a log: none of them names anybody. */
 const SETTINGS_SHOWN = [
   'hardwareEncoding', 'gpuAdapter', 'cameraResolution', 'cameraFramerate', 'cameraPreview',
-  'micGain', 'micSensitivity', 'micEchoCancellation', 'micNoiseSuppression', 'pushToTalk',
+  'micGain', 'micSensitivity', 'micEchoCancellation', 'micNoiseSuppression', 'micAiSuppression', 'pushToTalk',
   'pauseHiddenCameras', 'pictureInPicture', 'uiScale', 'soundVolume', 'voiceSounds',
 ];
 
