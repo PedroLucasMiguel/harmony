@@ -13,6 +13,7 @@
 
 import { harmony } from './bridge.js';
 import { publish, watch, applySenderSettings, setSenderPriority, describePc } from './webrtc.js';
+import { judgeVideo, VIDEO_MAX_REBUILDS } from './video-health.js';
 import {
   createSink, createMeter, createMicChain, createMicValve, workerMicChain, canProcessInWorker, MAX_GAIN,
   audioContextStats,
@@ -1518,6 +1519,69 @@ export class VoiceSession {
     return { tiles: this.#video.size, changed, missed };
   }
 
+  /** What the last look at each video subscription left, by tile key (see video-health.js). */
+  #videoHealth = new Map();
+
+  /** How many times each tile has been rebuilt for showing nothing. */
+  #videoRebuilds = new Map();
+
+  /**
+   * Let go of a video subscription that is up and shows black, so that the next
+   * sync opens it again from a fresh key frame.
+   *
+   * Connected, with packets arriving and nothing decoded: the connection looks
+   * fine and the tile is black, and until now the only remedy was for somebody to
+   * stop everything and start it again. A tile that stays black after a few
+   * rebuilds is left as it is.
+   *
+   * @returns {Promise<string[]>} the tiles that were let go
+   */
+  async reapStalledVideo() {
+    const now = Date.now();
+    const dead = [];
+    for (const [key, sub] of this.#video) {
+      let stats = null;
+      try {
+        const reports = await sub.pc.getStats();
+        reports.forEach((r) => {
+          if (r.type === 'inbound-rtp' && (r.kind ?? r.mediaType) === 'video') {
+            stats = {
+              framesReceived: r.framesReceived,
+              framesDecoded: r.framesDecoded,
+              packetsReceived: r.packetsReceived ?? 0,
+            };
+          }
+        });
+      } catch {
+        continue; // a connection being torn down
+      }
+      // Nothing to judge by (no video report yet, or an engine that does not report frames).
+      if (!stats || stats.framesReceived === undefined || stats.framesDecoded === undefined) continue;
+
+      const { verdict, next } = judgeVideo(this.#videoHealth.get(key) ?? null, stats, now);
+      this.#videoHealth.set(key, next);
+      if (verdict === 'ok') {
+        if (stats.framesDecoded > 0) this.#videoRebuilds.delete(key);
+        continue;
+      }
+      const times = this.#videoRebuilds.get(key) ?? 0;
+      if (times >= VIDEO_MAX_REBUILDS) continue;
+      this.#videoRebuilds.set(key, times + 1);
+      this.note(`video ${key}: ${verdict} (received ${stats.framesReceived}, decoded ${stats.framesDecoded}, packets ${stats.packetsReceived}); opening it again (${times + 1}/${VIDEO_MAX_REBUILDS})`);
+      dead.push(key);
+    }
+    for (const key of dead) {
+      this.unsubscribeVideo(key);
+      this.#videoHealth.delete(key);
+    }
+    return dead;
+  }
+
+  /** The tiles being received, by key. */
+  get videoKeys() {
+    return [...this.#video.keys()];
+  }
+
   /** True while somebody is publishing video we have not managed to open. */
   get hasMissingVideo() {
     return (this.lastRoster ?? []).some((m) => m.mid !== this.mid
@@ -1553,6 +1617,7 @@ export class VoiceSession {
     const sub = this.#video.get(key);
     if (!sub) return;
     this.#video.delete(key);
+    this.#videoHealth.delete(key);
     sub.sink?.close?.();
     sub.pc.close();
   }
@@ -1659,6 +1724,8 @@ export class VoiceSession {
     this.#micChain = null;
     this.#closeValve();
     this.#closedVideo.clear();
+    this.#videoHealth.clear();
+    this.#videoRebuilds.clear();
     this.#tileGains.clear();
     await this.stopCam();
     for (const mid of [...this.#subs.keys()]) await this.unsubscribe(mid);

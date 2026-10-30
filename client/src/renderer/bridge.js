@@ -113,6 +113,7 @@ const desktop = () => ({
     onCommand: (handler) => raw.voiceTray.onCommand(handler),
   },
   onWindowVisibility: (handler) => raw.onWindowVisibility(handler),
+  onGpuRestarted: (handler) => raw.onGpuRestarted(handler),
 
   ptt: {
     set: lift(raw.ptt.set),

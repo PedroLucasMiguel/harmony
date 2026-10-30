@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import { createHash } from 'node:crypto';
 
 import {
-  LinkPreviews, fetchLimited, isBlockedAddress, normalise, parseMeta, sniffImage,
+  LinkPreviews, fetchLimited, isBlockedAddress, normalise, parseMeta, sniffImage, youtubeVideo,
 } from '../src/link-preview.js';
 
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
@@ -90,6 +90,21 @@ describe('reading a page', () => {
   });
 });
 
+describe('a YouTube address', () => {
+  it('is known in all its spellings, and nothing else is', () => {
+    const id = 'naNpAAdfmzs';
+    for (const url of [
+      `https://www.youtube.com/watch?v=${id}`, `https://youtube.com/watch?v=${id}&t=30s`, `https://m.youtube.com/watch?v=${id}`,
+      `https://music.youtube.com/watch?v=${id}`, `https://youtu.be/${id}?si=abc`, `https://www.youtube.com/shorts/${id}`,
+      `https://www.youtube.com/live/${id}`, `https://www.youtube.com/embed/${id}`,
+    ]) assert.equal(youtubeVideo(url), id, url);
+    for (const url of [
+      'https://www.youtube.com/', 'https://www.youtube.com/@someone', 'https://www.youtube.com/watch?v=short',
+      'https://notyoutube.com/watch?v=naNpAAdfmzs', 'https://youtube.com.evil.example/watch?v=naNpAAdfmzs', 'not a url',
+    ]) assert.equal(youtubeVideo(url), null, url);
+  });
+});
+
 describe('what a picture is', () => {
   it('is known by its first bytes, not by what a server says', () => {
     assert.equal(sniffImage(PNG), 'image/png');
@@ -123,6 +138,9 @@ describe('fetching, and the service built on it', () => {
           return send(200, 'image/png', '<html>not a picture</html>');
         case '/page-fake-pic':
           return send(200, 'text/html', `<meta property="og:title" content="Fake"><meta property="og:image" content="${base}/fake-pic.png">`);
+        case '/late-head':
+          // What YouTube does: a megabyte of script before the tags, and a long page after them.
+          return send(200, 'text/html', `<head><script>${'x'.repeat(1_200_000)}</script><meta property="og:title" content="Late tags"></head><body>${'y'.repeat(1_500_000)}</body>`);
         case '/gzip':
           return send(200, 'text/html', zlib.gzipSync('<meta property="og:title" content="Zipped">'), { 'Content-Encoding': 'gzip' });
         case '/bomb':
@@ -190,6 +208,15 @@ describe('fetching, and the service built on it', () => {
     assert.ok(bomb.body.length <= 100_000);
     const huge = await fetchLimited(`${base}/huge`, { allowPrivate: true, maxBytes: 64 * 1024 });
     assert.equal(huge.body.length, 64 * 1024);
+  });
+
+  it('finds the tags of a page that puts a megabyte of script before them, and stops at the end of the head', async () => {
+    const page = await fetchLimited(`${base}/late-head`, { allowPrivate: true, stopAt: '</head>' });
+    assert.equal(page.truncated, false);
+    assert.ok(page.body.length < 1_500_000, `read only the head: ${page.body.length}`);
+    assert.equal(parseMeta(page.body.toString('utf8'), page.url).title, 'Late tags');
+    const card = await new LinkPreviews(fakeChat(), { allowPrivate: true }).get(`${base}/late-head`);
+    assert.equal(card.title, 'Late tags');
   });
 
   it('makes a card of a page, keeping its picture as a file', async () => {

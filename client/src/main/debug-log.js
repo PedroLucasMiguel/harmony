@@ -225,6 +225,11 @@ async function start(extra) {
   lastCpu = null;
   busyAt = 0;
   write(await header(extra));
+  if (remembered.length) {
+    write('Before this log was started:\n');
+    write(remembered.splice(0).join(''));
+    write('\n');
+  }
   if (!listening) {
     listening = true;
     listen();
@@ -262,10 +267,22 @@ async function openFolder() {
   return true;
 }
 
-/** A line from the page. */
+/**
+ * What happened since launch that a log started later should still show: the
+ * program's own processes dying is exactly what is wanted after the fact.
+ */
+const remembered = [];
+const REMEMBER_MAX = 40;
+
+/** A line from the page (or from the app itself). Kept briefly even when no log is running. */
 function event(kind, text) {
-  if (!stream) return false;
-  write(line(String(kind).slice(0, 5).toUpperCase(), String(text).slice(0, 4000)));
+  const entry = line(String(kind).slice(0, 5).toUpperCase(), String(text).slice(0, 4000));
+  if (!stream) {
+    remembered.push(entry);
+    if (remembered.length > REMEMBER_MAX) remembered.shift();
+    return false;
+  }
+  write(entry);
   return true;
 }
 

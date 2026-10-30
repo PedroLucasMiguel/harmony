@@ -15,8 +15,9 @@
 import { PersistentKeyFile } from './dm-keyfile.js';
 import { settingsBackend } from './dm-backend.js';
 import { DmSession, MAX_BODY, previewOf } from './dm-session.js';
-import { fileCard, textCard, previewsAsText, TEXT_PREVIEW_BYTES } from './attachment-card.js';
+import { fileCard, textCard, previewsAsText, forgetTextHeads, TEXT_PREVIEW_BYTES } from './attachment-card.js';
 import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
+import { parkMedia, takeMedia, dropParked, keepable } from './media-keep.js';
 import { KeyState } from './dm-vault.js';
 import { serverKeyOf } from './server-key.js';
 
@@ -221,6 +222,7 @@ export function createDmUi(deps) {
     const mine = homes.get(key);
     if (!mine) return;
     mine.session.closeFiles();
+    forgetTextHeads();
     homes.delete(key);
     if (home === mine) {
       bind(null);
@@ -527,7 +529,9 @@ export function createDmUi(deps) {
     const log = el.log;
     const wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     const messages = session.thread(currentId);
+    parkMedia(log);
     log.replaceChildren(...messages.map((m, i) => messageRow(m, messages[i - 1])));
+    dropParked();
     el.more.hidden = !session.hasMore(currentId);
     if (scrollToBottom || wasAtBottom) log.scrollTop = log.scrollHeight;
 
@@ -740,6 +744,7 @@ export function createDmUi(deps) {
             return new Uint8Array(await opened.blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer());
           },
           onOpen: () => saveFile(message),
+          key: `dm:${message.id}:${f.key}`,
           t,
         })
         : fileCard({
@@ -797,6 +802,13 @@ export function createDmUi(deps) {
     }
     wrap.append(bar);
 
+    // One that is playing is kept through a redraw of the conversation: see media-keep.js.
+    const key = `${currentId}#${message.id}#${f.key}`;
+    const kept = message.mediaType === 'image' ? null : takeMedia(key);
+    if (kept) {
+      wrap.prepend(kept);
+      return wrap;
+    }
     session.file(message).then((opened) => {
       if (!opened?.inline) return;
       let node;
@@ -804,7 +816,7 @@ export function createDmUi(deps) {
         node = document.createElement('img');
         node.alt = f.name;
       } else {
-        node = document.createElement(message.mediaType);
+        node = keepable(document.createElement(message.mediaType), key);
         node.controls = true;
       }
       node.src = opened.url;

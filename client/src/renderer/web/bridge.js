@@ -419,6 +419,9 @@ export const harmony = {
     onCommand: () => () => {},
   },
 
+  // A browser has no GPU process of its own to lose.
+  onGpuRestarted: () => () => {},
+
   onWindowVisibility(handler) {
     const listener = () => handler(!document.hidden);
     document.addEventListener('visibilitychange', listener);

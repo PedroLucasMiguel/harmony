@@ -99,6 +99,31 @@ const LINE_CHARS = 400;
 
 const TEXT_ICONS = new Set(['file-text', 'file-code', 'file-csv']);
 
+/**
+ * What was read of the text files already drawn, and whether they were unfolded.
+ *
+ * A conversation is drawn from scratch whenever anything in it changes, and a card
+ * that has to read its file again starts empty and fills in a moment later: the
+ * whole chat jumps as the boxes grow. From here a card is drawn full at once.
+ */
+const SEEN_LIMIT = 80;
+/** @type {Map<string, {head: Uint8Array, unfolded: boolean}>} */
+const seen = new Map();
+
+function remember(key, entry) {
+  seen.delete(key);
+  seen.set(key, entry);
+  if (seen.size > SEEN_LIMIT) seen.delete(seen.keys().next().value);
+}
+
+/** Lets go of every file read: on sign-out, so nothing opened stays reachable. */
+export function forgetTextHeads() {
+  seen.clear();
+}
+
+/** One line of the box, in rem: the font size times its line height. */
+const LINE_REM = 0.8 * 1.3;
+
 /** Whether a file is read as text, by its name: what a server cannot know of a .md or a .log. */
 export function isTextFile(name) {
   return TEXT_ICONS.has(iconFor(name));
@@ -174,19 +199,25 @@ export function excerpt(bytes, fileSize, maxLines) {
  * @param {() => Promise<Uint8Array>} file.head  the start of the file, at most TEXT_PREVIEW_BYTES
  * @param {() => void} [file.onOpen]  pressing the name (saving it)
  * @param {(key: string, values?: object) => string} file.t  the words
+ * @param {string} [file.key]  what is the same about this file after a redraw: what was read is kept under it
  * @returns {{wrap: HTMLElement, end: HTMLElement}} `end` is where the file's buttons go
  */
-export function textCard({ name, bytes, size, head, onOpen, t }) {
+export function textCard({ name, bytes, size, head, onOpen, t, key = null }) {
   const wrap = document.createElement('span');
   wrap.className = 'attachment attachment-textfile';
 
   const body = document.createElement('span');
   body.className = 'textfile-body';
-  body.hidden = true;
   const pre = document.createElement('pre');
   pre.className = 'textfile-lines';
+  // Room for the lines before they are here, so the rows below do not move when they arrive.
+  pre.style.minHeight = `${Math.min(FOLDED_LINES, Math.max(1, Math.ceil(bytes / 60))) * LINE_REM}rem`;
   const left = document.createElement('span');
   left.className = 'textfile-left';
+  // A file this long will say how much is left of it: that line's room is kept too.
+  const longFile = Math.ceil(bytes / 60) > FOLDED_LINES;
+  if (longFile) left.textContent = '\u00a0';
+  left.hidden = !longFile;
   body.append(pre, left);
 
   const foot = document.createElement('span');
@@ -195,7 +226,8 @@ export function textCard({ name, bytes, size, head, onOpen, t }) {
   toggle.type = 'button';
   toggle.className = 'textfile-toggle';
   toggle.dataset.icon = 'caret-down';
-  toggle.hidden = true;
+  // Takes its place from the start, so the name does not slide over when it is shown.
+  toggle.style.visibility = 'hidden';
   toggle.setAttribute('aria-expanded', 'false');
   toggle.title = t('attachment.expand');
   toggle.setAttribute('aria-label', t('attachment.expand'));
@@ -235,11 +267,13 @@ export function textCard({ name, bytes, size, head, onOpen, t }) {
 
   let head64 = null;
   let unfolded = false;
+  const kept = key ? seen.get(key) : null;
 
   const draw = () => {
     const view = excerpt(head64, bytes, unfolded ? UNFOLDED_LINES : FOLDED_LINES);
     if (!view) return;
     pre.textContent = view.text;
+    pre.style.minHeight = '';
     const more = view.left?.lines
       ? t('attachment.lines_left', { count: view.left.lines })
       : view.left?.bytes ? t('attachment.bytes_left', { size: view.left.bytes < 1024 ? `${view.left.bytes} B` : `${Math.round(view.left.bytes / 1024)} KB` }) : '';
@@ -248,30 +282,55 @@ export function textCard({ name, bytes, size, head, onOpen, t }) {
     body.toggleAttribute('data-unfolded', unfolded);
   };
 
+  // Not text after all, or not readable: the row is the whole attachment.
+  const giveUp = () => {
+    body.hidden = true;
+    toggle.hidden = true;
+  };
+
+  const show = () => {
+    toggle.style.visibility = '';
+    syncToggle();
+    draw();
+  };
+
   const load = async () => {
     try {
       head64 = await head();
     } catch {
-      return; // the row is the whole attachment
+      giveUp();
+      return;
     }
-    if (!head64?.length || head64.includes(0)) return;
-    body.hidden = false;
-    toggle.hidden = false;
-    draw();
+    if (!head64?.length || head64.includes(0)) {
+      giveUp();
+      return;
+    }
+    if (key) remember(key, { head: head64, unfolded });
+    show();
   };
 
-  toggle.addEventListener('click', (event) => {
-    event.stopPropagation();
-    unfolded = !unfolded;
+  function syncToggle() {
     toggle.dataset.icon = unfolded ? 'caret-up' : 'caret-down';
     toggle.setAttribute('aria-expanded', String(unfolded));
     toggle.title = t(unfolded ? 'attachment.fold' : 'attachment.expand');
     toggle.setAttribute('aria-label', toggle.title);
+  }
+
+  toggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    unfolded = !unfolded;
+    if (key && head64) remember(key, { head: head64, unfolded });
+    syncToggle();
     draw();
   });
 
-  // Read when it is seen, not when it is drawn: a long history is a long list of these.
-  if (typeof IntersectionObserver === 'function') {
+  if (kept) {
+    // Read before: drawn full, as it was left, in the same run of script.
+    head64 = kept.head;
+    unfolded = kept.unfolded;
+    show();
+  } else if (typeof IntersectionObserver === 'function') {
+    // Read when it is seen, not when it is drawn: a long history is a long list of these.
     const watcher = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       watcher.disconnect();

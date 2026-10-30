@@ -551,9 +551,20 @@ p {
   background: var(--border);
 }
 .rail-add {
+  display: grid;
+  place-items: center;
+  padding: 0;
   background: transparent;
   border: 1px dashed var(--border-strong);
   color: var(--live);
+}
+.rail-add .rail-plus {
+  width: 20px;
+  height: 20px;
+  background:
+    linear-gradient(currentColor, currentColor) center / 100% 3px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 3px 100% no-repeat;
+  border-radius: 2px;
 }
 .rail-add:hover {
   color: #fff;

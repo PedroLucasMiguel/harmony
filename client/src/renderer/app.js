@@ -21,6 +21,8 @@ import { fileCard, textCard, previewsAsText, readHead } from './attachment-card.
 import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
 import { firstLink, linkEmbed } from './link-embed.js';
 import { elapsedText } from './elapsed.js';
+import { parkMedia, takeMedia, dropParked, keepable } from './media-keep.js';
+import { probeBlack } from './camera-probe.js';
 import { createServerRail } from './server-rail.js';
 import { createBackgroundSessions } from './server-sessions.js';
 import { serverKeyOf } from './server-key.js';
@@ -354,6 +356,7 @@ const el = {
   mentionPop: $('mention-pop'),
   mentionItems: $('mention-items'),
   mentionSound: $('mention-sound'),
+  fixBlackVideo: $('fix-black-video'),
   linkPreviews: $('link-previews'),
   debugLog: $('debug-log'),
   debugLogFile: $('debug-log-file'),
@@ -5220,6 +5223,16 @@ async function joinVoice(channel, password) {
         })
         .catch(() => { /* the next tick tries again */ });
 
+      // The same for a picture that arrives and is not drawn: a black tile that a
+      // person would cure by stopping everything and starting it again.
+      state.voice.reapStalledVideo()
+        .then((dead) => {
+          if (!dead.length) return undefined;
+          debugLog.event('EVENT', `video tiles opened again for showing nothing: ${dead.join(', ')}`);
+          return state.voice.syncVideo().then(() => renderChannelVideo());
+        })
+        .catch(() => { /* the next tick tries again */ });
+
       if (state.voice.hasMissingPeers) {
         state.voice.syncPeers()
           .then((result) => {
@@ -9880,6 +9893,8 @@ function attachmentNode(message) {
       size: sizeText,
       head: () => readHead(url),
       onOpen: () => saveAttachment(message),
+      // What was read is kept through a redraw of the chat.
+      key: `${state.server}#${message.id}#${message.attachmentHash}`,
       t,
     })
     : fileCard({
@@ -9905,16 +9920,16 @@ function attachmentNode(message) {
     img.title = t('app.click_to_expand');
     img.addEventListener('click', () => openLightbox(message));
     wrap.append(img);
-  } else if (message.mediaType === 'video') {
-    const video = document.createElement('video');
-    video.src = url;
-    video.controls = true;
-    wrap.append(video);
-  } else if (message.mediaType === 'audio') {
-    const audio = document.createElement('audio');
-    audio.src = url;
-    audio.controls = true;
-    wrap.append(audio);
+  } else if (message.mediaType === 'video' || message.mediaType === 'audio') {
+    // One that is playing is kept through a redraw of the chat: see media-keep.js.
+    const key = `${state.server}#${message.id}#${message.attachmentHash}`;
+    let media = takeMedia(key);
+    if (!media) {
+      media = keepable(document.createElement(message.mediaType), key);
+      media.src = url;
+      media.controls = true;
+    }
+    wrap.append(media);
   }
 
   // Where the file's buttons go: the end of the card, or the line under a preview.
@@ -10432,6 +10447,8 @@ function messageRow(message, previous) {
 function renderChat({ scrollToBottom = false, restore = null, toNews = false } = {}) {
   const log = el.chatLog;
   const wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  // What is playing in it is not to be stopped by drawing it again.
+  parkMedia(log);
 
   // The line goes before the first message newer than what was read, and the
   // message under it starts a block of its own.
@@ -10450,6 +10467,7 @@ function renderChat({ scrollToBottom = false, restore = null, toNews = false } =
     rows.push(messageRow(m, all[i - 1]));
   });
   log.replaceChildren(...rows);
+  dropParked();
 
   // Entering a channel with news: the last of what was read, then the line.
   if (toNews) {
@@ -11650,6 +11668,8 @@ async function startCamera() {
       await voiceRt('voice:publishing', {
         channelId: state.voice.channelId, kind: 'c', on: true,
       });
+      // Looked at in the background: it costs a call nothing while the picture is fine.
+      void healBlackCamera();
       return undefined;
     }
 
@@ -11693,6 +11713,104 @@ async function startCamera() {
     renderChannelVideo();
   }
   return undefined;
+}
+
+/**
+ * Put every stream's picture back.
+ *
+ * A <video> showing a live stream can be left black -- by the GPU process
+ * restarting under it, above all -- while the stream itself is fine; attaching
+ * the stream to the element again makes it draw. Only elements that show a
+ * stream are touched: a downloaded video in the chat has none, and is left alone.
+ *
+ * @returns {number} how many pictures were put back
+ */
+function reattachVideos() {
+  let count = 0;
+  for (const video of document.querySelectorAll('video')) {
+    const stream = video.srcObject;
+    if (!stream) continue;
+    video.srcObject = null;
+    video.srcObject = stream;
+    video.play().catch(() => { /* a tile that is not meant to be playing */ });
+    count += 1;
+  }
+  return count;
+}
+
+// The GPU process was restarted (see main): what it was drawing is black until it is told again.
+// Twice, because the first look can be before it is ready to draw.
+harmony.onGpuRestarted?.(() => {
+  debugLog.event('EVENT', 'the GPU process was restarted: putting the video pictures back');
+  setTimeout(() => debugLog.event('EVENT', `video pictures put back: ${reattachVideos()}`), 800);
+  setTimeout(reattachVideos, 4000);
+});
+
+el.fixBlackVideo.addEventListener('click', async () => {
+  // The camera tile and the preview are put back first (they are the elements), then what the
+  // call is receiving is opened again from fresh key frames, which is what a black tile needs
+  // when the picture is not being decoded at all.
+  const count = reattachVideos();
+  debugLog.event('EVENT', `fix black video pressed: ${count} pictures put back`);
+  if (state.voice.channelId) {
+    for (const key of state.voice.videoKeys ?? []) state.voice.unsubscribeVideo(key);
+    await state.voice.syncVideo().catch(() => { /* the reconcile timer comes back */ });
+    renderChannelVideo();
+    reattachVideos();
+    if (state.voice.camLive) void healBlackCamera();
+  }
+  deviceNote(t('settings.voice.video_fixed'));
+});
+
+/**
+ * A camera that opens black is opened again.
+ *
+ * Some webcams deliver nothing but black frames when they are first opened, with
+ * the light on and everything reporting fine, and come right after being turned off
+ * and on a few times -- which is what a person ends up doing, with everybody
+ * watching a black square meanwhile. This looks at what the camera is giving (see
+ * camera-probe.js) and does that turning off and on, up to twice, swapping the new
+ * capture in on the live sender as a change of webcam does. A room that is simply
+ * dark has noise in it and does not count as black.
+ */
+const BLACK_CAMERA_RETRIES = 2;
+let healingCamera = false;
+
+async function healBlackCamera() {
+  if (healingCamera) return;
+  healingCamera = true;
+  try {
+    for (let attempt = 1; attempt <= BLACK_CAMERA_RETRIES + 1; attempt += 1) {
+      const stream = state.voice.camStream;
+      if (!stream || !state.voice.camLive) return;
+      if (!await probeBlack(stream)) {
+        if (attempt > 1) debugLog.event('EVENT', `camera picture came back after ${attempt - 1} reopening(s)`);
+        return;
+      }
+      if (attempt > BLACK_CAMERA_RETRIES) {
+        debugLog.event('EVENT', 'camera still black after being opened again; left as it is');
+        return;
+      }
+      debugLog.event('EVENT', `camera is delivering black frames; opening it again (${attempt}/${BLACK_CAMERA_RETRIES})`);
+      // Let go of what is black first: some drivers will not hand out the device twice.
+      const device = state.voice.camDeviceId || '';
+      state.camera.effect?.stop?.();
+      stream.getTracks().forEach((track) => track.stop());
+      await new Promise((r) => setTimeout(r, 400));
+      const raw = await openCamera(device).catch(() => null);
+      if (!raw) return;
+      const fresh = await withBackground(raw);
+      if (!state.voice.camLive || !await state.voice.switchCam(fresh)) {
+        fresh.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      renderChannelVideo();
+    }
+  } catch (err) {
+    console.warn('[camera] could not check for black frames:', err);
+  } finally {
+    healingCamera = false;
+  }
 }
 
 async function stopCamera() {

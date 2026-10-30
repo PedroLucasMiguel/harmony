@@ -76,6 +76,31 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
+/*
+ * Chromium's own processes dying -- above all the GPU's, which draws every video.
+ *
+ * It restarts the GPU process by itself, and a <video> that was playing a stream
+ * when it went is left showing black until it is attached again. Right after an
+ * update is when this happens on some machines (the first start with new binaries
+ * and a cold shader cache). So the page is told, and puts its pictures back; and
+ * what happened is noted for the debug log, which is how it can be told whether
+ * this is what was behind a black camera.
+ */
+app.on('child-process-gone', (_event, details) => {
+  const what = `${details.type}${details.name ? ` (${details.name})` : ''} gone: reason=${details.reason} exit=${details.exitCode}`;
+  console.warn(`[process] ${what}`);
+  debugLog.event('PROC', what);
+  if (details.type !== 'GPU') return;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('gpu:restarted');
+  }
+});
+app.on('render-process-gone', (_event, _contents, details) => {
+  const what = `renderer gone: reason=${details.reason} exit=${details.exitCode}`;
+  console.warn(`[process] ${what}`);
+  debugLog.event('PROC', what);
+});
+
 // GPU H.264 encoding (NVENC / AMF / Quick Sync) is already the default -- see
 // gpu.js. This only ever turns it OFF, for a machine whose driver produces a
 // broken stream. Switches are read once at startup, hence the restart.

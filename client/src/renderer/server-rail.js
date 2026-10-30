@@ -145,7 +145,13 @@ export function createServerRail({
     add.className = 'rail-item rail-add';
     add.title = t('rail.add_server');
     add.setAttribute('aria-label', t('rail.add_server'));
-    add.textContent = '+';
+    // Drawn, not typed: a text plus sits wherever the font puts it, which is never the middle.
+    // In a span of its own (the button's ::before is the mark that says which server is open),
+    // and from two bars in CSS: the icon set's plus is a square with a plus cut out of it.
+    const plus = document.createElement('span');
+    plus.className = 'rail-plus';
+    plus.setAttribute('aria-hidden', 'true');
+    add.append(plus);
     add.addEventListener('click', () => onAdd());
 
     root.replaceChildren(home, separator, ...items, add);

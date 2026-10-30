@@ -19,8 +19,12 @@ import https from 'node:https';
 import net from 'node:net';
 import zlib from 'node:zlib';
 
-/** How much of a page is read: the head of it is all that holds what a card says. */
-const PAGE_BYTES = 512 * 1024;
+/**
+ * How much of a page is read at most, and it stops at the end of the head: that is all
+ * that holds what a card says. Some pages put megabytes of script in front of it
+ * (YouTube's tags start 780 KB in), so the allowance is generous and the stop is early.
+ */
+const PAGE_BYTES = 2 * 1024 * 1024;
 /** A picture bigger than this is not kept. */
 const IMAGE_BYTES = 4 * 1024 * 1024;
 const TIMEOUT_MS = 6000;
@@ -95,7 +99,7 @@ function guardedLookup(allowPrivate) {
 }
 
 /** What one request answered. */
-function once(url, { accept, maxBytes, allowPrivate }) {
+function once(url, { accept, maxBytes, allowPrivate, stopAt = null }) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     if (target.protocol !== 'http:' && target.protocol !== 'https:') return reject(new Error('not a web address'));
@@ -132,6 +136,8 @@ function once(url, { accept, maxBytes, allowPrivate }) {
       const chunks = [];
       let have = 0;
       let done = false;
+      // The last bytes of what was read, so a marker split between two chunks is still seen.
+      let tail = '';
       const finish = (truncated) => {
         if (done) return;
         done = true;
@@ -146,6 +152,11 @@ function once(url, { accept, maxBytes, allowPrivate }) {
         const room = maxBytes - have;
         chunks.push(room < chunk.length ? chunk.subarray(0, room) : chunk);
         have += Math.min(chunk.length, room);
+        if (stopAt) {
+          const window = tail + chunk.toString('latin1').toLowerCase();
+          if (window.includes(stopAt)) return finish(false);
+          tail = window.slice(-stopAt.length);
+        }
         if (have >= maxBytes) finish(true);
       });
       stream.on('end', () => finish(false));
@@ -166,13 +177,17 @@ function once(url, { accept, maxBytes, allowPrivate }) {
  *
  * @returns {Promise<{status: number, url: string, headers: object, body: Buffer, truncated: boolean}>}
  */
-export async function fetchLimited(url, { accept = '*/*', maxBytes = PAGE_BYTES, allowPrivate = false } = {}) {
+export async function fetchLimited(url, {
+  accept = '*/*', maxBytes = PAGE_BYTES, allowPrivate = false, stopAt = null,
+} = {}) {
   let next = url;
   const deadline = Date.now() + TIMEOUT_MS * 2;
   for (let hops = 0; hops <= MAX_REDIRECTS; hops += 1) {
     if (Date.now() > deadline) throw new Error('timed out');
     // eslint-disable-next-line no-await-in-loop
-    const result = await once(next, { accept, maxBytes, allowPrivate });
+    const result = await once(next, {
+      accept, maxBytes, allowPrivate, stopAt,
+    });
     if (!result.redirect) return result;
     next = result.redirect;
   }
@@ -289,6 +304,30 @@ export function normalise(raw) {
   return url.href.length <= 2048 ? url.href : null;
 }
 
+/**
+ * The id of the video a YouTube address is about (youtube.com/watch, /shorts, /live, /embed,
+ * youtu.be), or null for any other address.
+ */
+export function youtubeVideo(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase().replace(/^(www|m|music)\./, '');
+  let id = null;
+  if (host === 'youtu.be') id = url.pathname.split('/')[1];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (url.pathname === '/watch') id = url.searchParams.get('v');
+    else {
+      const [, kind, rest] = url.pathname.split('/');
+      if (['shorts', 'live', 'embed', 'v'].includes(kind)) id = rest;
+    }
+  }
+  return /^[\w-]{11}$/.test(id ?? '') ? id : null;
+}
+
 export class LinkPreviews {
   #chat;
   #allowPrivate;
@@ -342,9 +381,15 @@ export class LinkPreviews {
   }
 
   async #build(url) {
+    // YouTube says it in a few hundred bytes of JSON; its page says it 780 KB in.
+    if (youtubeVideo(url)) {
+      const card = await this.#youtube(url).catch(() => null);
+      if (card) return card;
+    }
     const page = await fetchLimited(url, {
       accept: 'text/html,application/xhtml+xml,image/*;q=0.8,*/*;q=0.5',
       allowPrivate: this.#allowPrivate,
+      stopAt: '</head>',
     });
     if (page.status < 200 || page.status >= 300) return null;
     const type = String(page.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
@@ -369,6 +414,37 @@ export class LinkPreviews {
     }
     return {
       url, site: meta.site, title: meta.title, description: meta.description, imageHash, color: meta.color, kind: meta.kind,
+    };
+  }
+
+  /** A YouTube video, from its oEmbed answer: the title, the channel and the picture. */
+  async #youtube(url) {
+    const id = youtubeVideo(url);
+    const answer = await fetchLimited(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}&format=json`,
+      { accept: 'application/json', maxBytes: 64 * 1024 },
+    );
+    if (answer.status !== 200) return null;
+    const info = JSON.parse(answer.body.toString('utf8'));
+    if (!info?.title) return null;
+
+    // The big picture where there is one, then the one oEmbed names.
+    let imageHash = null;
+    for (const picture of [`https://i.ytimg.com/vi/${id}/maxresdefault.jpg`, info.thumbnail_url]) {
+      if (!picture || imageHash) continue;
+      try {
+        const got = await fetchLimited(picture, { accept: 'image/*', maxBytes: IMAGE_BYTES });
+        if (got.status === 200 && !got.truncated) imageHash = this.#keepImage(got.body);
+      } catch { /* the next one */ }
+    }
+    return {
+      url,
+      site: 'YouTube',
+      title: tidy(info.title, 200),
+      description: tidy(info.author_name, 120),
+      imageHash,
+      color: '#ff0000',
+      kind: 'video.other',
     };
   }
 

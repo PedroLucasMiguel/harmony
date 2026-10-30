@@ -145,6 +145,16 @@ async function run() {
   await signIn(page, a.base, 'pedro');
   state = await rail(page);
   check('once a server is saved the rail is there, with private messages and "+"', !state.hidden && state.home && state.add, JSON.stringify(state));
+  const plus = await page.evaluate(`
+    const add = document.querySelector('#server-rail .rail-add');
+    const icon = add.querySelector('.rail-plus');
+    const box = add.getBoundingClientRect(); const mark = icon.getBoundingClientRect();
+    const pill = getComputedStyle(add, '::before');
+    return { text: add.textContent, dx: (mark.left + mark.width / 2) - (box.left + box.width / 2), dy: (mark.top + mark.height / 2) - (box.top + box.height / 2),
+      size: Math.round(mark.width), pillHeight: pill.height, drawn: getComputedStyle(icon).backgroundImage.includes('gradient') };`);
+  check('the "+" is a drawn icon exactly in the middle of its circle',
+    plus.text === '' && Math.abs(plus.dx) < 0.6 && Math.abs(plus.dy) < 0.6 && plus.size === 20 && plus.drawn, JSON.stringify(plus));
+  check('and the circle\'s own mark (which says which server is open) is left alone', plus.pillHeight === '0px', plus.pillHeight);
   check('and it lists that server, open', state.servers.length === 1 && state.servers[0].current, JSON.stringify(state.servers));
 
   await page.evaluate("document.querySelector('#server-rail .rail-add').click(); return true;");

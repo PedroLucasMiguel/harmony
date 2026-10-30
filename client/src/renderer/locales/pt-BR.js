@@ -1096,6 +1096,10 @@ export default {
   'mention.everyone_hint': 'Avisa todos que podem ler este canal',
   'channels.occupied_for': 'Há alguém neste canal há este tempo',
   'chat.new_messages': 'Novas mensagens',
+  'settings.voice.black_video': 'Câmera ou vídeo preto?',
+  'settings.voice.fix_video': 'Corrigir vídeo preto',
+  'settings.voice.black_video_note': 'Se a sua câmera, ou a câmera ou tela de outra pessoa, aparece preta enquanto a chamada vai bem, isto recoloca cada imagem sem sair da chamada.',
+  'settings.voice.video_fixed': 'As imagens de vídeo foram recolocadas.',
 
   // --- view
   'view.broadcast.framerate': 'Taxa de quadros',

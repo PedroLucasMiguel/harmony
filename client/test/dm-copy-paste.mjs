@@ -295,6 +295,49 @@ async function run() {
       await until(() => v.currentTime > 0.3, 5000);
       const t = v.currentTime; v.pause(); return { advanced: t, duration: v.duration };`);
     check('a video in a private conversation plays', !played.error && played.advanced > 0.3, JSON.stringify(played));
+
+    // The conversation is drawn again whenever anything in it changes: what is playing must go on.
+    const kept = await alice.evaluate(`
+      const v = [...document.querySelectorAll('#dm-log video')].at(-1);
+      v.__mine = true; v.muted = true; v.currentTime = 0;
+      await v.play();
+      await new Promise((ok) => setTimeout(ok, 600));
+      const before = v.currentTime;
+      const input = document.getElementById('dm-input');
+      input.value = 'a message that draws the conversation again';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.getElementById('dm-send').click();
+      await new Promise((ok) => setTimeout(ok, 1400));
+      const now = [...document.querySelectorAll('#dm-log video')].find((e) => e.__mine);
+      const r = { sameElement: Boolean(now), playing: now ? !now.paused : null, before, after: now?.currentTime ?? null,
+        messages: document.querySelectorAll('#dm-log .chat-msg').length };
+      now?.pause();
+      return r;`);
+    check('a video that is playing is not stopped when the conversation is drawn again', kept.sameElement && kept.playing && kept.after > kept.before + 0.5, JSON.stringify(kept));
+  }
+
+  // --- the other side: Bob opens the conversation and plays what Alice sent -------------------------------------------------
+  {
+    const frames = [];
+    // Bob's recovery key / unlock prompts are not what this is about.
+    await bob.evaluate("document.querySelectorAll('dialog[open]').forEach((d) => d.close()); return true;");
+    await bob.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
+    await until(bob, "document.querySelector('#dm-list .dm-row, #dm-list li')", { label: 'bob\'s list' });
+    await bob.evaluate("(document.querySelector('#dm-list .dm-row') ?? document.querySelector('#dm-list li')).click(); return true;");
+    await until(bob, "document.querySelectorAll('#dm-log .chat-msg').length > 0", { label: 'bob\'s conversation' });
+    await sleep(2500);
+    console.log('BOB', await bob.evaluate(`return JSON.stringify({ msgs: document.querySelectorAll('#dm-log .chat-msg').length, videos: document.querySelectorAll('#dm-log video').length, audios: document.querySelectorAll('#dm-log audio').length, notes: document.querySelectorAll('#dm-log .voice-note').length, cards: document.querySelectorAll('#dm-log .attachment-card').length, note: document.getElementById('dm-note').textContent })`));
+    const r = await bob.evaluate(`
+      const v = document.querySelector('#dm-log video');
+      if (!v) return { error: 'no video' };
+      const until = (fn, ms) => new Promise((ok) => { const t0 = performance.now(); const tick = () => (fn() || performance.now() - t0 > ms ? ok() : setTimeout(tick, 50)); tick(); });
+      await until(() => v.readyState >= 1 || v.error, 6000);
+      if (v.error) return { error: 'media error ' + v.error.code };
+      v.muted = true;
+      try { await v.play(); } catch (err) { return { error: err.message }; }
+      await until(() => v.currentTime > 0.3, 5000);
+      return { advanced: v.currentTime };`);
+    check('Bob can play what Alice sent', !r.error && r.advanced > 0.3, JSON.stringify(r));
   }
 
   // --- a voice message in a private conversation -----------------------------------------------------------------------------

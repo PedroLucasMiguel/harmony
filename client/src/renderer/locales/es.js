@@ -1096,6 +1096,10 @@ export default {
   'mention.everyone_hint': 'Avisa a todos los que pueden leer este canal',
   'channels.occupied_for': 'Hay alguien en este canal desde hace este tiempo',
   'chat.new_messages': 'Mensajes nuevos',
+  'settings.voice.black_video': '¿Cámara o vídeo en negro?',
+  'settings.voice.fix_video': 'Arreglar vídeo en negro',
+  'settings.voice.black_video_note': 'Si tu cámara, o la cámara o pantalla de otra persona, se ve negra aunque la llamada va bien, esto vuelve a poner cada imagen sin salir de la llamada.',
+  'settings.voice.video_fixed': 'Se volvieron a poner las imágenes de vídeo.',
 
   // --- view
   'view.broadcast.framerate': 'Velocidad de fotogramas',

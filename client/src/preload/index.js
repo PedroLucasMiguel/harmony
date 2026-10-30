@@ -122,6 +122,17 @@ contextBridge.exposeInMainWorld('harmony', {
     return () => ipcRenderer.removeListener('window:visibility', listener);
   },
 
+  /**
+   * Fires when the GPU process died and was started again: the pictures of
+   * streams have to be attached again.
+   * @param {() => void} handler
+   */
+  onGpuRestarted(handler) {
+    const listener = () => handler();
+    ipcRenderer.on('gpu:restarted', listener);
+    return () => ipcRenderer.removeListener('gpu:restarted', listener);
+  },
+
   permissions: {
     screen: invoke('permissions:screen-status'),
     openScreenSettings: invoke('permissions:screen-settings'),

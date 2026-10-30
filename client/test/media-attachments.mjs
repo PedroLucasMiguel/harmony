@@ -222,6 +222,19 @@ async function run() {
     const t = el.currentTime; el.pause(); return { advanced: t, duration: el.duration };`);
   check('a sound plays', !sound.error && sound.advanced > 0.4, JSON.stringify(sound));
 
+  // The chat is drawn again for every message: what is playing must go on.
+  const kept = await cdp.evaluate(`
+    const v = document.querySelectorAll('.chat-msg video')[0];
+    v.__mine = true; v.muted = true; v.currentTime = 0; await v.play();
+    await new Promise((ok) => setTimeout(ok, 600));
+    return { before: v.currentTime };`);
+  await fetch(`${BASE}/api/channels/${channel.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ body: 'a message that draws the chat again' }) });
+  await sleep(1500);
+  const after = await cdp.evaluate(`
+    const v = [...document.querySelectorAll('.chat-msg video')].find((e) => e.__mine);
+    const r = { same: Boolean(v), playing: v ? !v.paused : null, at: v?.currentTime ?? null }; v?.pause(); return r;`);
+  check('a video that is playing is not stopped when a message draws the chat again', after.same && after.playing && after.at > kept.before + 0.5, JSON.stringify({ kept, after }));
+
   // --- text files: the first lines, read from the start of the file ---------------------------------------------------------
   const textState = () => cdp.evaluate(`
     const out = {};
@@ -260,6 +273,26 @@ async function run() {
   check('and a big one is read only as far as the preview goes (64 KB), not in full', unfoldedBig.chars < 70_000 && unfoldedBig.lines > 400 === false, JSON.stringify(unfoldedBig));
   await cdp.evaluate("document.querySelector('.chat-msg .attachment-textfile .textfile-toggle').click(); return true;");
   await sleep(200);
+
+  // Drawing the chat again must not empty the cards and fill them a moment later: the page would jump.
+  const heightsBefore = Object.fromEntries(Object.entries(await textState()).map(([k, v]) => [k, v.height]));
+  await cdp.evaluate(`
+    window.__redrawProbe = [];
+    new MutationObserver(() => {
+      for (const c of document.querySelectorAll('.chat-msg .attachment-textfile')) {
+        const pre = c.querySelector('.textfile-lines');
+        window.__redrawProbe.push({ name: c.querySelector('.attachment-name').textContent, empty: !pre.textContent, height: Math.round(c.getBoundingClientRect().height) });
+      }
+    }).observe(document.querySelector('#chat-log'), { childList: true });
+    return true;`);
+  await fetch(`${BASE}/api/channels/${channel.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ body: 'and once more' }) });
+  await sleep(1500);
+  const probe = await cdp.evaluate('return window.__redrawProbe;');
+  const heightsAfter = Object.fromEntries(Object.entries(await textState()).map(([k, v]) => [k, v.height]));
+  const probed = probe.filter((p) => p.name === 'server.log');
+  check('the chat drawn again keeps a text file full, at the same size, from the first moment',
+    probed.length > 0 && probed.every((p) => !p.empty && p.height === heightsBefore['server.log']) && heightsAfter['server.log'] === heightsBefore['server.log'],
+    JSON.stringify({ probed: probed.slice(0, 3), heightsBefore, heightsAfter }));
 
   const cards = await cdp.evaluate(`
     return [...document.querySelectorAll('.chat-msg .attachment-card')].map((c) => ({

@@ -1,6 +1,6 @@
 {
   "name": "@harmony/client",
-  "version": "4.4.0",
+  "version": "4.4.1",
   "private": true,
   "description": "Harmony desktop client: share a screen or window, or watch someone else's",
   "author": "Pedro Lucas Miguel",
@@ -40,6 +40,9 @@
     "test:mention-who": "node test/mention-who.mjs",
     "test:voice-timer": "node test/voice-timer.mjs",
     "test:unread-divider": "node test/unread-divider.mjs",
+    "test:camera-probe": "node test/camera-probe.mjs",
+    "test:gpu-restart": "node test/gpu-restart.mjs",
+    "test:video-health": "node --test test/video-health.test.mjs",
     "test:elapsed": "node --test test/elapsed.test.mjs",
     "test:background-load": "node --test test/background-load.mjs",
     "test:background-load-live": "node test/background-load-live.mjs",

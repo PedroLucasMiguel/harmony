@@ -1106,6 +1106,10 @@ export default {
   'mention.everyone_hint': 'Notifies everybody who can read this channel',
   'channels.occupied_for': 'Somebody has been in this channel for this long',
   'chat.new_messages': 'New messages',
+  'settings.voice.black_video': 'Black camera or video?',
+  'settings.voice.fix_video': 'Fix black video',
+  'settings.voice.black_video_note': 'If your camera, or somebody else\'s camera or screen, shows black while the call is otherwise fine, this puts every picture back without leaving the call.',
+  'settings.voice.video_fixed': 'The video pictures were put back.',
 
   // --- view
   'view.broadcast.framerate': 'Framerate',
