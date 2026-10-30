@@ -561,38 +561,86 @@ p {
 }
 /* ---------- private messages ---------- */
 
+/*
+ * A page of its own, as on every app of this shape: the list of conversations on
+ * the left (its width is dragged, --dms-col), the conversation beside it, both as
+ * tall as the window, each with a bar across the top at the same height so the
+ * two read as one row.
+ */
 #view-dms .dms-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  grid-template-columns: var(--dms-col, minmax(240px, 320px)) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
 #view-dms .dms-list {
+  position: relative;
   display: flex;
   min-height: 0;
+  background: rgb(var(--tint-rgb) / 0.025);
   border-right: 1px solid var(--border);
+}
+.col-resizer[data-resize='dms'] {
+  right: -5px;
 }
 /* The list is the page's own column here, not a popover over something else. */
 #view-dms .dm-panel,
 #view-dms .dm-panel[hidden] {
   display: flex !important;
+  flex-direction: column;
   position: static;
   flex: 1 1 auto;
   width: auto;
   max-height: none;
   min-height: 0;
+  gap: 0;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
+#view-dms .dm-panel-head {
+  flex: none;
+  box-sizing: border-box;
+  height: 3.25rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--border);
+}
+#view-dms .dm-panel-head h2 {
+  font-size: 1.05rem;
+}
 #view-dms .dm-panel-head #dm-panel-close {
   display: none;
 }
+#view-dms .dm-panel-note,
+#view-dms .dm-panel-actions,
+#view-dms .dm-empty {
+  margin: 0.7rem 1rem 0;
+}
+#view-dms .dm-panel-note {
+  white-space: pre-line;
+}
+#view-dms .dm-panel-note {
+  font-size: 0.82rem;
+}
+#view-dms .dm-panel-actions {
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+#view-dms .dm-panel-actions button {
+  flex: 1 1 auto;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+}
 #view-dms .dm-list {
   flex: 1 1 auto;
+  min-height: 0;
+  margin: 0.4rem 0 0;
+  padding: 0.25rem 0.5rem 0.75rem;
   overflow-y: auto;
 }
+
 #view-dms .dms-pane {
   position: relative;
   display: flex;
@@ -602,13 +650,79 @@ p {
 }
 #view-dms #dm-active {
   flex: 1 1 auto;
+  min-height: 0;
 }
 #view-dms .dms-none {
   margin: auto;
+  font-size: 1rem;
 }
 #view-dms .dms-none[hidden] {
   display: none;
 }
+
+/* The bar across the top of a conversation: who, that it is private, and what can be done. */
+#view-dms .dm-head {
+  flex: none;
+  box-sizing: border-box;
+  height: 3.25rem;
+  padding: 0 1rem;
+  gap: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+#view-dms .dm-head .avatar {
+  width: 1.8rem;
+  height: 1.8rem;
+  font-size: 0.72rem;
+}
+#view-dms .dm-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+/* Not the small grey capitals that headings elsewhere are: this is a person's name. */
+#view-dms .dm-head h2 {
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+/* A person's own name font can be tall; the bar is not. */
+#view-dms .dm-head h2[data-name-font] {
+  font-size: 1rem;
+}
+#view-dms .dm-head .icon-only {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+#view-dms .dm-head .icon-only:hover {
+  background: rgb(var(--tint-rgb) / 0.1);
+  color: var(--text);
+}
+/* On a wide screen the list is beside it: closing is for the phone, where it goes back to the list. */
+#view-dms #dm-close {
+  display: none;
+}
+
+/* Messages and the box to write in, with room to breathe on every side. */
+#view-dms #dm-banner,
+#view-dms .dm-more {
+  margin-left: 1rem;
+  margin-right: 1rem;
+}
+#view-dms #dm-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.75rem 1rem 0.5rem;
+}
+#view-dms #dm-form {
+  flex: none;
+  padding: 0.25rem 1rem 1rem;
+}
+#view-dms #dm-note {
+  margin: 0 1rem 0.5rem;
+}
+
 .dm-row-server {
   margin-left: auto;
   padding: 0 6px;
@@ -632,6 +746,9 @@ p {
   #view-dms .dms-layout[data-conversation] .dms-list,
   #view-dms .dms-layout:not([data-conversation]) .dms-pane {
     display: none;
+  }
+  #view-dms #dm-close {
+    display: inline-flex;
   }
 }
 

@@ -552,6 +552,7 @@ export default {
   'diag_close.close': 'Close',
 
   // --- download
+  'dm.resize_list': 'Resize the list of conversations',
   'dm.backup_note': 'Save your recovery key. Without it you cannot read your private messages on another computer.',
   'dm.banner.accept': 'Accept the new key',
   'dm.banner.blocked': 'You blocked {name}. Nothing passes between you while this holds.',

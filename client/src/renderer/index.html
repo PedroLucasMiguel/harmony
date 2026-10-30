@@ -831,8 +831,11 @@
       the rail's first bubble opens it, and it works whichever server is open.
     -->
     <section class="view" id="view-dms">
-      <div class="dms-layout">
+      <div class="dms-layout" id="dms-layout">
         <aside class="dms-list">
+          <!-- Drag to narrow or widen the list; double-click for the usual width. -->
+          <div class="col-resizer" data-resize="dms" role="separator"
+               aria-orientation="vertical" aria-label="Resize the list of conversations" data-i18n-aria-label="dm.resize_list"></div>
       <div class="dm-panel" id="dm-panel" hidden role="dialog" aria-label="Private messages" data-i18n-aria-label="dm.title">
         <div class="dm-panel-head">
           <h2 data-i18n="dm.title">Private messages</h2>

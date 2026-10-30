@@ -219,6 +219,8 @@ const DEFAULTS = {
    */
   sideWidth: null,
   membersWidth: null,
+  // The list of conversations on the private-messages page, dragged wider or narrower.
+  dmListWidth: null,
   /*
    * The login screen's privacy mask: server addresses and names, the
    * username and the server list drawn as dots, like a password. For a

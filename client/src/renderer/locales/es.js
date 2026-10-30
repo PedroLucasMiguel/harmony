@@ -542,6 +542,7 @@ export default {
   'diag_close.close': 'Cerrar',
 
   // --- download
+  'dm.resize_list': 'Cambiar el ancho de la lista de conversaciones',
   'dm.backup_note': 'Guarda tu clave de recuperación. Sin ella no puedes leer tus mensajes privados en otro equipo.',
   'dm.banner.accept': 'Aceptar la clave nueva',
   'dm.banner.blocked': 'Bloqueaste a {name}. No pasa nada entre ustedes mientras esté así.',

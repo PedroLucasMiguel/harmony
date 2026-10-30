@@ -183,6 +183,28 @@ async function run() {
   const current = await pedro.evaluate(`return document.querySelector('#server-rail .rail-item[data-server*="${PORT_A}"]').getAttribute('aria-current')`);
   check('opening and answering it never moved him off server A', current === 'true', String(current));
 
+  // --- the list of conversations can be dragged wider ------------------------------------------------------------------
+  await pedro.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
+  await waitFor(pedro, "document.querySelector('.view[data-active]')?.id === 'view-dms'", { label: 'the page again' });
+  const listWidth = () => pedro.evaluate("return Math.round(document.querySelector('.dms-list').getBoundingClientRect().width)");
+  const before = await listWidth();
+  const handle = await pedro.evaluate("const r = document.querySelector('.dms-list .col-resizer').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }");
+  await pedro.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: handle.x, y: handle.y, button: 'left', buttons: 1, clickCount: 1 });
+  for (let step = 1; step <= 8; step += 1) {
+    await pedro.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: handle.x + step * 15, y: handle.y, button: 'left', buttons: 1 });
+  }
+  await pedro.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: handle.x + 120, y: handle.y, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(500);
+  const wider = await listWidth();
+  check('dragging the edge of the list makes it wider', wider >= before + 100, `${before} -> ${wider}`);
+  const saved = await pedro.evaluate("const r = await harmony.settings.get(); return (r.data ?? r).dmListWidth");
+  check('and the width is remembered', Math.abs(saved - wider) <= 2, String(saved));
+  await pedro.evaluate("document.querySelector('.dms-list .col-resizer').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true;");
+  await sleep(500);
+  check('double-clicking the edge puts it back to the usual width', Math.abs((await listWidth()) - before) <= 2, String(await listWidth()));
+  await pedro.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
+  await waitFor(pedro, "document.querySelector('.view[data-active]')?.id === 'view-channels'", { label: 'leaving the list' });
+
   // --- a narrow screen: a slim rail, and the list or the conversation, one at a time -----------------------------
   await pedro.setViewport(400, 800);
   await sleep(500);

@@ -145,6 +145,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   views: document.querySelectorAll('.view'),
   appShell: $('app-shell'),
+  dmsLayout: $('dms-layout'),
   callBar: $('call-bar'),
   callBarReturn: $('call-bar-return'),
   callBarMute: $('call-bar-mute'),
@@ -978,6 +979,7 @@ async function boot() {
   applyPrivacy(Boolean(state.settings.hideDetails), { render: false });
   applyColumnWidth('side', state.settings.sideWidth);
   applyColumnWidth('members', state.settings.membersWidth);
+  applyColumnWidth('dms', state.settings.dmListWidth);
   el.serverUrl.value = state.settings.serverUrl;
   el.username.value = state.settings.username;
   el.password.value = state.settings.password ?? '';
@@ -13923,18 +13925,23 @@ harmony.realtime.onEvent(onRealtimeEvent);
 const COLUMNS = {
   side: { setting: 'sideWidth', css: '--side-col', min: 160, floor: 200, normal: 260, max: 560, share: 38 },
   members: { setting: 'membersWidth', css: '--members-col', min: 120, floor: 150, normal: 200, max: 480, share: 34 },
+  // The list on the private-messages page, which has a layout of its own.
+  dms: {
+    setting: 'dmListWidth', css: '--dms-col', min: 220, floor: 220, normal: 320, max: 640, share: 45, host: () => el.dmsLayout,
+  },
 };
 
 /** Set a column's width; null, or the normal width, is the default. */
 function applyColumnWidth(key, width) {
   const col = COLUMNS[key];
   const wanted = Number(width);
+  const host = col.host ? col.host() : el.channelsLayout;
   if (width == null || !Number.isFinite(wanted) || Math.abs(wanted - col.normal) < 2) {
-    el.channelsLayout.style.removeProperty(col.css);
+    host.style.removeProperty(col.css);
     return null;
   }
   const w = Math.round(Math.min(col.max, Math.max(col.min, wanted)));
-  el.channelsLayout.style.setProperty(
+  host.style.setProperty(
     col.css,
     `minmax(${Math.min(col.floor, w)}px, min(${w}px, ${col.share}vw))`,
   );
