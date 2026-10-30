@@ -175,6 +175,8 @@ const desktop = () => ({
     recoveryVerify: lift(raw.api.recoveryVerify),
     recoveryReset: lift(raw.api.recoveryReset),
     me: lift(raw.api.me),
+    linkPreview: lift(raw.api.linkPreview),
+    notified: lift(raw.api.notified),
     setAvatar: lift(raw.api.setAvatar),
     setBanner: lift(raw.api.setBanner),
     setBannerDim: lift(raw.api.setBannerDim),

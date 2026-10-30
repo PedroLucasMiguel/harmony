@@ -498,6 +498,8 @@ export class Realtime {
       type: 'voice:roster',
       channelId,
       roster: this.#deps.voice.roster(channelId),
+      // null once the last person has left: the timer stops.
+      occupiedFor: this.#deps.voice.occupiedFor(channelId),
     };
     if (!channel) return this.broadcast(payload);
     const groups = new Map(this.#deps.channels.groups().map((g) => [g.id, g]));

@@ -18,6 +18,9 @@ import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
 import { fileCard, textCard, previewsAsText, readHead } from './attachment-card.js';
+import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
+import { firstLink, linkEmbed } from './link-embed.js';
+import { elapsedText } from './elapsed.js';
 import { createServerRail } from './server-rail.js';
 import { createBackgroundSessions } from './server-sessions.js';
 import { serverKeyOf } from './server-key.js';
@@ -319,6 +322,8 @@ const el = {
   chatAttach: $('chat-attach'),
   chatNote: $('chat-note'),
   chatSend: $('chat-send'),
+  chatRecord: $('chat-record'),
+  chatRecorder: $('chat-recorder'),
   uiScale: $('ui-scale'),
   scaleValue: $('scale-value'),
   scaleDown: $('scale-down'),
@@ -349,6 +354,7 @@ const el = {
   mentionPop: $('mention-pop'),
   mentionItems: $('mention-items'),
   mentionSound: $('mention-sound'),
+  linkPreviews: $('link-previews'),
   debugLog: $('debug-log'),
   debugLogFile: $('debug-log-file'),
   debugLogError: $('debug-log-error'),
@@ -608,6 +614,19 @@ const state = {
      */
     collapsed: new Set(),
     occupancy: {},
+    /**
+     * When each occupied voice channel began being occupied, by channel id, on
+     * this page's own clock (performance.now): the server says for how LONG, which
+     * a client whose clock is off can still count from. See setOccupied.
+     */
+    occupiedSince: {},
+    /**
+     * What is new in each channel you may read, by channel id: {unread, mentions,
+     * lastReadId}. The server keeps the truth (reads.js) and says it at connection,
+     * and from then on it is kept up to date from what arrives. A name that is
+     * not new is drawn dimmer in the sidebar.
+     */
+    reads: new Map(),
     /** The roster of the channel WE are in. */
     roster: [],
     /**
@@ -657,6 +676,12 @@ const state = {
     scrolls: new Map(),
     /** Whether the log is showing a channel's history, which is the only thing worth remembering a position in. */
     showsHistory: false,
+    /**
+     * Where the new messages began when the open channel was entered: the id of the
+     * last one that had been read, or null if there was nothing new. The divider
+     * is drawn after it and stays until the channel is left. See renderChat.
+     */
+    newAfter: null,
   },
   soundpad: { clips: [] },
   /**
@@ -1552,12 +1577,15 @@ function hideVoiceUi() {
  */
 async function reattachVoice() {
   try {
-    const { channels, groups, occupancy, rosters, online } = await harmony.api.channels(state.server);
+    const {
+      channels, groups, occupancy, rosters, online, occupiedFor,
+    } = await harmony.api.channels(state.server);
     state.channels.list = channels;
     state.channels.groups = groups ?? [];
     state.channels.online = new Set(online ?? []);
     state.channels.occupancy = occupancy ?? {};
     state.channels.rosters = rosters ?? {};
+    setOccupied(occupiedFor);
   } catch { /* the hello's lists will do */ }
   const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
   if (!channel) {
@@ -1574,6 +1602,39 @@ async function reattachVoice() {
   applyStage();
   renderChannelVideo();
 }
+
+/**
+ * Take what the server says about how long channels have been occupied.
+ *
+ * It says a duration (milliseconds), not a time: this page's clock may be a
+ * minute off the server's, and a timer that shows 8:54 to one person and 9:41
+ * to the next would be worse than none. The start is worked out on this page's
+ * own monotonic clock, so what is counted from here on is only seconds.
+ *
+ * @param {Record<string, number|null>} [durations]  by channel id; null is "empty now"
+ * @param {{merge?: boolean}} [options]  a push about one channel adds to what is known; a whole picture replaces it
+ */
+function setOccupied(durations, { merge = false } = {}) {
+  const next = merge ? { ...state.channels.occupiedSince } : {};
+  const now = performance.now();
+  for (const [id, ms] of Object.entries(durations ?? {})) {
+    if (ms === null || ms === undefined) delete next[id];
+    else next[id] = now - Number(ms);
+  }
+  state.channels.occupiedSince = next;
+}
+
+/** The timers beside the voice channels, a second further on. One timer for all of them. */
+function tickVoiceTimers() {
+  const now = performance.now();
+  for (const timer of document.querySelectorAll('.voice-timer[data-channel]')) {
+    const since = state.channels.occupiedSince[timer.dataset.channel];
+    if (since === undefined) continue;
+    const text = elapsedText(now - since);
+    if (timer.textContent !== text) timer.textContent = text;
+  }
+}
+setInterval(tickVoiceTimers, 1000);
 
 /** The call is over from the server's side while another server is on screen. */
 function endDetachedCall(message) {
@@ -3449,18 +3510,21 @@ async function enterChannels() {
     // A client that just connected has missed every roster broadcast, so the
     // whole picture arrives once with the hello.
     state.channels.rosters = hello.rosters ?? {};
+    setOccupied(hello.occupiedFor);
+    setReads(hello.unread);
   } catch (err) {
     showChannelsError(t('app.live_updates_unavailable', { message: err.message }));
     // Fall back to the REST list so the lobby is still usable read-only.
     try {
       const {
-        channels, groups, occupancy, rosters, online,
+        channels, groups, occupancy, rosters, online, occupiedFor,
       } = await harmony.api.channels(state.server);
       state.channels.list = channels;
       state.channels.groups = groups ?? [];
       state.channels.online = new Set(online ?? []);
       state.channels.occupancy = occupancy ?? {};
       state.channels.rosters = rosters ?? {};
+      setOccupied(occupiedFor);
     } catch { /* nothing more to try */ }
   }
   // A call on this server that went on while another was open: its connection was
@@ -3812,6 +3876,15 @@ function channelNodes(channel) {
   if (channel.id === callHere) li.setAttribute('data-active', '');
   const viewing = state.chat.channelId ?? callHere;
   if (channel.id === viewing) li.setAttribute('data-viewing', '');
+  // A text channel with nothing new in it, and not the one on screen, is drawn dimmer --
+  // and so is a voice channel you are not in.
+  if (channel.kind === 'text') {
+    const news = state.channels.reads.get(channel.id);
+    if (news?.unread > 0) li.setAttribute('data-unread', '');
+    else if (channel.id !== viewing) li.setAttribute('data-read', '');
+  } else if (channel.id !== callHere && channel.id !== viewing) {
+    li.setAttribute('data-read', '');
+  }
   const mentions = state.mentioned.get(channel.id) ?? 0;
   if (mentions) {
     // The number itself is drawn by CSS from the attribute.
@@ -3946,6 +4019,17 @@ function channelNodes(channel) {
   // would make every click on a member's name join it too.
   const members = state.channels.rosters[channel.id] ?? [];
   if (channel.kind !== 'voice' || members.length === 0) return [li];
+
+  // How long it has had somebody in it, at the end of its name.
+  const since = state.channels.occupiedSince[channel.id];
+  if (since !== undefined) {
+    const timer = document.createElement('span');
+    timer.className = 'voice-timer';
+    timer.dataset.channel = String(channel.id);
+    timer.textContent = elapsedText(performance.now() - since);
+    timer.title = t('channels.occupied_for');
+    li.append(timer);
+  }
 
   const list = document.createElement('li');
   list.className = 'channel-members';
@@ -7963,11 +8047,64 @@ function renderChannelVideo() {
 // Text channels
 // ---------------------------------------------------------------------------
 
+/** What the server said is new in each channel, replacing what was known. */
+function setReads(list) {
+  state.channels.reads = new Map((list ?? []).map((entry) => [entry.channelId, {
+    unread: entry.unread ?? 0,
+    mentions: entry.mentions ?? 0,
+    lastReadId: entry.lastReadId ?? entry.lastId ?? 0,
+  }]));
+}
+
+/** A channel was read, here or on another device: its entry as the server now has it. */
+function noteRead(entry) {
+  if (!entry || entry.channelId === undefined) return;
+  state.channels.reads.set(entry.channelId, {
+    unread: entry.unread ?? 0,
+    mentions: entry.mentions ?? 0,
+    lastReadId: entry.lastReadId ?? entry.lastId ?? 0,
+  });
+}
+
+/**
+ * A message arrived: it is new in its channel, unless it is yours or the
+ * channel is the one being looked at right now (which the mark will cover in a
+ * moment).
+ */
+function noteIncoming(message) {
+  if (message.userId === state.auth.user?.id) return;
+  if (message.channelId === state.chat.channelId && !document.hidden) return;
+  const entry = state.channels.reads.get(message.channelId)
+    ?? { unread: 0, mentions: 0, lastReadId: Math.max(0, message.id - 1) };
+  entry.unread += 1;
+  if (mentionsMe(message)) entry.mentions += 1;
+  state.channels.reads.set(message.channelId, entry);
+}
+
+/** The line across the log where the new messages begin. */
+function newMessagesDivider() {
+  const line = document.createElement('div');
+  line.className = 'new-divider';
+  line.setAttribute('role', 'separator');
+  const label = document.createElement('span');
+  label.textContent = t('chat.new_messages');
+  line.append(label);
+  return line;
+}
+
 async function openTextChannel(channel) {
   // Before channelId changes and before anything is redrawn: the log still
   // shows the channel being left, and this is the only moment it can be read.
   rememberChatScroll();
   state.chat.showsHistory = false;
+  // A voice message is recorded for the channel it was started in.
+  const entering = state.chat.channelId !== channel.id;
+  if (entering) {
+    chatVoice.cancel();
+    // Where the new messages begin, taken now: reading the channel moves the mark.
+    const news = state.channels.reads.get(channel.id);
+    state.chat.newAfter = news?.unread > 0 ? news.lastReadId : null;
+  }
   state.chat.channelId = channel.id;
   setReply(null);
   // What was being rewritten is in the channel being left.
@@ -7998,15 +8135,17 @@ async function openTextChannel(channel) {
     // up to read something and went to look at another channel did not ask
     // to be thrown back down to the end.
     const saved = state.chat.scrolls.get(chatScrollKey(channel.id));
-    const wantsPlace = saved && !saved.atBottom;
-    const history = wantsPlace
-      ? await pageBackTo(server, channel.id, messages, saved.anchorId)
-      : messages;
+    // With something new, the place is the line before it, not where the channel was left.
+    const toNews = entering && state.chat.newAfter !== null;
+    const wantsPlace = !toNews && saved && !saved.atBottom;
+    let history = messages;
+    if (toNews) history = await pageBackTo(server, channel.id, messages, state.chat.newAfter);
+    else if (wantsPlace) history = await pageBackTo(server, channel.id, messages, saved.anchorId);
     if (state.server !== server || state.chat.channelId !== channel.id) return;
     state.chat.messages = history;
     state.chat.pinned = pinned;
     state.chat.showsHistory = true;
-    renderChat({ scrollToBottom: true, restore: wantsPlace ? saved : null });
+    renderChat({ scrollToBottom: true, restore: wantsPlace ? saved : null, toNews });
     markOpenChannelRead();
     // Pinned attachments are part of the keep-set: they are the things
     // somebody decided were worth coming back to, so they survive eviction.
@@ -8029,7 +8168,12 @@ function markOpenChannelRead() {
     const newest = state.chat.messages.at(-1)?.id;
     // Not looked at: a channel open behind a minimised window has not been read.
     if (!state.auth.user || !id || !newest || state.chat.searching || document.hidden) return;
-    harmony.api.markRead(state.server, id, newest).catch(() => { /* the next message tries again */ });
+    harmony.api.markRead(state.server, id, newest)
+      .then((entry) => {
+        noteRead(entry);
+        renderChannels();
+      })
+      .catch(() => { /* the next message tries again */ });
   }, 400);
 }
 document.addEventListener('visibilitychange', () => {
@@ -8037,6 +8181,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 const CHAT_BOTTOM_PX = 40;
+
+/** How much of what was already read is left above the line when a channel opens at its news. */
+const NEWS_CONTEXT_PX = 90;
 
 const chatScrollKey = (channelId) => `${state.server}#${channelId}`;
 
@@ -8113,6 +8260,7 @@ function resetChat() {
   state.chat.scrolls.clear();
   state.chat.showsHistory = false;
   state.chat.channelId = null;
+  state.chat.newAfter = null;
   state.chat.messages = [];
   state.chat.pinned = [];
   state.chat.searching = false;
@@ -8182,24 +8330,152 @@ function mentionNode(raw, name) {
     span.textContent = `@${role.name}`;
     span.setAttribute('data-role', '');
     span.title = t('app.notifies_role', { name: role.name });
+    span.dataset.group = `role:${role.id}`;
     paintName(span, null, roleLook(role));
-    if (rolesOf(state.auth.user, state.roles).some((r) => r.id === role.id)) span.setAttribute('data-me', '');
+    if (myRoleIds().has(role.id)) span.setAttribute('data-me', '');
     return span;
   }
   span.textContent = everyone ? '@everyone' : `@${displayOf(user.id, user.nickname)}`;
   if (everyone || user.id === state.auth.user?.id) span.setAttribute('data-me', '');
-  if (user) span.title = `@${user.nickname}`;
+  if (user) {
+    span.title = `@${user.nickname}`;
+    // Pressed, it is the person: their card, as pressing their name above is.
+    span.dataset.profileUser = String(user.id);
+  } else {
+    span.dataset.group = 'everyone';
+    span.title = t('mention.everyone_hint');
+  }
   return span;
 }
+
+/**
+ * The roles you hold, as far as this client has heard. Two copies of it exist --
+ * the signed-in account and the same person in the member list -- and a role
+ * given to you while the app is open reaches one of them first.
+ */
+const myRoleIds = () => new Set([
+  ...(state.auth.user?.roles ?? []),
+  ...(state.users.get(state.auth.user?.id)?.roles ?? []),
+]);
 
 /** True if this message is addressed to the person reading it. */
 const mentionsMe = (message) => Boolean(
   message.mentionsEveryone || message.mentions?.includes(state.auth.user?.id)
   // A role it names, and you hold it.
-  || (message.mentionRoles ?? []).some((id) => (state.auth.user?.roles ?? []).includes(id))
+  || (message.mentionRoles ?? []).some((id) => myRoleIds().has(id))
   // Answering somebody tells them, as Discord's replies do by default.
   || (message.reply?.userId && message.reply.userId === state.auth.user?.id),
 );
+
+/*
+ * Pressing an @ that is more than one person: who it reached.
+ *
+ * The server says (GET /api/messages/:id/notified): everybody who may read the
+ * channel and is named, through a role or @everyone or by name. Pressing a role
+ * lists that role's people among them; pressing @everyone, all of them. If it
+ * turns out to be one person it is that person's card, as for an @name.
+ */
+let notifiedPop = null;
+
+function closeNotified() {
+  notifiedPop?.remove();
+  notifiedPop = null;
+  document.removeEventListener('pointerdown', onNotifiedOutside, true);
+  document.removeEventListener('keydown', onNotifiedKey, true);
+}
+
+function onNotifiedOutside(event) {
+  if (notifiedPop && !notifiedPop.contains(event.target)) closeNotified();
+}
+
+function onNotifiedKey(event) {
+  if (event.key === 'Escape') {
+    event.stopPropagation();
+    closeNotified();
+  }
+}
+
+async function openNotified(chip) {
+  const messageId = Number(chip.closest('.chat-msg')?.dataset.id);
+  if (!Number.isInteger(messageId)) return;
+  const group = chip.dataset.group;
+  closeNotified();
+
+  let answer;
+  try {
+    answer = await harmony.api.notified(state.server, messageId);
+  } catch (err) {
+    showChannelsError(err.message);
+    return;
+  }
+  const roleId = group.startsWith('role:') ? Number(group.slice(5)) : null;
+  let people = (answer.notified ?? []).map((id) => state.users.get(id)).filter(Boolean);
+  if (roleId !== null) people = people.filter((u) => (u.roles ?? []).includes(roleId));
+
+  // One person: just their card.
+  if (people.length === 1) {
+    profileCard.open(people[0].id, chip);
+    return;
+  }
+
+  const online = (u) => state.channels.online.has(u.id);
+  people.sort((a, b) => Number(online(b)) - Number(online(a))
+    || displayOf(a.id, a.nickname).localeCompare(displayOf(b.id, b.nickname)));
+
+  const pop = document.createElement('div');
+  pop.className = 'notified-pop';
+  pop.setAttribute('role', 'dialog');
+  const head = document.createElement('div');
+  head.className = 'notified-head';
+  const title = document.createElement('span');
+  title.className = 'notified-title';
+  title.textContent = chip.textContent;
+  const count = document.createElement('span');
+  count.className = 'notified-count';
+  count.textContent = people.length ? t('mention.notified', { count: people.length }) : t('mention.nobody');
+  head.append(title, count);
+  pop.append(head);
+
+  if (people.length) {
+    const list = document.createElement('ul');
+    list.className = 'notified-list';
+    for (const user of people) {
+      const li = document.createElement('li');
+      li.className = 'notified-row';
+      if (!online(user)) li.setAttribute('data-off', '');
+      li.append(avatarEl(user, 'tiny'));
+      const name = document.createElement('span');
+      name.className = 'notified-name';
+      name.textContent = displayOf(user.id, user.nickname);
+      nameFont(name, user.id);
+      li.append(name);
+      li.addEventListener('click', () => {
+        closeNotified();
+        profileCard.open(user.id, chip);
+      });
+      list.append(li);
+    }
+    pop.append(list);
+  }
+
+  document.body.append(pop);
+  notifiedPop = pop;
+  const at = chip.getBoundingClientRect();
+  const box = pop.getBoundingClientRect();
+  const left = Math.max(8, Math.min(at.left, window.innerWidth - box.width - 8));
+  const below = at.bottom + 6;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${below + box.height <= window.innerHeight - 8 ? below : Math.max(8, at.top - box.height - 6)}px`;
+  document.addEventListener('pointerdown', onNotifiedOutside, true);
+  document.addEventListener('keydown', onNotifiedKey, true);
+}
+
+el.chatLog.addEventListener('click', (event) => {
+  const chip = event.target.closest?.('.mention[data-group]');
+  if (!chip) return;
+  event.stopPropagation();
+  openNotified(chip);
+});
 
 /**
  * Ring for a message that names you.
@@ -8941,7 +9217,29 @@ function applyComposer() {
   el.chatSend.disabled = editing
     ? !el.chatInput.value.trim() && !editing.attachmentHash
     : !el.chatInput.value.trim() && !state.chat.pendingFile;
+  // With nothing to send the microphone is where the send button is, as in a
+  // phone's chat: same size, same place, so nothing around it moves.
+  const record = el.chatSend.disabled && !editing;
+  el.chatSend.hidden = record;
+  el.chatRecord.hidden = !record;
 }
+
+/** A voice message: recorded in the composer, sent as the file it is. See voice-note.js. */
+const chatVoice = createRecorderBar({
+  bar: el.chatRecorder,
+  composer: el.chatRecorder.closest('.composer'),
+  t,
+  deviceId: () => state.settings.voiceInputId ?? '',
+  onSend: (file) => {
+    setPendingFile(file);
+    sendMessage();
+  },
+  onError: (message) => { el.chatNote.textContent = message; },
+});
+el.chatRecord.addEventListener('click', () => {
+  el.chatNote.textContent = '';
+  chatVoice.start();
+});
 
 function setPendingFile(file) {
   state.chat.pendingFile = file ?? null;
@@ -9554,6 +9852,20 @@ function attachmentNode(message) {
   const big = Number(message.attachmentBytes) > INLINE_MEDIA_LIMIT;
   const previewable = !big && ['image', 'video', 'audio'].includes(message.mediaType);
 
+  // A voice message is its own player, with nothing else to do to it.
+  if (!big && isVoiceNote(message.attachmentName, message.mediaType)) {
+    return voiceNote({
+      key: `${state.server}#${message.attachmentHash}`,
+      load: async () => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`the sound returned ${res.status}`);
+        return res.arrayBuffer();
+      },
+      sinkId: () => state.settings.voiceOutputId ?? '',
+      t,
+    });
+  }
+
   /*
    * A file with nothing to look at is a card (see attachment-card.js); one
    * that can be seen is the thing itself with a line under it.
@@ -9939,6 +10251,20 @@ function messageRow(message, previous) {
   }
 
   if (message.attachmentHash) text.append(attachmentNode(message));
+  // The card for the first link in the words, as Discord and WhatsApp show one.
+  if (state.settings?.linkPreviews !== false) {
+    const address = firstLink(message.body);
+    const card = address && linkEmbed({
+      server: state.server,
+      messageId: message.id,
+      url: address,
+      load: (url) => harmony.api.linkPreview(state.server, url),
+      mediaUrl: (hash) => harmony.mediaUrl(hash),
+      link: linkNode,
+      t,
+    });
+    if (card) text.append(card);
+  }
 
   const when = document.createElement('span');
   when.className = 'when';
@@ -10103,16 +10429,37 @@ function messageRow(message, previous) {
  * reading back through history gets yanked to the end by every new message
  * that arrives.
  */
-function renderChat({ scrollToBottom = false, restore = null } = {}) {
+function renderChat({ scrollToBottom = false, restore = null, toNews = false } = {}) {
   const log = el.chatLog;
   const wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 
-  // (m, i, all) rather than a bare reference to messageRow: map passes the
-  // index as the second argument, which is now the "previous message"
-  // parameter and would be a number.
-  log.replaceChildren(
-    ...state.chat.messages.map((m, i, all) => messageRow(m, all[i - 1])),
-  );
+  // The line goes before the first message newer than what was read, and the
+  // message under it starts a block of its own.
+  const after = state.chat.showsHistory && !state.chat.searching ? state.chat.newAfter : null;
+  let dividerDrawn = false;
+  const rows = [];
+  state.chat.messages.forEach((m, i, all) => {
+    // (m, i, all) rather than a bare reference to messageRow: map passes the
+    // index as the second argument, which is now the "previous message"
+    // parameter and would be a number.
+    if (after !== null && !dividerDrawn && m.id > after) {
+      dividerDrawn = true;
+      rows.push(newMessagesDivider(), messageRow(m, undefined));
+      return;
+    }
+    rows.push(messageRow(m, all[i - 1]));
+  });
+  log.replaceChildren(...rows);
+
+  // Entering a channel with news: the last of what was read, then the line.
+  if (toNews) {
+    const line = log.querySelector('.new-divider');
+    if (line) {
+      log.scrollTop += line.getBoundingClientRect().top - log.getBoundingClientRect().top - NEWS_CONTEXT_PX;
+      paintChatToBottom();
+      return;
+    }
+  }
 
   if (state.chat.pinned.length) {
     el.chatPinned.hidden = false;
@@ -11445,6 +11792,7 @@ function onRealtimeEvent(msg) {
       // deciding whether to join it.
       state.channels.rosters[msg.channelId] = msg.roster;
       state.channels.occupancy[msg.channelId] = msg.roster.length;
+      setOccupied({ [msg.channelId]: msg.occupiedFor ?? null }, { merge: true });
       if (!voiceHere() || msg.channelId !== state.voice.channelId) {
         renderChannels();
         break;
@@ -11468,6 +11816,8 @@ function onRealtimeEvent(msg) {
       break;
 
     case 'message':
+      noteIncoming(msg.message);
+      renderChannels();
       // Before the channel filter, on purpose: a mention in a channel you
       // are not looking at is the only one worth making a noise about.
       notifyMention(msg.message);
@@ -11489,7 +11839,20 @@ function onRealtimeEvent(msg) {
       }
       break;
 
+    case 'channel:read':
+      // Read somewhere else (or here): what is new in it is what the server now says.
+      noteRead(msg);
+      renderChannels();
+      break;
+
     case 'message:deleted':
+      if (msg.channelId !== state.chat.channelId) {
+        const entry = state.channels.reads.get(msg.channelId);
+        if (entry?.unread > 0) {
+          entry.unread -= 1;
+          renderChannels();
+        }
+      }
       if (msg.channelId === state.chat.channelId) {
         state.chat.messages = state.chat.messages.filter((m) => m.id !== msg.id);
         state.chat.pinned = state.chat.pinned.filter((m) => m.id !== msg.id);
@@ -11650,6 +12013,8 @@ function onRealtimeEvent(msg) {
       if (msg.online) state.channels.online = new Set(msg.online);
       if (msg.rosters) state.channels.rosters = msg.rosters;
       if (msg.occupancy) state.channels.occupancy = msg.occupancy;
+      if (msg.occupiedFor) setOccupied(msg.occupiedFor);
+      if (msg.unread) setReads(msg.unread);
       renderChannels();
 
       // A reconnect means the server has forgotten our presence, because
@@ -14487,6 +14852,7 @@ el.voiceConfig.addEventListener('click', () => {
   renderThemes();
   el.voiceSounds.checked = state.settings?.voiceSounds !== false;
   el.mentionSound.checked = state.settings?.mentionSound !== false;
+  el.linkPreviews.checked = state.settings?.linkPreviews !== false;
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
   el.pauseHiddenCameras.checked = state.settings?.pauseHiddenCameras !== false;
   el.autoSignIn.checked = state.settings?.autoSignIn !== false;
@@ -14785,6 +15151,13 @@ const nudgeScale = (delta) => applyScale(Number(el.uiScale.value) + delta);
 el.scaleDown.addEventListener('click', () => nudgeScale(-5));
 el.scaleUp.addEventListener('click', () => nudgeScale(5));
 el.scaleReset.addEventListener('click', () => applyScale(SCALE_DEFAULT));
+
+el.linkPreviews.addEventListener('change', async () => {
+  await harmony.settings.set({ linkPreviews: el.linkPreviews.checked });
+  state.settings = await harmony.settings.get();
+  // The cards come and go on what is already on screen.
+  if (state.chat.channelId !== null) renderChat();
+});
 
 el.mentionSound.addEventListener('change', async () => {
   await harmony.settings.set({ mentionSound: el.mentionSound.checked });

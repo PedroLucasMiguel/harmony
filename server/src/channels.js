@@ -722,11 +722,21 @@ export class VoiceRooms {
   /** @type {Map<number, Map<number, {userId: number, nickname: string, muted: boolean, forceMuted: boolean, publishing: Set<string>}>>} */
   #rooms = new Map();
 
+  /**
+   * When each occupied channel stopped being empty: the first person in, and
+   * not reset by anybody coming or going after, only by the last one leaving.
+   * Like the rosters it is read out of what is live, so a restart starts every
+   * channel from empty, which is what it is.
+   * @type {Map<number, number>}
+   */
+  #since = new Map();
+
   #room(channelId) {
     let room = this.#rooms.get(channelId);
     if (!room) {
       room = new Map();
       this.#rooms.set(channelId, room);
+      this.#since.set(channelId, Date.now());
     }
     return room;
   }
@@ -778,7 +788,10 @@ export class VoiceRooms {
     for (const [mid, member] of room) {
       if (member.userId === userId) {
         room.delete(mid);
-        if (room.size === 0) this.#rooms.delete(channelId);
+        if (room.size === 0) {
+          this.#rooms.delete(channelId);
+          this.#since.delete(channelId);
+        }
         return mid;
       }
     }
@@ -822,6 +835,23 @@ export class VoiceRooms {
         publishing: [...m.publishing],
       }))
       .sort((a, b) => a.mid - b.mid);
+  }
+
+  /**
+   * How long a channel has had somebody in it without a break, in milliseconds,
+   * or null if it is empty. A DURATION and not a time of day, so that a client
+   * whose clock is a minute off still counts the same seconds as everybody else.
+   */
+  occupiedFor(channelId) {
+    const since = this.#since.get(channelId);
+    return since === undefined ? null : Math.max(0, Date.now() - since);
+  }
+
+  /** occupiedFor of every occupied channel, keyed by channel id. */
+  allOccupiedFor() {
+    const out = {};
+    for (const channelId of this.#rooms.keys()) out[channelId] = this.occupiedFor(channelId);
+    return out;
   }
 
   /** Every channel with somebody in it, for the initial state push. */

@@ -41,6 +41,8 @@ import {
   MAX_FILE_LIMIT, DEFAULT_FILE_BYTES, SEALED_TYPE,
 } from './chat.js';
 import { UploadSessions } from './upload-sessions.js';
+import { LinkPreviews } from './link-preview.js';
+import { Throttle } from './throttle.js';
 import { DirectMessages } from './dms.js';
 import { ChannelReads } from './reads.js';
 import { mountDirectMessages } from './dm-routes.js';
@@ -88,6 +90,9 @@ const channels = new Channels(db);
 const voice = new VoiceRooms();
 const mediaSecret = channelSecret(metaStore);
 const chat = new Chat(db, { dataDir: config.dataDir, maxDiskBytes: config.maxDiskBytes });
+// Reads pages for the cards under links. HARMONY_LINKS_ALLOW_PRIVATE lets the tests point it at a page on this computer.
+const linkPreviews = new LinkPreviews(chat, { allowPrivate: process.env.HARMONY_LINKS_ALLOW_PRIVATE === '1' });
+const linkThrottle = new Throttle({ burst: 20, perSecond: 0.5 });
 const uploads = new UploadSessions(chat);
 const soundpad = new Soundpad(db);
 const emojis = new Emojis(db);
@@ -915,6 +920,21 @@ function formatBytes(bytes) {
   return `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
+/**
+ * The card for a link in a message: what the page says about itself, with its
+ * picture kept here as a file. See link-preview.js for what is and is not read.
+ * `preview` is null where there is nothing to show.
+ */
+app.get('/api/link-preview', requireLogin, guarded(async (req, res) => {
+  const gate = linkThrottle.take(req.user.id);
+  if (!gate.allowed) {
+    res.set('Retry-After', String(gate.retryAfterSec));
+    return res.status(429).json({ error: 'slow_down', retryAfterSec: gate.retryAfterSec });
+  }
+  const preview = await linkPreviews.get(String(req.query.url ?? ''));
+  return res.json({ preview });
+}));
+
 app.post('/api/uploads/sessions', requireLogin, guarded(async (req, res) => {
   const result = await uploads.open({
     userId: req.user.id,
@@ -1113,6 +1133,7 @@ app.get('/api/channels', requireLogin, (req, res) => {
     // Same payload the WebSocket hello carries, so the read-only fallback
     // path the client uses when the socket is down shows the same sidebar.
     rosters: view.rosters,
+    occupiedFor: view.occupiedFor,
   });
 });
 
@@ -1517,6 +1538,39 @@ app.post('/api/channels/:id/messages', requireLogin, (req, res) => {
   // Writing in a channel is reading it: your own message is not news, and neither is what you answered.
   reads.markRead(req.user.id, id, message.id);
   return res.status(201).json({ message });
+});
+
+/**
+ * Who a message notified: everybody it names, one by one or through a role or
+ * @everyone, who may read the channel it is in. The same rule that decides whose
+ * client rings (see unreadFor and toChannelReaders), so what is shown for a click
+ * on an @ is what actually happened -- a role's members who cannot see a private
+ * channel were never told, and are not listed. The author is not: they are not
+ * notified of their own message.
+ */
+app.get('/api/messages/:id/notified', requireLogin, (req, res) => {
+  const message = chat.get(Number.parseInt(req.params.id, 10));
+  if (!message || !readableChannel(req, message.channel_id)) {
+    return res.status(404).json({ error: 'no_such_message' });
+  }
+  const channel = channels.get(message.channel_id);
+  const byId = new Map(channels.groups().map((g) => [g.id, g]));
+  const { idOf, roleOf } = mentionLookups();
+  const named = mentionsIn(message.body, idOf, roleOf);
+
+  const users = [];
+  for (const row of accounts.list()) {
+    if (row.id === message.user_id) continue;
+    const user = accounts.byId(row.id) ?? row;
+    if (user.banned_at) continue;
+    const ctx = roles.context(user);
+    if (!roles.canSee(ctx, channel, byId)) continue;
+    if (channel.password_hash && !channels.hasGrant(channel.id, user.id) && !ctx.admin) continue;
+    if (named.everyone || named.userIds.includes(user.id) || named.roleIds.some((id) => ctx.roleIds.has(id))) {
+      users.push(user.id);
+    }
+  }
+  return res.json({ everyone: named.everyone, roleIds: named.roleIds, userIds: named.userIds, notified: users });
 });
 
 app.post('/api/messages/:id/pin', requireLogin, (req, res) => {

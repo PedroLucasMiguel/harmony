@@ -549,5 +549,7 @@ export function channelViewFor({ roles, channels, voice }, user) {
     groups: groups.map(publicGroup),
     occupancy: pick(voice.occupancy()),
     rosters: pick(voice.allRosters()),
+    // How long each has had somebody in it, for the timer beside its name.
+    occupiedFor: pick(voice.allOccupiedFor()),
   };
 }

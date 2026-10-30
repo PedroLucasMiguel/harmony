@@ -689,14 +689,25 @@
                     data-icon="smiley"
                     title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji"
                   >Emoji</button>
+                  <!-- The microphone takes the send button's place while there is nothing to send. See applyComposer. -->
+                  <button
+                    type="button"
+                    class="composer-btn composer-send composer-record"
+                    id="chat-record"
+                    data-icon="microphone"
+                    title="Record a voice message" data-i18n-title="voice.record" data-i18n="voice.record_button"
+                  >Record</button>
                   <button
                     type="submit"
                     class="composer-btn composer-send"
                     id="chat-send"
                     data-icon="paper-plane-right"
                     title="Send" data-i18n-title="chat_form.send" data-i18n="chat_send.send"
+                    hidden
                   >Send</button>
                 </div>
+                <!-- Takes the row's place while a voice message is recorded. See createRecorderBar. -->
+                <div class="voice-recorder" id="chat-recorder" hidden></div>
               </div>
               <input id="chat-file" type="file" hidden />
             </form>
@@ -899,9 +910,12 @@
                             data-i18n-placeholder="dm.placeholder"></textarea>
                   <button type="button" class="composer-btn" id="dm-emoji" data-icon="smiley"
                           title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji">Emoji</button>
+                  <button type="button" class="composer-btn composer-send composer-record" id="dm-record" data-icon="microphone"
+                          title="Record a voice message" data-i18n-title="voice.record" data-i18n="voice.record_button">Record</button>
                   <button type="submit" class="composer-btn composer-send" id="dm-send" data-icon="paper-plane-right"
-                          title="Send" data-i18n-title="chat_form.send" data-i18n="chat_send.send">Send</button>
+                          title="Send" data-i18n-title="chat_form.send" data-i18n="chat_send.send" hidden>Send</button>
                 </div>
+                <div class="voice-recorder" id="dm-recorder" hidden></div>
               </div>
               <input id="dm-file" type="file" hidden />
             </form>
@@ -1819,6 +1833,17 @@
                   <input id="ui-scale" type="range" min="70" max="180" step="5" value="115" />
                   <button type="button" class="step-btn" id="scale-up" title="Bigger" aria-label="Bigger" data-i18n-title="settings.appearance.bigger" data-i18n-aria-label="settings.appearance.bigger">&#43;</button>
                 </div>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.links.title">Link previews</span>
+                    <small data-i18n="settings.links.note">A card under a link, with the page's title, text and picture. The
+                      server reads the page, so the site never sees you.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="link-previews" checked />
+                </label>
               </div>
             </section>
 

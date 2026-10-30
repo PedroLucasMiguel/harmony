@@ -16,6 +16,7 @@ import { PersistentKeyFile } from './dm-keyfile.js';
 import { settingsBackend } from './dm-backend.js';
 import { DmSession, MAX_BODY, previewOf } from './dm-session.js';
 import { fileCard, textCard, previewsAsText, TEXT_PREVIEW_BYTES } from './attachment-card.js';
+import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
 import { KeyState } from './dm-vault.js';
 import { serverKeyOf } from './server-key.js';
 
@@ -79,10 +80,36 @@ export function createDmUi(deps) {
     input: $('dm-input'),
     emoji: $('dm-emoji'),
     send: $('dm-send'),
+    record: $('dm-record'),
+    recorder: $('dm-recorder'),
     file: $('dm-file'),
     note: $('dm-note'),
     none: $('dm-none'),
   };
+
+  /** A voice message: recorded in the box, sealed and sent like any file. See voice-note.js. */
+  const voiceBar = createRecorderBar({
+    bar: el.recorder,
+    composer: el.recorder.closest('.composer'),
+    t,
+    deviceId: () => state.settings?.voiceInputId ?? '',
+    onSend: async (file) => {
+      setPending({ name: file.name, mime: file.type, bytes: new Uint8Array(await file.arrayBuffer()) });
+      submit();
+    },
+    onError: (message) => { el.note.textContent = message; },
+  });
+  el.record.addEventListener('click', () => {
+    el.note.textContent = '';
+    voiceBar.start();
+  });
+
+  /** With nothing to send the microphone is where the send button is. */
+  function syncRecord() {
+    const empty = !el.input.value.trim() && !pendingFile;
+    el.send.hidden = empty;
+    el.record.hidden = !empty;
+  }
 
   /*
    * Private conversations are kept per server: each saved server the person is
@@ -132,6 +159,8 @@ export function createDmUi(deps) {
     currentId = null;
     replyTo = null;
     pendingFile = null;
+    voiceBar.cancel();
+    syncRecord();
     el.active.hidden = true;
     closeMenu();
   }
@@ -229,6 +258,8 @@ export function createDmUi(deps) {
     currentId = null;
     replyTo = null;
     pendingFile = null;
+    voiceBar.cancel();
+    syncRecord();
     el.active.hidden = true;
     syncPane();
     closeMenu();
@@ -377,7 +408,11 @@ export function createDmUi(deps) {
     text.className = 'dm-row-text';
     if (preview?.unreadable) text.textContent = t('dm.unreadable_short');
     else if (preview?.call) text.textContent = callLine(preview.call, c.last.userId === me());
-    else if (preview) text.textContent = c.last.userId === me() ? t('dm.you_prefix', { text: preview.text }) : preview.text;
+    else if (preview) {
+      // A voice message is not called by its file name.
+      const said = isVoiceNote(preview.text, 'audio') ? t('voice.preview') : preview.text;
+      text.textContent = c.last.userId === me() ? t('dm.you_prefix', { text: said }) : said;
+    }
     line.append(text);
     if (c.unread) {
       const count = document.createElement('span');
@@ -410,6 +445,8 @@ export function createDmUi(deps) {
     if (!session?.ready) return;
     // The stage holds one thing: leaving the channel's chat, and the call's tiles with it.
     closeChat();
+    // A voice message is recorded for the conversation it was started in.
+    if (currentId !== id) voiceBar.cancel();
     currentId = id;
     replyTo = null;
     setPending(null);
@@ -455,6 +492,7 @@ export function createDmUi(deps) {
 
   function setPending(file) {
     pendingFile = file;
+    syncRecord();
     el.pending.hidden = !file;
     el.pendingName.textContent = file ? `${file.name} · ${formatBytes(file.bytes.length)}` : '';
   }
@@ -497,7 +535,9 @@ export function createDmUi(deps) {
     const noKey = !session.vault.peerHasKey(c.peer);
     el.input.disabled = blocked || noKey;
     el.send.disabled = blocked || noKey;
+    el.record.disabled = blocked || noKey;
     el.attach.disabled = blocked || noKey;
+    syncRecord();
   }
 
   /** What stands over the conversation: a changed key, a block, a person who has not set up yet. */
@@ -643,7 +683,7 @@ export function createDmUi(deps) {
       renderBody(text, reply.body.replace(/\s+/g, ' '));
     } else {
       text.classList.add('msg-reply-gone');
-      text.textContent = reply.attachmentName ?? '';
+      text.textContent = isVoiceNote(reply.attachmentName, 'audio') ? t('voice.preview') : reply.attachmentName ?? '';
     }
     line.append(avatarEl(faceOf(reply.userId, ''), 'reply-avatar'), who, text);
     line.title = t('app.go_to_the_message_this');
@@ -724,6 +764,20 @@ export function createDmUi(deps) {
       tools.append(save);
       card.end.append(tools);
       return card.wrap;
+    }
+
+    // A voice message is its own player.
+    if (isVoiceNote(f.name, message.mediaType)) {
+      return voiceNote({
+        key: `${message.id}:${f.key}`,
+        load: async () => {
+          const opened = await session.file(message);
+          if (!opened) throw new Error('unreadable');
+          return opened.blob.arrayBuffer();
+        },
+        sinkId: () => state.settings?.voiceOutputId ?? '',
+        t,
+      });
     }
 
     const wrap = document.createElement('span');
@@ -833,6 +887,7 @@ export function createDmUi(deps) {
     el.input.style.height = '';
     setPending(null);
     setReply(null);
+    syncRecord();
     el.log.scrollTop = el.log.scrollHeight;
     await session.markRead(currentId);
   }
@@ -1091,6 +1146,7 @@ export function createDmUi(deps) {
   el.input.addEventListener('input', () => {
     el.input.style.height = 'auto';
     el.input.style.height = `${Math.min(el.input.scrollHeight, 160)}px`;
+    syncRecord();
   });
   /*
    * Paste a file straight into the box -- a screenshot, or a file copied in

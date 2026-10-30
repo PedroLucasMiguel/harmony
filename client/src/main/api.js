@@ -538,6 +538,10 @@ module.exports = {
   reorderChannels: (s, ids) =>
     requestJson(s, '/api/channels/reorder', { method: 'POST', body: { ids } }),
   me: (s) => requestJson(s, '/api/accounts/me'),
+  // The card for a link in a message (server/src/link-preview.js).
+  // Who a message notified (server/src/index.js).
+  notified: (s, id) => requestJson(s, `/api/messages/${Number(id)}/notified`),
+  linkPreview: (s, url) => requestJson(s, `/api/link-preview?url=${encodeURIComponent(url)}`),
   // `hash` is an already-uploaded image, or null to go back to initials. The
   // picture itself travels through uploadFile like any other attachment.
   setAvatar: (s, hash) =>

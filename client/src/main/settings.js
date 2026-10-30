@@ -190,6 +190,8 @@ const DEFAULTS = {
    * that will reach you in a channel you are not looking at.
    */
   mentionSound: true,
+  /** A card under a link in a message: what the page says about itself, read by the server. */
+  linkPreviews: true,
   /*
    * Whether your own camera's tile shows your picture. Remembered because it is
    * a choice about yourself rather than about one call; a screen share's

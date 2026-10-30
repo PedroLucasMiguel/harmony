@@ -2329,6 +2329,77 @@ button.danger {
   font-weight: 600;
   white-space: nowrap;
 }
+/* An @ that opens something: a person's card, or who a role or @everyone reached. */
+.chat-msg .mention[data-profile-user],
+.chat-msg .mention[data-group] {
+  cursor: pointer;
+}
+.chat-msg .mention[data-profile-user]:hover,
+.chat-msg .mention[data-group]:hover {
+  filter: brightness(1.2);
+  text-decoration: underline;
+}
+
+/* Who an @everyone or a role reached. */
+.notified-pop {
+  position: fixed;
+  z-index: 70;
+  width: min(300px, calc(100vw - 1rem));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.notified-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+.notified-title {
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notified-count {
+  margin-left: auto;
+  flex: none;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.notified-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  max-height: min(18rem, 50vh);
+  overflow-y: auto;
+}
+.notified-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+.notified-row:hover {
+  background: rgb(var(--accent-rgb) / 0.18);
+}
+.notified-row[data-off] {
+  opacity: 0.55;
+}
+.notified-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Yours is the one worth finding in a wall of text. */
 .chat-msg .mention[data-me] {
   background: rgb(var(--warn) / 0.22);
@@ -2364,6 +2435,60 @@ button.danger {
 .chat-msg[data-mentions-me] {
   box-shadow: inset 3px 0 0 var(--warn);
   background: color-mix(in srgb, var(--warn) 7%, transparent);
+}
+
+/* How long a voice channel has had somebody in it. */
+.channel-list li .voice-timer {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--live);
+}
+
+/*
+ * A text channel with nothing new in it fades into the list; one with news, or
+ * the one you are in, keeps the full colour -- and the news is bolder.
+ */
+.channel-list li[data-read] .channel-name,
+.channel-list li[data-read] .kind {
+  color: var(--muted);
+}
+.channel-list li[data-read]:hover .channel-name,
+.channel-list li[data-read]:hover .kind {
+  color: var(--text);
+}
+.channel-list li[data-unread] .channel-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Where the new messages begin. */
+.new-divider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0.8rem 0.5rem 0.4rem;
+  height: 0;
+  border-top: 1px solid #ff5470;
+  list-style: none;
+  pointer-events: none;
+}
+.new-divider span {
+  position: absolute;
+  right: 0;
+  top: 0;
+  transform: translateY(-50%);
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: #ff5470;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 /* A channel with something in it addressed to you. */
@@ -3324,6 +3449,293 @@ button.danger {
 }
 .composer-send::before {
   color: var(--accent);
+}
+
+/*
+ * Recording a voice message: the bar takes the row's place.
+ */
+.composer[data-recording] > .composer-row {
+  display: none;
+}
+.voice-recorder {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: var(--composer-line);
+  padding: 0 0.1rem;
+}
+.voice-trash {
+  align-self: center;
+}
+.voice-dot {
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: #ff4d6a;
+  animation: voice-dot 1.2s ease-in-out infinite;
+}
+.voice-recorder[data-paused] .voice-dot {
+  animation: none;
+  opacity: 0.5;
+}
+@keyframes voice-dot {
+  50% { opacity: 0.25; }
+}
+.voice-time {
+  flex: none;
+  min-width: 2.6rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.voice-live {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 1.6rem;
+  color: var(--muted);
+}
+.voice-pause {
+  align-self: center;
+}
+.voice-pause::before {
+  color: #ff4d6a;
+}
+.voice-send {
+  align-self: center;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.voice-send::before,
+.composer .voice-send[data-icon]::before {
+  color: #fff;
+}
+.composer-record::before {
+  color: var(--muted);
+}
+.composer-record:hover:not(:disabled)::before {
+  color: var(--text);
+}
+
+/*
+ * The card under a link: site, title, what the page says, and its picture.
+ * The stripe is the page's own colour where it has one.
+ */
+.link-embed-slot {
+  display: block;
+}
+.link-embed {
+  --embed-color: var(--accent);
+  position: relative;
+  display: grid;
+  gap: 0.6rem;
+  width: min(432px, 100%);
+  box-sizing: border-box;
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.8rem 0.75rem 0.85rem;
+  border-left: 4px solid var(--embed-color);
+  border-radius: 6px;
+  background: rgb(var(--tint-rgb) / 0.06);
+  line-height: 1.35;
+}
+.link-embed-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.link-embed-site {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.link-embed-title {
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.98rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.link-embed-title:hover {
+  text-decoration: underline;
+}
+.link-embed-description {
+  font-size: 0.86rem;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.link-embed-frame {
+  position: relative;
+  display: block;
+  min-width: 0;
+  line-height: 0;
+}
+.chat-msg .link-embed-image {
+  display: block;
+  width: 100%;
+  max-width: none;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 6px;
+  margin: 0;
+}
+/* A square-ish or small picture sits beside the text instead of under it. */
+.link-embed[data-layout='thumb'] {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+.link-embed[data-layout='thumb'] .link-embed-frame {
+  width: 80px;
+  grid-row: 1;
+  grid-column: 2;
+}
+.link-embed[data-layout='thumb'] .link-embed-image {
+  height: 80px;
+  max-height: none;
+}
+/* What is a video has a play mark over its picture. */
+.link-embed[data-video] .link-embed-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  pointer-events: none;
+}
+.link-embed[data-video] .link-embed-frame::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  margin: auto;
+  width: 1.4rem;
+  height: 1.4rem;
+  background-color: #fff;
+  -webkit-mask: url('icons/play.svg') center / contain no-repeat;
+  mask: url('icons/play.svg') center / contain no-repeat;
+  pointer-events: none;
+}
+.link-embed-close {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease-out;
+  z-index: 2;
+}
+.link-embed-close::before {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+.link-embed:hover .link-embed-close,
+.link-embed-close:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.link-embed-close:hover {
+  color: var(--text);
+}
+/* A link to a picture: the picture. */
+.link-embed-picture-link {
+  display: block;
+  margin-top: 0.3rem;
+  max-width: min(420px, 100%);
+  line-height: 0;
+}
+.chat-msg img.link-embed-picture {
+  display: block;
+  margin: 0;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+}
+
+/* A voice message in the chat: play, the waveform, the time, the speed. */
+.attachment.voice-note {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: min(340px, 100%);
+  box-sizing: border-box;
+  padding: 0.45rem 0.7rem 0.45rem 0.5rem;
+  border-radius: 999px;
+  background: rgb(var(--tint-rgb) / 0.09);
+}
+.voice-play {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.voice-play::before {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.voice-bars {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 2rem;
+  cursor: pointer;
+}
+.voice-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 5px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.35;
+  color: var(--muted);
+}
+.voice-bar[data-done] {
+  opacity: 1;
+  color: var(--accent);
+}
+.voice-length {
+  flex: none;
+  min-width: 2.4rem;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.voice-speed {
+  flex: none;
+  padding: 0.1rem 0.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(var(--tint-rgb) / 0.14);
+  color: var(--text);
+  font-size: 0.72rem;
+  cursor: pointer;
 }
 
 /*

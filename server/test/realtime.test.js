@@ -281,6 +281,42 @@ describe('voice presence', () => {
     watcher.ws.close();
   });
 
+  it('says how long a channel has had somebody in it: not restarted by a second person, restarted after it empties', async () => {
+    const watcher = connect(ownerToken);
+    await watcher.hello();
+    const first = connect(memberToken);
+    await first.hello();
+    await first.request({ type: 'voice:join', channelId: voiceChannelId });
+    const one = await watcher.next((m) => m.type === 'voice:roster' && m.channelId === voiceChannelId && m.roster.length === 1);
+    assert.ok(one.occupiedFor >= 0 && one.occupiedFor < 1500, `just started: ${one.occupiedFor}`);
+
+    await new Promise((r) => setTimeout(r, 1200));
+    const thirdToken = (await api('/api/accounts/register', {
+      method: 'POST', body: { nickname: 'third', password: 'hunter22' },
+    })).body.token;
+    const second = connect(thirdToken);
+    const hello = await second.hello();
+    // Somebody who connects now is told how long it has been going, from the hello.
+    assert.ok(hello.occupiedFor[voiceChannelId] >= 1000, `told at hello: ${JSON.stringify(hello.occupiedFor)}`);
+    await second.request({ type: 'voice:join', channelId: voiceChannelId });
+    const two = await watcher.next((m) => m.type === 'voice:roster' && m.channelId === voiceChannelId && m.roster.length === 2);
+    assert.ok(two.occupiedFor >= 1000, `a second person does not restart it: ${two.occupiedFor}`);
+
+    first.ws.close();
+    await watcher.next((m) => m.type === 'voice:roster' && m.channelId === voiceChannelId && m.roster.length === 1);
+    second.ws.close();
+    const empty = await watcher.next((m) => m.type === 'voice:roster' && m.channelId === voiceChannelId && m.roster.length === 0);
+    assert.equal(empty.occupiedFor, null, 'nobody left: no timer');
+
+    const again = connect(memberToken);
+    await again.hello();
+    await again.request({ type: 'voice:join', channelId: voiceChannelId });
+    const fresh = await watcher.next((m) => m.type === 'voice:roster' && m.channelId === voiceChannelId && m.roster.length === 1);
+    assert.ok(fresh.occupiedFor < 1000, `starts again from nothing: ${fresh.occupiedFor}`);
+    again.ws.close();
+    watcher.ws.close();
+  });
+
   it('gives a reconnecting member the same slot back', async () => {
     const first = connect(memberToken);
     await first.hello();

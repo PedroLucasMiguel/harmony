@@ -102,6 +102,7 @@ const rest = async (as, path, body) => {
 const STUBS = `
   const md = navigator.mediaDevices;
   md.enumerateDevices = async () => [];
+  md.realGetUserMedia = md.getUserMedia.bind(md);
   md.getUserMedia = async () => { throw new DOMException('no device', 'NotFoundError'); };
   return true;`;
 
@@ -114,7 +115,7 @@ async function signIn(port, nickname) {
   const app = launchApp({
     port,
     userDataDir: mkdtempSync(join(tmpdir(), 'harmony-dm-copy-profile-')),
-    extraArgs: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+    extraArgs: ['--autoplay-policy=no-user-gesture-required', '--mute-audio', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
   });
   procs.push(app);
   const page = await attach(await findPage(port));
@@ -295,6 +296,29 @@ async function run() {
       const t = v.currentTime; v.pause(); return { advanced: t, duration: v.duration };`);
     check('a video in a private conversation plays', !played.error && played.advanced > 0.3, JSON.stringify(played));
   }
+
+  // --- a voice message in a private conversation -----------------------------------------------------------------------------
+  const swap = await alice.evaluate("return { record: !document.getElementById('dm-record').hidden, send: !document.getElementById('dm-send').hidden }");
+  check('in a private conversation the microphone is where the send button is', swap.record && !swap.send, JSON.stringify(swap));
+  // The stubs above keep the call's microphone away; a voice message needs the real one.
+  await alice.evaluate("navigator.mediaDevices.getUserMedia = navigator.mediaDevices.realGetUserMedia; return true;");
+  await alice.evaluate("document.getElementById('dm-record').click(); return true;");
+  await until(alice, "document.getElementById('dm-recorder').hasAttribute('data-ready')", { label: 'the recorder' });
+  await sleep(2400);
+  const beforeVoice = await alice.evaluate("return document.querySelectorAll('#dm-log .voice-note').length");
+  await alice.evaluate("document.querySelector('#dm-recorder .voice-send').click(); return true;");
+  await until(alice, `document.querySelectorAll('#dm-log .voice-note').length > ${beforeVoice}`, { label: 'the voice message in the conversation' });
+  await alice.evaluate("document.querySelector('#dm-log .voice-note:last-of-type, #dm-log .voice-note').scrollIntoView({ block: 'center' }); return true;");
+  await until(alice, "/^\\d+:\\d\\d$/.test([...document.querySelectorAll('#dm-log .voice-note .voice-length')].at(-1).textContent)", { label: 'its length', timeoutMs: 15000 });
+  const voice = await alice.evaluate(`
+    const n = [...document.querySelectorAll('#dm-log .voice-note')].at(-1);
+    n.querySelector('.voice-play').click();
+    await new Promise((ok) => setTimeout(ok, 900));
+    return { length: n.querySelector('.voice-length').textContent, playing: n.hasAttribute('data-playing'), bars: n.querySelectorAll('.voice-bar').length };`);
+  check('it arrives sealed and comes back as a player that plays', voice.playing && voice.bars === 40, JSON.stringify(voice));
+  await alice.evaluate("[...document.querySelectorAll('#dm-log .voice-note .voice-play')].at(-1).click(); return true;");
+  const rowText = await alice.evaluate("return document.getElementById('dm-note').textContent");
+  check('and nothing complained', rowText === '', rowText);
 
   await alice.evaluate("const i = document.getElementById('dm-input'); i.value = 'hello'; return true;");
   const plain = await alice.evaluate(`{
