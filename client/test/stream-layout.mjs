@@ -220,16 +220,33 @@ async function run() {
     const pt = await ana.evaluate(`const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 };`);
     await ana.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pt.x, y: pt.y, button: 'none', buttons: 0 });
     await sleep(400);
-    return ana.evaluate(`return Object.fromEntries([...document.querySelectorAll('#channel-video .channel-tile')].map((t) => [t.hasAttribute('data-own') ? 'own' : 'theirs', getComputedStyle(t, '::after').boxShadow]));`);
+    return ana.evaluate(`// The stand-in microphones make a tone, so somebody is "talking": that is measured below, not here.
+    document.querySelectorAll('#channel-video .channel-tile').forEach((t) => t.removeAttribute('data-speaking'));
+    return Object.fromEntries([...document.querySelectorAll('#channel-video .channel-tile')].map((t) => [t.hasAttribute('data-own') ? 'own' : 'theirs', getComputedStyle(t, '::after').boxShadow]));`);
   };
-  const onOwn = await ring('#channel-video .channel-tile[data-own]');
+    const onOwn = await ring('#channel-video .channel-tile[data-own]');
   const onTheirs = await ring('#channel-video .channel-tile:not([data-own])');
   const wide = (shadow) => Number(/(\d+)px inset/.exec(shadow ?? '')?.[1] ?? 0);
   check('the camera preview of your own is mirrored, which is what hid the ring', await ana.evaluate("return getComputedStyle(document.querySelector('#channel-video .channel-tile[data-own] video')).transform !== 'none'"));
   check('pointing at your own tile lights it, over its picture', wide(onOwn.own) === 2 && /inset/.test(onOwn.own), JSON.stringify(onOwn));
   check('and not the other one', wide(onOwn.theirs) === 0, JSON.stringify(onOwn));
-  check('pointing at theirs lights theirs, and yours is back to its thin line', wide(onTheirs.theirs) === 2 && wide(onTheirs.own) === 1, JSON.stringify(onTheirs));
+  check('pointing at theirs lights theirs, and yours is not lit unless the pointer is on it', wide(onTheirs.theirs) === 2 && wide(onTheirs.own) === 0, JSON.stringify(onTheirs));
   await ana.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5, button: 'none', buttons: 0 });
+  const resting = await ana.evaluate(`document.querySelectorAll('#channel-video .channel-tile').forEach((t) => t.removeAttribute('data-speaking')); return Object.fromEntries([...document.querySelectorAll('#channel-video .channel-tile')].map((t) => [t.hasAttribute('data-own') ? 'own' : 'theirs', getComputedStyle(t, '::after').boxShadow]));`);
+  check('with the pointer elsewhere no tile is lit, yours included', wide(resting.own) === 0 && wide(resting.theirs) === 0, JSON.stringify(resting));
+
+  // Whoever is talking is ringed in green, camera or share, whatever else is lit.
+  const talking = await ana.evaluate(`
+    const out = {};
+    for (const t of document.querySelectorAll('#channel-video .channel-tile')) {
+      t.setAttribute('data-speaking', '');
+      const s = getComputedStyle(t, '::after').boxShadow;
+      out[t.hasAttribute('data-own') ? 'own' : 'theirs'] = s;
+      t.removeAttribute('data-speaking');
+    }
+    out.live = getComputedStyle(document.documentElement).getPropertyValue('--live').trim();
+    return out;`);
+  check('a tile whose person is talking is ringed green', wide(talking.own) === 3 && wide(talking.theirs) === 3 && /rgb\((?!91)/.test(talking.theirs), JSON.stringify(talking));
 
   // --- a click gives one the space ----------------------------------------------------------------------------------
   const theirs = l.tiles.find((t) => t.key.endsWith(':c') && !t.key.startsWith('me:')).key;

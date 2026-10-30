@@ -181,6 +181,10 @@ async function run() {
     };`);
   check('a YouTube card has a play button and a button for the browser over its picture',
     card.play && card.open && card.inside && card.playGlyph && /youtube\.com\/watch\?v=naNpAAdfmzs/.test(card.openHref), JSON.stringify(card));
+  const looks = await cdp.evaluate(`
+    const f = (sel) => { const e = document.querySelector(sel); const cs = getComputedStyle(e); return { color: cs.color, deco: cs.textDecorationLine, bg: cs.backgroundColor, size: Math.round(e.getBoundingClientRect().width) + 'x' + Math.round(e.getBoundingClientRect().height) }; };
+    return { play: f('.link-embed [data-act="play"]'), open: f('.link-embed [data-act="open"]') };`);
+  check('the browser button is dressed like the play button, not in the theme colour of a link', JSON.stringify(looks.play) === JSON.stringify(looks.open) && looks.open.color === 'rgb(255, 255, 255)' && looks.open.deco === 'none', JSON.stringify(looks));
   check('the buttons say what they do', card.playTitle && card.openTitle && card.playTitle !== card.openTitle, JSON.stringify(card));
 
   const before = await cdp.evaluate(`

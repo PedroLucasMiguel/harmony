@@ -3726,6 +3726,7 @@ button.danger {
   background: rgb(0 0 0 / 0.6);
   line-height: 1;
 }
+.chat-msg .link-embed-act,
 .link-embed-act {
   display: inline-grid;
   place-items: center;
@@ -3736,7 +3737,14 @@ button.danger {
   border-radius: 50%;
   background: transparent;
   color: #fff;
+  text-decoration: none;
   cursor: pointer;
+}
+/* The one that opens the browser is a link, and a link in a message is drawn in the theme's colour: not here. */
+.chat-msg .text a.link-embed-act,
+.chat-msg .text a.link-embed-act:hover {
+  color: #fff;
+  text-decoration: none;
 }
 .link-embed-act::before {
   width: 1.3rem;
@@ -4567,9 +4575,9 @@ button.danger {
   pointer-events: none;
   box-shadow: inset 0 0 0 var(--tile-ring, 0 transparent);
 }
-/* Your own tiles read as a preview, not as somebody else's camera. */
-.channel-tile[data-own] {
-  --tile-ring: 1px var(--accent);
+/* Somebody is talking: their camera and their share are ringed in green for as long as they are. */
+.channel-tile[data-speaking]::after {
+  box-shadow: inset 0 0 0 3px var(--live);
 }
 .channel-tile[data-own] video {
   transform: scaleX(-1);
