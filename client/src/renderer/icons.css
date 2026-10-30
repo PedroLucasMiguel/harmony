@@ -46,7 +46,7 @@
 [data-icon='key'] { --icon: url('icons/key.svg'); }
 [data-icon='copy'] { --icon: url('icons/copy.svg'); }
 [data-icon='arrow-left'] { --icon: url('icons/arrow-left.svg'); }
-[data-icon='dots-three-vertical'] { --icon: url('icons/dots-three-vertical.svg'); }
+[data-icon='dots-three-outline-vertical'] { --icon: url('icons/dots-three-outline-vertical.svg'); }
 [data-icon='prohibit'] { --icon: url('icons/prohibit.svg'); }
 [data-icon='caret-left'] { --icon: url('icons/caret-left.svg'); }
 [data-icon='caret-right'] { --icon: url('icons/caret-right.svg'); }

@@ -177,6 +177,14 @@ async function run() {
   await waitFor(ana, "document.getElementById('dm-log').textContent.includes('hi ana, from A')", { label: 'his answer on her screen', timeoutMs: 20_000 });
   check('his answer reaches Ana on server B, live', true);
 
+  // A long message in the list is cut with an ellipsis; it does not widen the column.
+  await pedro.evaluate(`const i = document.getElementById('dm-input'); i.value = ${JSON.stringify('x'.repeat(10) + ' una frase larga que no cabe en la lista de conversaciones, ni en dos líneas ni en tres, de verdad')}; i.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('dm-send').click(); return true;`);
+  await waitFor(pedro, "document.querySelector('#dm-list .dm-row-text')?.textContent.includes('una frase larga')", { label: 'the long message in the list' });
+  const fit = await pedro.evaluate(`const ul = document.getElementById('dm-list'); const list = document.querySelector('.dms-list').getBoundingClientRect(); const row = document.querySelector('#dm-list .dm-row').getBoundingClientRect();
+    const text = document.querySelector('#dm-list .dm-row-text'); return { listWidth: Math.round(list.width), rowRight: Math.round(row.right), listRight: Math.round(list.right), scrolls: ul.scrollWidth > ul.clientWidth, cut: text.scrollWidth > text.clientWidth };`);
+  check('a long message is cut in the list, not widening it', fit.listWidth === 320 && fit.rowRight <= fit.listRight && !fit.scrolls && fit.cut, JSON.stringify(fit));
+
   // Back, still on A.
   await pedro.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
   await waitFor(pedro, "document.querySelector('.view[data-active]')?.id === 'view-channels'", { label: 'leaving the list' });

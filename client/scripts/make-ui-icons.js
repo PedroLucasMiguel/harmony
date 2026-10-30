@@ -33,7 +33,7 @@ const ICONS = [
   'play', 'pause',
   // private conversations
   'chat-circle-dots', 'lock-simple', 'shield-check', 'shield-warning', 'key', 'copy', 'arrow-left',
-  'dots-three-vertical', 'prohibit',
+  'dots-three-outline-vertical', 'prohibit',
   // the floating stream window
   'caret-left', 'caret-right', 'picture-in-picture', 'arrow-square-out', 'arrow-square-in',
   // the chat

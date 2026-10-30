@@ -474,8 +474,12 @@ export function createDmUi(deps) {
       return;
     }
     el.headAvatar.replaceChildren(...avatarEl(faceOf(c.peer, '')).childNodes);
-    el.name.textContent = peerName(c.peer);
-    nameFont(el.name, c.peer);
+    // The name is drawn in a span: a name font sizes itself against what it sits in
+    // (fonts.css), and the heading's own size would otherwise override that.
+    const label = document.createElement('span');
+    label.textContent = peerName(c.peer);
+    nameFont(label, c.peer);
+    el.name.replaceChildren(label);
     const verified = session.verified(c.peer);
     el.verified.hidden = !verified;
     el.safety.toggleAttribute('data-verified', Boolean(verified));

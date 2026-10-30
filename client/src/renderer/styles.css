@@ -576,12 +576,20 @@ p {
 #view-dms .dms-list {
   position: relative;
   display: flex;
+  /* Never wider than its column: a long message must be cut with an ellipsis, not widen the list. */
+  min-width: 0;
+  overflow: hidden;
   min-height: 0;
   background: rgb(var(--tint-rgb) / 0.025);
   border-right: 1px solid var(--border);
 }
 .col-resizer[data-resize='dms'] {
-  right: -5px;
+  /* Inside the list, which clips what is outside it: the line is on its right edge. */
+  right: 0;
+}
+.col-resizer[data-resize='dms']::after {
+  left: auto;
+  right: 0;
 }
 /* The list is the page's own column here, not a popover over something else. */
 #view-dms .dm-panel,
@@ -589,9 +597,12 @@ p {
   display: flex !important;
   flex-direction: column;
   position: static;
+  /* A flex item honours z-index even unpositioned: the popover's 70 would sit over the column's drag handle. */
+  z-index: auto;
   flex: 1 1 auto;
   width: auto;
   max-height: none;
+  min-width: 0;
   min-height: 0;
   gap: 0;
   padding: 0;
@@ -638,7 +649,24 @@ p {
   min-height: 0;
   margin: 0.4rem 0 0;
   padding: 0.25rem 0.5rem 0.75rem;
+  overflow-x: hidden;
   overflow-y: auto;
+}
+/* A conversation row, as large as Discord's: a real picture, two lines beside it. */
+#view-dms .dm-row {
+  gap: 0.75rem;
+  padding: 0.55rem 0.6rem;
+}
+#view-dms .dm-row .avatar.tiny {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0;
+  font-size: 0.85rem;
+  vertical-align: baseline;
+}
+#view-dms .dm-row-name {
+  font-size: 0.95rem;
 }
 
 #view-dms .dms-pane {
@@ -674,9 +702,12 @@ p {
   height: 1.8rem;
   font-size: 0.72rem;
 }
+#view-dms .dm-head {
+  font-size: 1.1rem;
+}
 #view-dms .dm-head h2 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1em;
   line-height: 1.2;
 }
 /* Not the small grey capitals that headings elsewhere are: this is a person's name. */
@@ -685,10 +716,7 @@ p {
   font-weight: 600;
   letter-spacing: normal;
   text-transform: none;
-}
-/* A person's own name font can be tall; the bar is not. */
-#view-dms .dm-head h2[data-name-font] {
-  font-size: 1rem;
+  opacity: 1;
 }
 #view-dms .dm-head .icon-only {
   background: transparent;
