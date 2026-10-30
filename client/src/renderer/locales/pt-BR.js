@@ -1069,6 +1069,10 @@ export default {
   // --- upload
   'upload.progress': '{percent}% · {sent} de {total}',
   'upload.server_needs_update': '{name} passa de {limit}, e este servidor é antigo demais para receber arquivos maiores em partes. Peça ao dono que o atualize.',
+  'attachment.expand': 'Ver mais',
+  'attachment.fold': 'Ver menos',
+  'attachment.lines_left': '{count} linhas restantes',
+  'attachment.bytes_left': '{size} restantes',
 
   // --- view
   'view.broadcast.framerate': 'Taxa de quadros',

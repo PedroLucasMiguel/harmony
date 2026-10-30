@@ -1,6 +1,6 @@
 {
   "name": "@harmony/client",
-  "version": "4.3.3",
+  "version": "4.3.4",
   "private": true,
   "description": "Harmony desktop client: share a screen or window, or watch someone else's",
   "author": "Pedro Lucas Miguel",
@@ -33,6 +33,8 @@
     "test:mic-gate": "node test/mic-gate.mjs",
     "test:mic-valve": "node test/mic-valve.mjs",
     "test:mic-worker": "node test/mic-worker.mjs",
+    "test:media-attachments": "node test/media-attachments.mjs",
+    "test:byte-range": "node --test test/byte-range.test.mjs",
     "test:background-load": "node --test test/background-load.mjs",
     "test:background-load-live": "node test/background-load-live.mjs",
     "test:devtools-keys": "node --test test/devtools-keys.mjs",

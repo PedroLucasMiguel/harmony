@@ -15,6 +15,7 @@
 import { PersistentKeyFile } from './dm-keyfile.js';
 import { settingsBackend } from './dm-backend.js';
 import { DmSession, MAX_BODY, previewOf } from './dm-session.js';
+import { fileCard, textCard, previewsAsText, TEXT_PREVIEW_BYTES } from './attachment-card.js';
 import { KeyState } from './dm-vault.js';
 import { serverKeyOf } from './server-key.js';
 
@@ -678,9 +679,55 @@ export function createDmUi(deps) {
 
   /** The file of a message: opened when it is drawn, a placeholder until then. */
   function attachmentNode(message) {
+    const f = message.private.file;
+    // Drawn once it is open: fetched and opened here, on this computer.
+    const media = ['image', 'video', 'audio'].includes(message.mediaType) && f.size <= 25 * 1024 * 1024;
+
+    // What cannot be looked at is a card, as in the channels; what can is the
+    // thing itself with a line under it.
+    if (!media) {
+      const name = f.name || t('app.attachment');
+      const size = f.size ? formatBytes(f.size) : '';
+      const card = previewsAsText(f.name, f.size)
+        ? textCard({
+          name,
+          bytes: Number(f.size),
+          size,
+          // Opened here, on this computer, like any other file of the conversation.
+          head: async () => {
+            const opened = await session.file(message);
+            if (!opened) return new Uint8Array();
+            return new Uint8Array(await opened.blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer());
+          },
+          onOpen: () => saveFile(message),
+          t,
+        })
+        : fileCard({
+          name,
+          size,
+          mediaType: message.mediaType,
+          title: t('app.download'),
+          onOpen: () => saveFile(message),
+        });
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'msg-tool';
+      save.dataset.icon = 'download-simple';
+      save.title = t('app.download');
+      save.setAttribute('aria-label', t('app.download'));
+      save.addEventListener('click', (event) => {
+        event.stopPropagation();
+        saveFile(message);
+      });
+      const tools = document.createElement('span');
+      tools.className = 'attachment-tools inline';
+      tools.append(save);
+      card.end.append(tools);
+      return card.wrap;
+    }
+
     const wrap = document.createElement('span');
     wrap.className = 'attachment';
-    const f = message.private.file;
     const bar = document.createElement('span');
     bar.className = 'attachment-bar';
     const name = document.createElement('span');
@@ -696,23 +743,19 @@ export function createDmUi(deps) {
     }
     wrap.append(bar);
 
-    // Drawn once it is open: fetched and opened here, on this computer.
-    const media = ['image', 'video', 'audio'].includes(message.mediaType) && f.size <= 25 * 1024 * 1024;
-    if (media) {
-      session.file(message).then((opened) => {
-        if (!opened?.inline) return;
-        let node;
-        if (message.mediaType === 'image') {
-          node = document.createElement('img');
-          node.alt = f.name;
-        } else {
-          node = document.createElement(message.mediaType);
-          node.controls = true;
-        }
-        node.src = opened.url;
-        wrap.prepend(node);
-      }).catch(() => {});
-    }
+    session.file(message).then((opened) => {
+      if (!opened?.inline) return;
+      let node;
+      if (message.mediaType === 'image') {
+        node = document.createElement('img');
+        node.alt = f.name;
+      } else {
+        node = document.createElement(message.mediaType);
+        node.controls = true;
+      }
+      node.src = opened.url;
+      wrap.prepend(node);
+    }).catch(() => {});
     return wrap;
   }
 

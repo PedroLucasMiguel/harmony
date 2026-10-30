@@ -1,7 +1,9 @@
 const {
   app, BrowserWindow, desktopCapturer, dialog, ipcMain, net, protocol, safeStorage, session, shell,
 } = require('electron');
+const fs = require('node:fs');
 const fsp = require('node:fs/promises');
+const { Readable } = require('node:stream');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -21,6 +23,7 @@ const voiceTray = require('./voice-tray');
 const strings = require('./strings');
 const { RealtimeHub } = require('./realtime-hub');
 const { MediaCache, HASH_RE } = require('./media-cache');
+const { parseRange } = require('./byte-range');
 
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
 
@@ -99,6 +102,9 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       corsEnabled: true,
+      // Lets <video> and <audio> play from this scheme. Without it Chromium
+      // refuses the source outright (error 4), whatever the response says.
+      stream: true,
       /*
        * V8's code cache, which http(s) gets for free and a custom scheme
        * only on request. Without it every launch parsed and compiled the
@@ -128,6 +134,41 @@ let pendingSource = null;
  */
 let pendingLoopbackAudio = false;
 
+/**
+ * A cached file, whole or the part of it that was asked for.
+ *
+ * A video is not read from the front: the player asks for the end of an mp4 to
+ * find where things are, then for the stretch it is about to play, then for
+ * wherever the viewer drags to -- and plays nothing from a source that answers
+ * every request with the whole file. So a Range gets a 206 with just that part,
+ * read from disk as it is sent, and a file of any size is never held in memory.
+ */
+async function serveRanged(request, file, contentType) {
+  const { size } = await fsp.stat(file);
+  const headers = {
+    'Content-Type': contentType,
+    'Content-Security-Policy': "default-src 'none'; sandbox",
+    'X-Content-Type-Options': 'nosniff',
+    'Accept-Ranges': 'bytes',
+    // Content-addressed: the bytes behind a hash never change.
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  };
+  const range = parseRange(request.headers.get('range'), size);
+  if (range === 'unsatisfiable') {
+    return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${size}` } });
+  }
+  const { start, end } = range ?? { start: 0, end: size - 1 };
+  const body = size === 0 ? null : Readable.toWeb(fs.createReadStream(file, { start, end }));
+  return new Response(body, {
+    status: range ? 206 : 200,
+    headers: {
+      ...headers,
+      'Content-Length': String(size === 0 ? 0 : end - start + 1),
+      ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
+    },
+  });
+}
+
 function registerProtocol() {
   protocol.handle('harmony', async (request) => {
     const { pathname } = new URL(request.url);
@@ -153,17 +194,7 @@ function registerProtocol() {
       try {
         const { path: file, contentType } = await mediaCache.get(hash, (h) =>
           api.fetchUpload(from, h));
-        const response = await net.fetch(pathToFileURL(file).toString());
-        return new Response(response.body, {
-          status: 200,
-          headers: {
-            'Content-Type': contentType,
-            'Content-Security-Policy': "default-src 'none'; sandbox",
-            'X-Content-Type-Options': 'nosniff',
-            // Content-addressed: the bytes behind a hash never change.
-            'Cache-Control': 'public, max-age=31536000, immutable',
-          },
-        });
+        return await serveRanged(request, file, contentType);
       } catch (err) {
         return new Response(`Media unavailable: ${err.message}`, { status: 404 });
       }

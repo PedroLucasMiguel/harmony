@@ -17,6 +17,7 @@ import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
 import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
+import { fileCard, textCard, previewsAsText, readHead } from './attachment-card.js';
 import { createServerRail } from './server-rail.js';
 import { createBackgroundSessions } from './server-sessions.js';
 import { serverKeyOf } from './server-key.js';
@@ -9549,14 +9550,38 @@ function attachmentNode(message) {
   // harmony://app/media/<hash> -- same-origin, so the CSP allows it, and the
   // main process downloads and verifies it on first use. See media-cache.js.
   const url = harmony.mediaUrl(message.attachmentHash);
-  const wrap = document.createElement('span');
-  wrap.className = 'attachment';
   // Too big to draw without downloading the lot: offered as a file instead.
   const big = Number(message.attachmentBytes) > INLINE_MEDIA_LIMIT;
   const previewable = !big && ['image', 'video', 'audio'].includes(message.mediaType);
 
+  /*
+   * A file with nothing to look at is a card (see attachment-card.js); one
+   * that can be seen is the thing itself with a line under it.
+   */
+  const attachmentName = message.attachmentName ?? t('app.attachment');
+  const sizeText = message.attachmentBytes ? formatBytes(message.attachmentBytes) : '';
+  // A text file shows its first lines; any other, its icon.
+  const card = previewable ? null : previewsAsText(message.attachmentName, message.attachmentBytes)
+    ? textCard({
+      name: attachmentName,
+      bytes: Number(message.attachmentBytes),
+      size: sizeText,
+      head: () => readHead(url),
+      onOpen: () => saveAttachment(message),
+      t,
+    })
+    : fileCard({
+      name: attachmentName,
+      size: sizeText,
+      mediaType: message.mediaType,
+      title: t('app.download'),
+      onOpen: () => saveAttachment(message),
+    });
+  const wrap = card?.wrap ?? document.createElement('span');
+  if (!card) wrap.className = 'attachment';
+
   if (!previewable) {
-    // Nothing drawn: the name line below is the whole attachment.
+    // Nothing drawn: the card is the whole attachment.
   } else if (message.mediaType === 'image') {
     const img = document.createElement('img');
     img.src = url;
@@ -9580,24 +9605,27 @@ function attachmentNode(message) {
     wrap.append(audio);
   }
 
-  const bar = document.createElement('span');
-  bar.className = 'attachment-bar';
-
-  const name = document.createElement('span');
-  name.className = 'attachment-name';
-  // Messages posted before the server stored names have none, and saying
-  // so is better than inventing one -- the save dialog will suggest
-  // something derived from the content type.
-  name.textContent = message.attachmentName ?? t('app.attachment');
-  name.title = name.textContent;
-  bar.append(name);
-  if (message.attachmentBytes) {
-    const size = document.createElement('span');
-    size.className = 'attachment-size';
-    size.textContent = formatBytes(message.attachmentBytes);
-    bar.append(size);
+  // Where the file's buttons go: the end of the card, or the line under a preview.
+  let bar = card?.end;
+  if (!card) {
+    bar = document.createElement('span');
+    bar.className = 'attachment-bar';
+    const name = document.createElement('span');
+    name.className = 'attachment-name';
+    // Messages posted before the server stored names have none, and saying
+    // so is better than inventing one -- the save dialog will suggest
+    // something derived from the content type.
+    name.textContent = message.attachmentName ?? t('app.attachment');
+    name.title = name.textContent;
+    bar.append(name);
+    if (message.attachmentBytes) {
+      const size = document.createElement('span');
+      size.className = 'attachment-size';
+      size.textContent = formatBytes(message.attachmentBytes);
+      bar.append(size);
+    }
+    wrap.append(bar);
   }
-  wrap.append(bar);
 
   /*
    * The two things you do to a file, floating over its top-right corner.

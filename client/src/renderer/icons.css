@@ -60,3 +60,17 @@
 [data-icon='shield-star'] { --icon: url('icons/shield-star.svg'); }
 [data-icon='bug'] { --icon: url('icons/bug.svg'); }
 [data-icon='folder-open'] { --icon: url('icons/folder-open.svg'); }
+[data-icon='file'] { --icon: url('icons/file.svg'); }
+[data-icon='file-text'] { --icon: url('icons/file-text.svg'); }
+[data-icon='file-zip'] { --icon: url('icons/file-zip.svg'); }
+[data-icon='file-pdf'] { --icon: url('icons/file-pdf.svg'); }
+[data-icon='file-audio'] { --icon: url('icons/file-audio.svg'); }
+[data-icon='file-video'] { --icon: url('icons/file-video.svg'); }
+[data-icon='file-image'] { --icon: url('icons/file-image.svg'); }
+[data-icon='file-code'] { --icon: url('icons/file-code.svg'); }
+[data-icon='file-doc'] { --icon: url('icons/file-doc.svg'); }
+[data-icon='file-xls'] { --icon: url('icons/file-xls.svg'); }
+[data-icon='file-ppt'] { --icon: url('icons/file-ppt.svg'); }
+[data-icon='file-csv'] { --icon: url('icons/file-csv.svg'); }
+[data-icon='caret-down'] { --icon: url('icons/caret-down.svg'); }
+[data-icon='caret-up'] { --icon: url('icons/caret-up.svg'); }

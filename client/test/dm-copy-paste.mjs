@@ -3,9 +3,9 @@
 //
 //   node client/test/dm-copy-paste.mjs
 
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -246,6 +246,55 @@ async function run() {
   const kept = await alice.evaluate("return document.getElementById('dm-pending-name').textContent");
   check('a file that has a name keeps it', named && /^notes\.txt/.test(kept), kept);
   await alice.evaluate("document.getElementById('dm-pending-clear').click(); return true;");
+
+  // --- what comes back into the conversation: a card for a file, a player for a video ---------------------------------
+  const sendPasted = async (name, type, bytes) => {
+    const before = await alice.evaluate("return document.querySelectorAll('#dm-log .attachment').length");
+    await alice.evaluate(`return (() => ${paste(name, type, bytes)})()`);
+    await until(alice, "!document.getElementById('dm-pending').hidden", { label: `${name} attached` });
+    await alice.evaluate("document.getElementById('dm-send').click(); return true;");
+    await until(alice, `document.querySelectorAll('#dm-log .attachment').length > ${before}`, { label: `${name} in the conversation` });
+  };
+  await sendPasted('notes.zip', 'application/zip', Array.from({ length: 3000 }, (_, i) => i % 251));
+  const card = await alice.evaluate(`
+    const c = document.querySelector('#dm-log .attachment-card');
+    return c && { icon: c.querySelector('.attachment-icon')?.dataset.icon, name: c.querySelector('.attachment-name')?.textContent,
+      size: c.querySelector('.attachment-size')?.textContent, save: Boolean(c.querySelector('.msg-tool')),
+      linked: c.querySelector('.attachment-name')?.getAttribute('role') === 'button' };`);
+  check('a file in a private conversation is a card as well', card?.icon === 'file-zip' && card.name === 'notes.zip' && /KB/.test(card.size) && card.save && card.linked, JSON.stringify(card));
+
+  const log = [...Buffer.from(Array.from({ length: 40 }, (_, i) => `entry ${i + 1}: <i>plain</i>`).join('\n'))];
+  await sendPasted('server.log', 'text/plain', log);
+  await sleep(800);
+  const shown = await alice.evaluate(`
+    const c = document.querySelector('#dm-log .attachment-textfile');
+    c?.scrollIntoView({ block: 'center' });
+    await new Promise((ok) => setTimeout(ok, 800));
+    return c && { shown: !c.querySelector('.textfile-body').hidden, lines: c.querySelector('.textfile-lines').textContent.split('\\n').length,
+      left: c.querySelector('.textfile-left').textContent, markup: c.querySelector('.textfile-lines').children.length };`);
+  check('a text file in a private conversation shows its first lines too', shown?.shown && shown.lines === 10 && /30 lines left/.test(shown.left) && shown.markup === 0, JSON.stringify(shown));
+
+  let webm = null;
+  try {
+    const path = join(tmpdir(), `dm-clip-${process.pid}.webm`);
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=15', '-t', '3', '-c:v', 'libvpx', path]);
+    webm = [...readFileSync(path)];
+    rmSync(path, { force: true });
+  } catch { /* no ffmpeg: the video is only checked where it can be made */ }
+  if (webm) {
+    await sendPasted('screen.webm', 'video/webm', webm);
+    const played = await alice.evaluate(`
+      const v = await new Promise((ok) => { const t0 = Date.now(); const tick = () => { const e = document.querySelector('#dm-log video'); (e || Date.now() - t0 > 8000) ? ok(e) : setTimeout(tick, 100); }; tick(); });
+      if (!v) return { error: 'no video drawn' };
+      const until = (fn, ms) => new Promise((ok) => { const t0 = performance.now(); const tick = () => (fn() || performance.now() - t0 > ms ? ok() : setTimeout(tick, 50)); tick(); });
+      await until(() => v.readyState >= 1 || v.error, 6000);
+      if (v.error) return { error: 'media error ' + v.error.code };
+      v.muted = true;
+      try { await v.play(); } catch (err) { return { error: err.message }; }
+      await until(() => v.currentTime > 0.3, 5000);
+      const t = v.currentTime; v.pause(); return { advanced: t, duration: v.duration };`);
+    check('a video in a private conversation plays', !played.error && played.advanced > 0.3, JSON.stringify(played));
+  }
 
   await alice.evaluate("const i = document.getElementById('dm-input'); i.value = 'hello'; return true;");
   const plain = await alice.evaluate(`{

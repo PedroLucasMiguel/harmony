@@ -46,6 +46,10 @@ const ICONS = [
   'crown-simple', 'shield-star',
   // the debug page
   'bug', 'folder-open',
+  // a file with no preview
+  'file', 'file-text', 'file-zip', 'file-pdf', 'file-audio', 'file-video', 'file-image', 'file-code',
+  'file-doc', 'file-xls', 'file-ppt', 'file-csv',
+  'caret-down', 'caret-up',
 ];
 
 // By path: the package's exports map hides package.json.
