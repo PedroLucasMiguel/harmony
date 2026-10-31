@@ -209,3 +209,12 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 `MEDIAMTX_VERSION` is a build arg, pinned to the release `mediamtx.yml` is
 validated against — MediaMTX removes configuration keys between versions, and an
 unknown key aborts startup rather than warning.
+
+The image carries MediaMTX built from source with the patches in
+[`server/patches/`](../server/patches/README.md) applied (a gentler loss recovery for shares). If that cannot be
+built it falls back to the published binary and says so in the build log. `MEDIAMTX_SOURCE=release` asks for the
+published binary straight away.
+
+```bash
+docker build --build-arg MEDIAMTX_SOURCE=release -t harmony-server ./server
+```

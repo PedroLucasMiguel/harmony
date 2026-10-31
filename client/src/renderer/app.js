@@ -80,6 +80,11 @@ const BITRATE_MBPS = {
   native: [15, 20, 28],
 };
 
+/** How much of a share's bitrate ceiling its estimate starts at. */
+const SHARE_START_FRACTION = 0.4;
+/** What the sound of a share may use, in stereo. A voice is 32 and mono; a game or music is not. */
+const SHARE_AUDIO_KBPS = 128;
+
 /** What the old bundled presets meant, for a settings file that still has one. */
 const LEGACY_QUALITY = {
   low: ['720', 30],
@@ -13114,6 +13119,11 @@ async function startBroadcast() {
       contentHint: priority.contentHint,
       degradationPreference: priority.degradationPreference,
       insertableStreams: state.clips.enabled,
+      // Where the sender's estimate starts: see tuneVideoAnswer. Nearer the ceiling than its own few hundred
+      // kilobits, which is twenty seconds of climbing at 1080p60 and minutes at a bigger picture.
+      startBitrate: Math.round(preset.bitrate * SHARE_START_FRACTION),
+      // The sound of a share is a game or music: stereo, at a rate for it (see tuneOpusStereo).
+      stereoAudio: SHARE_AUDIO_KBPS,
     });
 
     state.live.videoSender = pc.getSenders().find((s) => s.track?.kind === 'video') ?? null;

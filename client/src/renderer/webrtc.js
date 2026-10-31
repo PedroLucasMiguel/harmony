@@ -247,6 +247,90 @@ export function tuneOpusAnswer(sdp, { dtx = true, ptime = 0 } = {}) {
 }
 
 /**
+ * Add parameters to the `a=fmtp` line of every payload of one codec in one kind of section, where they are
+ * not already stated; a payload with no such line gets one.
+ *
+ * @param {string} sdp
+ * @param {'audio'|'video'} kind
+ * @param {RegExp} codec  matched against what follows `a=rtpmap:<pt> `, e.g. /^H264\/90000/i
+ * @param {string} params  `name=value;name=value`
+ * @param {RegExp} [unless]  a parameter whose presence means it was already said
+ */
+function addFmtpParams(sdp, kind, codec, params, unless) {
+  const lines = sdp.split(/\r?\n/);
+  const payloads = new Set();
+  let section = '';
+  for (const line of lines) {
+    if (line.startsWith('m=')) section = line.slice(2).split(' ')[0];
+    const m = /^a=rtpmap:(\d+) (.*)$/.exec(line);
+    if (m && section === kind && codec.test(m[2])) payloads.add(m[1]);
+  }
+  if (!payloads.size) return sdp;
+
+  const seen = new Set();
+  const out = [];
+  section = '';
+  for (const line of lines) {
+    if (line.startsWith('m=')) section = line.slice(2).split(' ')[0];
+    const fmtp = /^a=fmtp:(\d+) (.*)$/.exec(line);
+    const rtpmap = /^a=rtpmap:(\d+) /.exec(line);
+    if (fmtp && section === kind && payloads.has(fmtp[1])) {
+      seen.add(fmtp[1]);
+      out.push(unless?.test(fmtp[2]) ? line : `${line};${params}`);
+    } else {
+      out.push(line);
+      // a payload without a line of its own gets one right after its rtpmap, once
+      if (rtpmap && section === kind && payloads.has(rtpmap[1]) && !lines.some((l) => l.startsWith(`a=fmtp:${rtpmap[1]} `))) {
+        out.push(`a=fmtp:${rtpmap[1]} ${params}`);
+      }
+    }
+  }
+  return out.join('\r\n');
+}
+
+/**
+ * Tell a video sender where its bandwidth estimate starts, through the answer it is about to be given.
+ *
+ * With nothing said, a sender starts at a few hundred kilobits and climbs about 8% a second, which on a
+ * 12 Mbit stream is twenty seconds of a picture at a quarter of its bitrate -- and for a bigger picture it
+ * does not get there in a minute (measured: 1440p60 reached 5.8 of 20 Mbit/s in forty seconds, 4K60 ran at
+ * nine frames a second for the first seven). Starting nearer the ceiling gets the picture where it is meant to
+ * be in a few seconds. It is a start and not a floor: the estimate still falls to what the line carries,
+ * and on a line of 3 Mbit/s a start of 5 cost one short freeze before it settled.
+ *
+* The minimum is said beside it, at a rate far below any picture worth sharing, so that a start is never
+ * below its own floor.
+ *
+ * @param {string} sdp the relay's answer
+ * @param {{startKbps: number, minKbps?: number}} options
+ */
+export function tuneVideoAnswer(sdp, { startKbps, minKbps = 300 }) {
+  if (!(startKbps > 0)) return sdp;
+  return addFmtpParams(
+    sdp,
+    'video',
+    /^H264\/90000/i,
+    `x-google-start-bitrate=${Math.round(startKbps)};x-google-min-bitrate=${Math.round(Math.min(minKbps, startKbps))}`,
+    /x-google-start-bitrate/,
+  );
+}
+
+/**
+ * Ask for stereo Opus at a bitrate worth having, on an offer or an answer.
+ *
+ * Opus defaults to mono and 32 kbit/s unless both ends say otherwise, and what a share sends is a game or
+ * music, not a voice: left and right are different sounds. The sender needs it said in what it offers and
+ * what it is answered; a receiver that is not asked for stereo decodes one channel (measured: a left-only
+ * beep came out of both speakers at the same level, and with all three edits only out of the left).
+ *
+ * @param {string} sdp
+ * @param {{kbps?: number}} options
+ */
+export function tuneOpusStereo(sdp, { kbps = 128 } = {}) {
+  return addFmtpParams(sdp, 'audio', /^opus\/48000/i, `stereo=1;sprop-stereo=1;maxaveragebitrate=${Math.round(kbps * 1000)}`, /(^|;)\s*stereo=1/);
+}
+
+/**
  * Whether a connection comes up within `ms`.
  *
  * Resolves false for a connection that fails or closes first, as well as for
@@ -318,6 +402,8 @@ async function publishOnce({
   contentHint = 'motion',
   degradationPreference = 'balanced',
   insertableStreams = false,
+  startBitrate = 0,
+  stereoAudio = 0,
 }, connectTimeoutMs) {
   let resourceUrl = null;
   const pc = new RTCPeerConnection({
@@ -350,12 +436,29 @@ async function publishOnce({
     }
 
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    await pc.setLocalDescription(stereoAudio ? { type: 'offer', sdp: tuneOpusStereo(offer.sdp, { kbps: stereoAudio }) } : offer);
     await waitForIceGathering(pc);
 
     const reply = await harmony.api.sdp(url, pc.localDescription.sdp);
     resourceUrl = reply.resourceUrl;
-    await pc.setRemoteDescription({ type: 'answer', sdp: audioTuning ? tuneOpusAnswer(reply.answer, audioTuning) : reply.answer });
+    let answer = reply.answer;
+    if (audioTuning) answer = tuneOpusAnswer(answer, audioTuning);
+    if (stereoAudio) answer = tuneOpusStereo(answer, { kbps: stereoAudio });
+    if (startBitrate) answer = tuneVideoAnswer(answer, { startKbps: startBitrate / 1000 });
+    await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+
+    // The sound's own ceiling, to match what the answer says it may use.
+    if (stereoAudio && audioTrack) {
+      const audioSender = pc.getSenders().find((x) => x.track === audioTrack);
+      if (audioSender) {
+        try {
+          const params = audioSender.getParameters();
+          if (!params.encodings?.length) params.encodings = [{}];
+          params.encodings[0].maxBitrate = stereoAudio * 1000;
+          await audioSender.setParameters(params);
+        } catch { /* an engine that keeps its own ceiling */ }
+      }
+    }
 
     // Bitrate has to be set after the answer -- before it, the sender has no
     // negotiated encoding to configure.
@@ -394,6 +497,8 @@ export async function watch({
   insertableStreams = false,
   codec = 'H264',
   media = 'both',
+  // A picture's sound is music or a game and is played in stereo; a voice-channel path (media: 'audio') is a voice.
+  stereoAudio = media !== 'audio',
 }) {
   const pc = new RTCPeerConnection({
     iceServers: relayServers(iceServers),
@@ -443,11 +548,11 @@ export async function watch({
     });
 
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    await pc.setLocalDescription(stereoAudio ? { type: 'offer', sdp: tuneOpusStereo(offer.sdp) } : offer);
     await waitForIceGathering(pc);
 
-    const { answer, resourceUrl } = await harmony.api.sdp(url, pc.localDescription.sdp);
-    await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+    const { answer: relayAnswer, resourceUrl } = await harmony.api.sdp(url, pc.localDescription.sdp);
+    await pc.setRemoteDescription({ type: 'answer', sdp: stereoAudio ? tuneOpusStereo(relayAnswer) : relayAnswer });
 
     return { pc, stream, resourceUrl };
   } catch (err) {

@@ -25,6 +25,15 @@ ARG ALPINE_VERSION=latest
 # keys between releases, and an unknown key aborts startup rather than warning.
 ARG MEDIAMTX_VERSION=1.21.0
 
+# Which MediaMTX goes in: `patched` is the same version built from source with the patches in patches/ applied
+# (what they are for: patches/README.md), `release` is the published binary. A patched build that cannot be
+# made falls back to the published one and says so in the build log, so an image is never left without a relay.
+#
+#   docker build --build-arg MEDIAMTX_SOURCE=release -t harmony-server ./server    # the published binary
+ARG MEDIAMTX_SOURCE=patched
+# What the patched build compiles with; MediaMTX asks for the version in its go.mod (1.26 for MediaMTX 1.21).
+ARG GO_VERSION=1.26
+
 # --------------------------------------------------------------------------
 # MediaMTX binary
 #
@@ -32,7 +41,7 @@ ARG MEDIAMTX_VERSION=1.21.0
 # cross-building for a Raspberry Pi does not drag every shell command through
 # qemu just to download and untar a file.
 # --------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS mediamtx
+FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS mediamtx-release
 ARG MEDIAMTX_VERSION
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -49,6 +58,37 @@ RUN set -eu; \
       "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/mediamtx_v${MEDIAMTX_VERSION}_${MTX_ARCH}.tar.gz"; \
     tar -xzf /tmp/mediamtx.tar.gz -C /tmp; \
     install -m 0755 /tmp/mediamtx /mediamtx
+
+# --------------------------------------------------------------------------
+# MediaMTX, built from source with Harmony's patches
+#
+# Also on the build platform: Go cross-compiles, so the target's architecture is a variable and not
+# an emulated machine. Only built when MEDIAMTX_SOURCE=patched -- BuildKit skips a stage nothing needs.
+# --------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS mediamtx-patched
+ARG MEDIAMTX_VERSION
+ARG TARGETARCH
+ARG TARGETVARIANT
+RUN apk add --no-cache curl tar patch
+COPY patches/ /patches/
+RUN set -eu; \
+    case "${TARGETARCH}${TARGETVARIANT}" in \
+      amd64) export GOARCH=amd64 MTX_ARCH=linux_amd64 ;; \
+      arm64) export GOARCH=arm64 MTX_ARCH=linux_arm64 ;; \
+      armv7) export GOARCH=arm GOARM=7 MTX_ARCH=linux_armv7 ;; \
+      armv6) export GOARCH=arm GOARM=6 MTX_ARCH=linux_armv6 ;; \
+      *) echo "unsupported platform: ${TARGETARCH}${TARGETVARIANT}" >&2; exit 1 ;; \
+    esac; \
+    if ! GOOS=linux sh /patches/build-mediamtx.sh "${MEDIAMTX_VERSION}" /mediamtx; then \
+      echo "!!  MediaMTX with Harmony's patches did not build; using the published ${MEDIAMTX_VERSION} instead." >&2; \
+      curl -fsSL -o /tmp/mediamtx.tar.gz \
+        "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/mediamtx_v${MEDIAMTX_VERSION}_${MTX_ARCH}.tar.gz"; \
+      tar -xzf /tmp/mediamtx.tar.gz -C /tmp mediamtx; \
+      install -m 0755 /tmp/mediamtx /mediamtx; \
+    fi
+
+# The one the runtime image takes.
+FROM mediamtx-${MEDIAMTX_SOURCE} AS mediamtx
 
 # --------------------------------------------------------------------------
 # Production dependencies

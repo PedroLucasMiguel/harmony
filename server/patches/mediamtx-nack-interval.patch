@@ -1,0 +1,34 @@
+diff --git a/internal/protocols/webrtc/peer_connection.go b/internal/protocols/webrtc/peer_connection.go
+index 21c372e..7e92719 100644
+--- a/internal/protocols/webrtc/peer_connection.go
++++ b/internal/protocols/webrtc/peer_connection.go
+@@ -15,6 +15,7 @@ import (
+ 
+ 	"github.com/pion/ice/v4"
+ 	"github.com/pion/interceptor"
++	"github.com/pion/interceptor/pkg/nack"
+ 	"github.com/pion/sdp/v3"
+ 	"github.com/pion/transport/v4"
+ 	"github.com/pion/webrtc/v4"
+@@ -99,6 +100,11 @@ func ridIndexByMedia(media *sdp.MediaDescription) map[string]int {
+ 	return ret
+ }
+ 
++// nackInterval is how often a receiver asks for the packets it is missing. The default is 100 ms, and
++// every packet behind a gap waits until the gap is filled (see rtpreceiver.Receiver), so each loss
++// stalls the whole stream for up to that long.
++const nackInterval = 5 * time.Millisecond
++
+ // * skip ConfigureRTCPReports
+ // * add statsInterceptor
+ func registerInterceptors(
+@@ -106,7 +112,8 @@ func registerInterceptors(
+ 	interceptorRegistry *interceptor.Registry,
+ 	onStatsInterceptor func(s *statsInterceptor),
+ ) error {
+-	err := webrtc.ConfigureNack(mediaEngine, interceptorRegistry)
++	err := webrtc.ConfigureNackWithOptions(mediaEngine, interceptorRegistry,
++		[]nack.GeneratorOption{nack.GeneratorInterval(nackInterval)})
+ 	if err != nil {
+ 		return err
+ 	}

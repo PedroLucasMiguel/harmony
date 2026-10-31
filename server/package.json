@@ -1,6 +1,6 @@
 {
   "name": "@harmony/server",
-  "version": "4.4.8",
+  "version": "4.4.9",
   "private": true,
   "description": "Harmony control server: username reservation + MediaMTX auth hook",
   "type": "module",
@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/reservation.test.js test/auth.test.js test/accounts.test.js test/channels.test.js test/realtime.test.js test/chat.test.js test/soundpad.test.js test/profile.test.js test/profile-style.test.js test/owner.test.js test/dm.test.js test/recovery.test.js test/roles.test.js test/reads.test.js test/link-preview.test.js test/notified.test.js"
+    "test": "node --test test/reservation.test.js test/auth.test.js test/accounts.test.js test/channels.test.js test/realtime.test.js test/chat.test.js test/soundpad.test.js test/profile.test.js test/profile-style.test.js test/owner.test.js test/dm.test.js test/recovery.test.js test/roles.test.js test/reads.test.js test/link-preview.test.js test/notified.test.js test/install-mediamtx.test.js"
   },
   "dependencies": {
     "express": "^4.21.2",

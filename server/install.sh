@@ -32,6 +32,9 @@
 #   CF_API_TOKEN         certbot route only; Zone > DNS > Edit on the domain
 #   HARMONY_PUBLIC_URL   none route only; the URL clients use
 #   HARMONY_PASSWORD     server password; empty means none
+#   MEDIAMTX_PATCHED     0 installs the published MediaMTX instead of Harmony's build of it (the patches in
+#                        patches/; see patches/README.md). Needs no Go on the machine; falls back to the
+#                        published binary by itself if the build cannot be made. Re-run to switch.
 
 set -euo pipefail
 
@@ -52,7 +55,7 @@ for arg in "$@"; do
     --no-setup) SETUP=no ;;
     --update) UPDATE=yes ;;
     --no-pull) PULL=no ;;
-    -h|--help) sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -129,20 +132,10 @@ fi
 echo "==> Node $(node -v)"
 
 # --- MediaMTX ---------------------------------------------------------------
-if /usr/local/bin/mediamtx --version 2>&1 | grep -q "v${MEDIAMTX_VERSION}\b"; then
-  echo "==> MediaMTX ${MEDIAMTX_VERSION} already installed"
-else
-  echo "==> Installing MediaMTX ${MEDIAMTX_VERSION}"
-  TARBALL="mediamtx_v${MEDIAMTX_VERSION}_${MTX_ARCH}.tar.gz"
-  URL="https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/${TARBALL}"
-  TMP="$(mktemp -d)"
-  trap 'rm -rf "$TMP"' EXIT
-
-  curl -fsSL "$URL" -o "$TMP/$TARBALL"
-  tar -xzf "$TMP/$TARBALL" -C "$TMP"
-  install -m 0755 "$TMP/mediamtx" /usr/local/bin/mediamtx
-  echo "    $(/usr/local/bin/mediamtx --version 2>&1 | head -n1)"
-fi
+# Harmony's patched build where one can be made, the published binary where it cannot (MEDIAMTX_PATCHED=0 asks
+# for the published one). An update that cannot build it installs the published binary and says why rather
+# than failing; see patches/install-mediamtx.sh.
+MEDIAMTX_VERSION="$MEDIAMTX_VERSION" MTX_ARCH="$MTX_ARCH" bash "$SRC_DIR/patches/install-mediamtx.sh"
 
 # --- UDP socket buffers ------------------------------------------------------
 # Every voice and video stream a room has goes through this one host's UDP
