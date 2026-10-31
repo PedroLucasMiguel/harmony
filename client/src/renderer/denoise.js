@@ -38,45 +38,71 @@ export async function loadRnnoise() {
   return module;
 }
 
+/** What is quieter than this, all through a frame, is silence: a muted microphone's frames are exactly that. */
+const SILENT = 1e-6;
+const RING = 16384;
+
 /**
  * @param {object} module  from loadRnnoise()
  * @param {{follow?: boolean}} [options]  `follow`: also turn down what RNNoise says has no voice (the default)
- * @returns {{process: (mono: Float32Array) => Float32Array, voice: number, close: () => void}}
+ * @returns {{process: (mono: Float32Array, out?: Float32Array) => Float32Array, voice: number, close: () => void}}
  */
 export function createDenoiser(module, { follow = true } = {}) {
   const state = module._rnnoise_create(0);
-  const bytes = FRAME * 4;
-  const pointer = module._malloc(bytes);
+  const pointer = module._malloc(FRAME * 4);
   const at = pointer >> 2;
 
   const pending = new Float32Array(FRAME);
+  const cleaned = new Float32Array(FRAME);
   let filled = 0;
-  // What has been processed and not yet handed back. Primed with one frame of silence so that
-  // a chunk that is not a multiple of 480 samples is never short.
-  let fifo = new Float32Array(FRAME * 16);
-  let read = 0;
-  let write = FRAME;
-  let gain = 0;
+
+  // What has been processed and not yet handed back, in a ring: nothing is allocated per frame. Primed
+  // with one frame of silence so that a piece that is not a multiple of 480 samples is never short.
+  const ring = new Float32Array(RING);
+  let readAt = 0;
+  let writeAt = FRAME;
+  let queued = FRAME;
+
+  // Not following the voice is no gate at all: the sound goes through as RNNoise left it.
+  let gain = follow ? 0 : 1;
   let hold = 0;
   let voice = 0;
 
-  const push = (value) => {
-    if (write >= fifo.length) {
-      // Wrapped by moving what is left to the front.
-      fifo.copyWithin(0, read, write);
-      write -= read;
-      read = 0;
-      if (write >= fifo.length) {
-        const bigger = new Float32Array(fifo.length * 2);
-        bigger.set(fifo.subarray(0, write));
-        fifo = bigger;
-      }
-    }
-    fifo[write] = value;
-    write += 1;
-  };
+  function enqueue(frame) {
+    const first = Math.min(FRAME, RING - writeAt);
+    ring.set(first === FRAME ? frame : frame.subarray(0, first), writeAt);
+    if (first < FRAME) ring.set(frame.subarray(first), 0);
+    writeAt = (writeAt + FRAME) % RING;
+    queued += FRAME;
+  }
+
+  function dequeue(out) {
+    const take = Math.min(out.length, queued);
+    const first = Math.min(take, RING - readAt);
+    out.set(ring.subarray(readAt, readAt + first), 0);
+    if (first < take) out.set(ring.subarray(0, take - first), first);
+    if (take < out.length) out.fill(0, take);
+    readAt = (readAt + take) % RING;
+    queued -= take;
+  }
 
   function frame() {
+    // A frame with nothing in it -- a muted microphone sends exactly that, all day -- is not worth the
+    // network: it comes out as it went in, and RNNoise carries on from where it was.
+    let peak = 0;
+    for (let i = 0; i < FRAME; i += 1) {
+      const v = pending[i] < 0 ? -pending[i] : pending[i];
+      if (v > peak) peak = v;
+    }
+    if (peak < SILENT) {
+      voice = 0;
+      hold = 0;
+      gain = follow ? 0 : 1;
+      cleaned.fill(0);
+      enqueue(cleaned);
+      return;
+    }
+
     const heap = module.HEAPF32;
     for (let i = 0; i < FRAME; i += 1) heap[at + i] = pending[i] * SCALE;
     voice = module._rnnoise_process_frame(state, pointer, pointer);
@@ -89,14 +115,17 @@ export function createDenoiser(module, { follow = true } = {}) {
       target = Math.max(FLOOR, wanted);
     }
     const from = gain;
-    gain += (target - gain) * (target > gain ? OPEN_SHARE : CLOSE_SHARE);
+    if (follow) gain += (target - gain) * (target > gain ? OPEN_SHARE : CLOSE_SHARE);
 
     // Read the heap again: growing the module's memory replaces the array.
     const out = module.HEAPF32;
+    const step = (gain - from) / FRAME;
+    let g = from;
     for (let i = 0; i < FRAME; i += 1) {
-      const g = from + ((gain - from) * (i + 1)) / FRAME;
-      push((out[at + i] / SCALE) * g);
+      g += step;
+      cleaned[i] = (out[at + i] / SCALE) * g;
     }
+    enqueue(cleaned);
   }
 
   return {
@@ -104,19 +133,24 @@ export function createDenoiser(module, { follow = true } = {}) {
     get voice() {
       return voice;
     },
-    /** @param {Float32Array} mono  the sound, mono, at 48 kHz, in -1..1 */
-    process(mono) {
-      const out = new Float32Array(mono.length);
-      for (let i = 0; i < mono.length; i += 1) {
-        pending[filled] = mono[i];
-        filled += 1;
+    /**
+     * @param {Float32Array} mono  the sound, mono, at 48 kHz, in -1..1
+     * @param {Float32Array} [out]  where to put the answer, the same length (made if not given)
+     */
+    process(mono, out = new Float32Array(mono.length)) {
+      let i = 0;
+      while (i < mono.length) {
+        const take = Math.min(FRAME - filled, mono.length - i);
+        pending.set(take === mono.length ? mono : mono.subarray(i, i + take), filled);
+        filled += take;
+        i += take;
         if (filled === FRAME) {
           filled = 0;
           frame();
         }
       }
       // Always enough: one frame was queued at the start and each frame in adds one out.
-      for (let i = 0; i < out.length; i += 1) out[i] = read < write ? fifo[read++] : 0;
+      dequeue(out);
       return out;
     },
     close() {

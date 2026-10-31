@@ -527,6 +527,8 @@ export class VoiceSession {
         transmitting: this.transmitting, camerasPaused: this.#camerasPaused,
         micGate: this.#micGateKind,
         ai: this.aiState,
+        // The share of one core the microphone worker takes (volume, gate, strong suppression), in percent.
+        micWorkerCpu: this.#micChain?.cpu ?? null,
         micLevel: Number((this.#micMeter?.read().level ?? 0).toFixed(4)),
         gate: this.#micChain || this.#valve ? (this.micOpen ? 'open' : 'closed') : 'none',
       },

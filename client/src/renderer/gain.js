@@ -333,6 +333,7 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = fals
     const worker = new Worker('gate-worker.js');
     let generator;
     let level = 0;
+    let cpu = null;
     let open = threshold <= 0;
     let started = false;
     let timer = null;
@@ -357,6 +358,10 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = fals
       get open() {
         return open;
       },
+      /** The share of one core the worker has been taking, in percent, or null before it has said. */
+      get cpu() {
+        return cpu;
+      },
       close() {
         clearTimeout(timer);
         worker.onmessage = null;
@@ -380,6 +385,10 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = fals
       }
       if (event.data.ai) {
         onAi?.(event.data.ai, event.data);
+        return;
+      }
+      if ('cpu' in event.data) {
+        cpu = event.data.cpu;
         return;
       }
       level = event.data.level;

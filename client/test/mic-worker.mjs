@@ -91,6 +91,11 @@ async function run() {
   check('a sound under the threshold is shut out', r.peak < 0.001, `peak ${r.peak.toFixed(5)}`);
   check('and the gate reports itself shut', !(await page.evaluate('return window.__c.open')));
 
+  // --- what it costs ----------------------------------------------------------------------------------------------------------------
+  await sleep(2400);
+  const cpu = await page.evaluate('return window.__c.cpu');
+  check('the worker says how much of a core it takes, and it is a small share (under 3%)', typeof cpu === 'number' && cpu >= 0 && cpu < 3, String(cpu));
+
   // --- volume, live -----------------------------------------------------------------------------------------------------------------------
   await page.evaluate('window.__voice.gain.value = 0.1; window.__c.setThreshold(0); return true;');
   await sleep(500);
