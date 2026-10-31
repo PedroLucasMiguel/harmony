@@ -1489,6 +1489,47 @@ export class VoiceSession {
   #tileGains = new Map();
 
   /**
+   * How loudly each person's screen share is played, by user id, for as long as it is kept (see
+   * loadStreamPrefs). A tile's key names a slot, and a slot is a different one every time somebody joins; the
+   * person is the same, and so is how loud you wanted their game.
+   */
+  #streamGains = new Map();
+
+  /** Called with (userId, gain) whenever somebody's share is turned up or down, so the owner can keep it. */
+  onStreamPrefs = null;
+
+  /** The person in a slot, from the map or, when the roster has not been through syncPeers yet, the roster. */
+  #ownerOf(mid) {
+    return this.#owners.get(mid) ?? this.lastRoster?.find((m) => m.mid === mid)?.userId;
+  }
+
+  /** What a tile is to be played at when it opens: what was set for it, else what was kept for its person. */
+  #rememberedGain(key) {
+    const own = this.#tileGains.get(key);
+    if (own !== undefined) return own;
+    const [mid, kind] = key.split(':');
+    return kind === 's' ? this.#streamGains.get(this.#ownerOf(Number(mid))) ?? 1 : 1;
+  }
+
+  /**
+   * Replace what is kept about everybody's shares with what was kept for the server being joined (ids are
+   * only meaningful on one server, so swapped and not merged), and bring the tiles already open to it.
+   *
+   * @param {Record<string, number> | null | undefined} saved user id -> gain
+   */
+  loadStreamPrefs(saved) {
+    this.#streamGains = new Map();
+    for (const [id, value] of Object.entries(saved ?? {})) {
+      const userId = Number(id);
+      const gain = Number(value);
+      if (Number.isInteger(userId) && Number.isFinite(gain)) {
+        this.#streamGains.set(userId, Math.max(0, Math.min(MAX_GAIN, gain)));
+      }
+    }
+    for (const [key, tile] of this.#video) tile.sink?.set(this.#rememberedGain(key));
+  }
+
+  /**
    * How loudly one screen share is played, 0..MAX_GAIN.
    *
    * Per tile rather than per person: somebody's game audio and their voice
@@ -1501,11 +1542,19 @@ export class VoiceSession {
     const value = Math.max(0, Math.min(MAX_GAIN, Number(gain) || 0));
     this.#tileGains.set(key, value);
     this.#video.get(key)?.sink?.set(value);
+    const [mid, kind] = key.split(':');
+    const userId = kind === 's' ? this.#ownerOf(Number(mid)) : undefined;
+    if (userId !== undefined) {
+      if (value === 1) this.#streamGains.delete(userId);
+      else this.#streamGains.set(userId, value);
+      this.onStreamPrefs?.(userId, value);
+    }
     return value;
   }
 
   tileGain(key) {
-    return this.#tileGains.get(key) ?? this.#video.get(key)?.sink?.value ?? 1;
+    const remembered = this.#rememberedGain(key);
+    return remembered === 1 ? this.#video.get(key)?.sink?.value ?? 1 : remembered;
   }
 
   /**
@@ -1571,7 +1620,7 @@ export class VoiceSession {
           continue;
         }
         const sink = createSink(stream);
-        sink.set(this.#tileGains.get(key) ?? 1);
+        sink.set(this.#rememberedGain(key));
         this.#video.set(key, { pc, stream, sink, mid, kind });
         changed = true;
       } catch (err) {

@@ -746,10 +746,18 @@ export async function describePc(pc) {
       'packetsReceived', 'packetsLost', 'jitter', 'framesReceived', 'framesDecoded', 'framesDropped',
       'freezeCount', 'totalFreezesDuration', 'pauseCount', 'totalDecodeTime', 'frameWidth', 'frameHeight',
       'framesPerSecond', 'nackCount', 'pliCount', 'decoderImplementation', 'powerEfficientDecoder',
+      // How long a picture waits before it is shown: the other half of how far the sound is from it.
+      'jitterBufferDelay', 'jitterBufferEmittedCount', 'jitterBufferTargetDelay', 'jitterBufferMinimumDelay',
     ]],
   };
   for (const [name, [report, fields]] of Object.entries(sections)) {
     if (report) out[name] = pick(report, fields);
+  }
+  // Where the receiver thinks the picture is against the sound, when both say: positive is the picture later.
+  const heard = first('inbound-rtp', 'audio');
+  const seen = first('inbound-rtp', 'video');
+  if (heard?.estimatedPlayoutTimestamp != null && seen?.estimatedPlayoutTimestamp != null) {
+    out.avPlayoutOffset_ms = Math.round(seen.estimatedPlayoutTimestamp - heard.estimatedPlayoutTimestamp);
   }
   const codec = (report) => byId.get(report?.codecId)?.mimeType;
   const profile = (report) => byId.get(report?.codecId)?.sdpFmtpLine;

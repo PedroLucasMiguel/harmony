@@ -1105,7 +1105,8 @@ export function createDmUi(deps) {
         await mine.session.markRead(currentId);
         return;
       }
-      if (state.settings?.mentionSound !== false) playCue('mention');
+      // Its own sound, not the mention's: a private message and somebody writing your name are not the same news.
+      if (state.settings?.mentionSound !== false) playCue('dm');
     }).catch(() => {});
     return true;
   }

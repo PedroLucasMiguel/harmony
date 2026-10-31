@@ -102,7 +102,42 @@ async function run() {
   check('a session starts from what was kept: the level, the mute, the 350% ceiling, and 100% for everybody else',
     restored.seven === 0.8 && restored.nine === 3.5 && restored.nineMuted === true && restored.other === 1, JSON.stringify(restored));
 
-  await page.evaluate('await harmony.settings.set({ masterVolume: 100, peerVolumes: {} }); return true;');
+  // --- and the level of somebody's screen share, which used to be forgotten as soon as the call ended ----------------------------------------
+  const streams = await page.evaluate(`
+    const voice = window.__harmonyVoice();
+    voice.lastRoster = [{ mid: 5, userId: 50 }, { mid: 6, userId: 51 }];
+    voice.setTileGain('5:s', 0.4);
+    voice.setTileGain('6:s', 1);
+    voice.setTileGain('5:c', 0.2);
+    await new Promise((r) => setTimeout(r, 900));
+    const s = await harmony.settings.get();
+    return Object.values((s.data ?? s).streamVolumes ?? {})[0] ?? null;`);
+  check("a person's share level is written to the settings, by person and not by slot",
+    streams && Math.abs((streams[50] ?? 0) - 0.4) < 1e-9, JSON.stringify(streams));
+  check('and a share left at 100%, or a camera, takes no room there', streams && !(51 in streams) && Object.keys(streams).length === 1, JSON.stringify(streams));
+
+  const again = await page.evaluate(`
+    const { VoiceSession } = await import('./voice.js');
+    const session = new VoiceSession();
+    session.loadStreamPrefs({ 50: 0.4, 52: 9, nope: 0.1 });
+    // The same person, in a different slot than before.
+    session.lastRoster = [{ mid: 9, userId: 50 }, { mid: 10, userId: 52 }, { mid: 11, userId: 53 }];
+    return { same: session.tileGain('9:s'), camera: session.tileGain('9:c'), ceiling: session.tileGain('10:s'), other: session.tileGain('11:s') };`);
+  check('a share opens at the level kept for its owner, in whatever slot they have now, capped like any other',
+    again.same === 0.4 && again.camera === 1 && again.ceiling === 3.5 && again.other === 1, JSON.stringify(again));
+
+  // A change made a moment before the window goes is written at once, not after the wait.
+  const hurried = await page.evaluate(`
+    const voice = window.__harmonyVoice();
+    voice.lastRoster = [{ mid: 7, userId: 60 }];
+    voice.setTileGain('7:s', 0.3);
+    window.dispatchEvent(new Event('pagehide'));
+    await new Promise((r) => setTimeout(r, 150));
+    const s = await harmony.settings.get();
+    return Object.values((s.data ?? s).streamVolumes ?? {})[0]?.[60] ?? null;`);
+  check('and one made as the window goes is written at once', hurried === 0.3, String(hurried));
+
+  await page.evaluate('await harmony.settings.set({ masterVolume: 100, peerVolumes: {}, streamVolumes: {} }); return true;');
 }
 
 run().catch((err) => { console.error(err); process.exitCode = 1; }).finally(() => {

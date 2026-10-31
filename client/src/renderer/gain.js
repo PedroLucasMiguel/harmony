@@ -519,74 +519,83 @@ export async function createMicChain(stream, options = {}) {
  * on, the renderer's CSP allows no remote media, and a few notes are easier
  * to keep pleasant than any recording.
  *
- * 2.x played each note as a bare sine at 7% of full scale. A sine has no
- * harmonics, and the ear judges loudness largely by them -- so those cues
- * were both quiet and thin, easy to miss under a game and easy to mistake
- * for one another. Each note is now a small additive voice: the fundamental,
- * its octave and its twelfth, with a fast pitch settle at the onset that
- * gives it the soft "bloop" of a struck note rather than the beep of a test
- * tone. Played at ~32% of full scale, through a limiter, so two cues landing
- * together cannot clip.
- *
- * The mapping is the one every app of this kind uses, so it is already
- * learned: rising means arriving or switching on, falling means leaving or
- * switching off. Two notes for other people, three for you -- your own
- * arrival is the one you most need to be sure of.
- *
- * Each cue is { notes: [[frequency Hz, delay s], ...], length s, level }.
+ * Every note is a small additive voice (see VOICES below), played at ~32% of
+ * full scale through a limiter, so two cues landing together cannot clip.
+ * They go to the playback context, never to the microphone: nobody in the
+ * call hears them.
  */
-const C5 = 523.25;
-const D5 = 587.33;
-const E5 = 659.25;
-const G5 = 783.99;
-const A5 = 880.0;
-const B5 = 987.77;
-const D6 = 1174.66;
-const E6 = 1318.51;
-const F6 = 1396.91;
-const G4 = 392.0;
-const D4 = 293.66;
-const A4 = 440.0;
+// Notes, in Hz. One scale (C major without its fourth) for every cue, so that two of them landing
+// together are consonant rather than a clash.
+const N = {
+  D4: 293.66, G4: 392.0, B4: 493.88,
+  C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.0, B5: 987.77,
+  C6: 1046.5, D6: 1174.66, E6: 1318.51, G6: 1567.98,
+};
 
+/*
+ * Three voices, each a set of partials -- [multiple of the fundamental, relative level] -- and how it dies away:
+ *
+ *   bell   glass: inharmonic partials (1, 2.76, 5.4) that ring and fade, for the cues about arriving and
+ *          going live. It is the voice that can be heard through a game.
+ *   pluck  a struck wooden bar (1, 3.9, 9.2), dry and short, for the cues that answer a key you pressed:
+ *          mute, deafen, the camera. Done before the next word.
+ *   tick   a click: a short burst of band-passed noise on top of a sine that slides, for push to talk, which is
+ *          heard hundreds of times a day and has to be the quietest and shortest thing here.
+ *
+ * `body` is how much of its level a note keeps a third of the way through: a bell keeps more of it.
+ */
+const VOICES = {
+  bell: { partials: [[1, 1], [2.76, 0.26], [5.4, 0.09]], body: 0.45, settle: 1.02 },
+  pluck: { partials: [[1, 1], [3.9, 0.42], [9.2, 0.07]], body: 0.18, settle: 1.0 },
+  tick: { partials: [[1, 1]], body: 0.1, settle: 1.0 },
+};
+
+/*
+ * Each cue is { voice, notes: [[frequency Hz, delay s], ...], length s (of each note), level }; a tick also has
+ * `slide` (the ratio its pitch ends on) and `noise` (how much click against tone).
+ *
+ * The mapping is the one every app of this kind uses, so it is already learned: rising means arriving or
+ * switching on, falling means leaving or switching off.
+ */
 const CUES = {
-  // Somebody else arrived / left. Up a fifth, down a fifth.
-  join: { notes: [[D5, 0], [A5, 0.09]], length: 0.32, level: 1 },
-  leave: { notes: [[A5, 0], [D5, 0.09]], length: 0.32, level: 1 },
+  // Somebody else arrived / left: one bright bell note and one dry falling one.
+  join: { voice: 'bell', notes: [[N.G5, 0], [N.C6, 0.1]], length: 0.38, level: 1 },
+  leave: { voice: 'pluck', notes: [[N.E5, 0], [N.B4, 0.09]], length: 0.3, level: 1 },
 
-  // You connected / disconnected. A full triad, so it cannot be mistaken
-  // for somebody else coming and going.
-  connect: { notes: [[C5, 0], [E5, 0.07], [G5, 0.14]], length: 0.4, level: 1 },
-  disconnect: { notes: [[G5, 0], [E5, 0.07], [C5, 0.14]], length: 0.4, level: 1 },
+  // You connected / disconnected. Three notes, so it cannot be taken for somebody else coming and going.
+  connect: { voice: 'bell', notes: [[N.E5, 0], [N.G5, 0.08], [N.C6, 0.16]], length: 0.5, level: 1 },
+  disconnect: { voice: 'bell', notes: [[N.C6, 0], [N.G5, 0.08], [N.E5, 0.16]], length: 0.42, level: 0.9 },
 
-  // A stream started / stopped -- yours or anybody's in the channel.
-  // Higher and brighter than the arrivals: it is news, not presence.
-  streamStart: { notes: [[E5, 0], [B5, 0.07], [E6, 0.14]], length: 0.45, level: 0.95 },
-  streamStop: { notes: [[E6, 0], [B5, 0.07], [E5, 0.14]], length: 0.45, level: 0.95 },
+  // A stream started / stopped, yours or anybody's: a longer, higher shimmer, because it is news.
+  streamStart: { voice: 'bell', notes: [[N.A5, 0], [N.E6, 0.07], [N.A5 * 2, 0.14]], length: 0.55, level: 0.9 },
+  streamStop: { voice: 'bell', notes: [[N.A5 * 2, 0], [N.E6, 0.07], [N.A5, 0.14]], length: 0.5, level: 0.85 },
 
-  // Your microphone. Short and close together, because it answers a key you
-  // just pressed and should be done before your next word.
-  mute: { notes: [[A5, 0], [D5, 0.055]], length: 0.2, level: 0.85 },
-  unmute: { notes: [[D5, 0], [A5, 0.055]], length: 0.2, level: 0.85 },
+  // Your camera: two dry notes, a third apart, high up -- a different register from the stream's.
+  cameraOn: { voice: 'pluck', notes: [[N.C6, 0], [N.E6, 0.07]], length: 0.24, level: 0.85 },
+  cameraOff: { voice: 'pluck', notes: [[N.E6, 0], [N.C6, 0.07]], length: 0.24, level: 0.8 },
 
-  // Your ears. Lower than mute, so the two are told apart without looking.
-  deafen: { notes: [[A4, 0], [D4, 0.07]], length: 0.28, level: 0.9 },
-  undeafen: { notes: [[D4, 0], [A4, 0.07]], length: 0.28, level: 0.9 },
+  // Your microphone. A pluck and a sixth, quick, because it answers a key you just pressed.
+  mute: { voice: 'pluck', notes: [[N.E6, 0], [N.G5, 0.05]], length: 0.2, level: 0.85 },
+  unmute: { voice: 'pluck', notes: [[N.G5, 0], [N.E6, 0.05]], length: 0.2, level: 0.85 },
 
-  /*
-   * Somebody wrote your name.
-   *
-   * Three notes going up twice, and the only cue that is asking for
-   * something rather than reporting it -- it has to be recognisable from
-   * another room.
-   */
-  mention: { notes: [[A5, 0], [D6, 0.08], [F6, 0.16]], length: 0.3, level: 0.9 },
+  // Your ears. The same two moves an octave lower and longer, so the two are told apart without looking.
+  deafen: { voice: 'pluck', notes: [[N.B4, 0], [N.D4, 0.07]], length: 0.3, level: 0.95 },
+  undeafen: { voice: 'pluck', notes: [[N.D4, 0], [N.B4, 0.07]], length: 0.3, level: 0.95 },
+
+  // Push to talk: the key going down, and the microphone closing again. A tick that rises, a tick that falls.
+  pttDown: { voice: 'tick', notes: [[1500, 0]], slide: 1.35, noise: 0.5, length: 0.045, level: 0.6 },
+  pttUp: { voice: 'tick', notes: [[1150, 0]], slide: 0.7, noise: 0.5, length: 0.05, level: 0.5 },
+
+  // A private message: one note, twice. The only cue that repeats a pitch, so it is not taken for a mention
+  // (three notes going up) or for anything about the call.
+  dm: { voice: 'bell', notes: [[N.E6, 0], [N.E6, 0.13]], length: 0.3, level: 0.8 },
+
+  // Somebody wrote your name. The one cue that asks for something rather than reporting it.
+  mention: { voice: 'bell', notes: [[N.A5, 0], [N.D6, 0.08], [N.G6, 0.16]], length: 0.34, level: 0.9 },
 };
 
 /** Loudest a cue gets at 100%, as a fraction of full scale. */
 const CUE_PEAK = 0.32;
-
-/** The partials of one note: [multiple of the fundamental, relative level]. */
-const PARTIALS = [[1, 1], [2, 0.32], [3, 0.1]];
 
 /** 0..2, from the "sound effects volume" setting. */
 let cueVolume = 1;
@@ -614,6 +623,17 @@ function bus(ctx) {
   return cueBus;
 }
 
+/** A tenth of a second of white noise, made once per context: the body of a click. */
+let clickNoise = null;
+function noiseBuffer(ctx) {
+  if (clickNoise?.context === ctx) return clickNoise.buffer;
+  const buffer = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.1), ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+  clickNoise = { context: ctx, buffer };
+  return buffer;
+}
+
 export function playCue(name, volume = 1) {
   const cue = CUES[name];
   if (!cue) return;
@@ -621,29 +641,38 @@ export function playCue(name, volume = 1) {
   if (level <= 0) return;
   const ctx = context();
   const out = bus(ctx);
+  const voice = VOICES[cue.voice];
 
   for (const [frequency, delay] of cue.notes) {
     const start = ctx.currentTime + 0.01 + delay;
     const end = start + cue.length;
 
     const envelope = ctx.createGain();
-    // Ramps rather than steps: a discontinuity in a waveform is a click.
+    // Ramps rather than steps: a discontinuity in a waveform is a click. (A tick is meant to be one, but
+    // its edge is 2 ms and not zero, which is the difference between a tick and a pop in the speakers.)
     envelope.gain.setValueAtTime(0.0001, start);
-    envelope.gain.exponentialRampToValueAtTime(level, start + 0.006);
-    envelope.gain.exponentialRampToValueAtTime(level * 0.35, start + cue.length * 0.35);
+    envelope.gain.exponentialRampToValueAtTime(level, start + (cue.voice === 'tick' ? 0.002 : 0.006));
+    envelope.gain.exponentialRampToValueAtTime(level * voice.body, start + cue.length * 0.35);
     envelope.gain.exponentialRampToValueAtTime(0.0001, end);
     envelope.connect(out);
 
-    const oscillators = PARTIALS.map(([multiple, weight]) => {
+    const oscillators = voice.partials.map(([multiple, weight]) => {
       const osc = ctx.createOscillator();
       osc.type = 'sine';
-      // The settle: a few per cent sharp at the strike, down to pitch in
-      // 40 ms. Inaudible as a glide, audible as a softer attack.
-      osc.frequency.setValueAtTime(frequency * multiple * 1.03, start);
-      osc.frequency.exponentialRampToValueAtTime(frequency * multiple, start + 0.04);
+      const pitch = frequency * multiple;
+      if (cue.slide) {
+        // A tick's tone slides over its whole length: up for the key going down, down for it coming up.
+        osc.frequency.setValueAtTime(pitch, start);
+        osc.frequency.exponentialRampToValueAtTime(pitch * cue.slide, end);
+      } else {
+        // The settle: a few per cent sharp at the strike, down to pitch in 40 ms. Inaudible as a glide,
+        // audible as a softer attack.
+        osc.frequency.setValueAtTime(pitch * voice.settle, start);
+        osc.frequency.exponentialRampToValueAtTime(pitch, start + 0.04);
+      }
       const partial = ctx.createGain();
       // Higher partials die faster, as they do on anything struck.
-      partial.gain.setValueAtTime(weight, start);
+      partial.gain.setValueAtTime(weight * (cue.noise ? 1 - cue.noise / 2 : 1), start);
       partial.gain.exponentialRampToValueAtTime(
         Math.max(0.0001, weight * 0.05),
         start + cue.length / multiple,
@@ -655,6 +684,26 @@ export function playCue(name, volume = 1) {
       return { osc, partial };
     });
 
+    // The click of a tick: noise through a band around the note, gone in a few milliseconds.
+    const extras = [];
+    if (cue.noise) {
+      const source = ctx.createBufferSource();
+      source.buffer = noiseBuffer(ctx);
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.frequency.value = frequency * 2;
+      band.Q.value = 1.1;
+      const burst = ctx.createGain();
+      burst.gain.setValueAtTime(cue.noise, start);
+      burst.gain.exponentialRampToValueAtTime(0.0001, start + Math.min(0.02, cue.length / 2));
+      source.connect(band);
+      band.connect(burst);
+      burst.connect(envelope);
+      source.start(start);
+      source.stop(end + 0.02);
+      extras.push(source, band, burst);
+    }
+
     // Oscillators are one-shot; without this the graph grows by a few dead
     // nodes per cue for the life of the context.
     oscillators[0].osc.addEventListener('ended', () => {
@@ -663,6 +712,7 @@ export function playCue(name, volume = 1) {
           osc.disconnect();
           partial.disconnect();
         }
+        for (const node of extras) node.disconnect();
         envelope.disconnect();
       } catch { /* already gone */ }
     });
@@ -978,6 +1028,39 @@ export async function playSample(url, { gain = 1 } = {}) {
   return source;
 }
 
+/** Samples being fetched and decoded right now, so a second ask for one waits for the first instead of repeating it. */
+const loading = new Map();
+
+/** A recording, fetched and decoded once: from the cache, or from whoever is already getting it. */
+function loadSample(url) {
+  const cached = samples.get(url);
+  if (cached) return Promise.resolve(cached);
+  let pending = loading.get(url);
+  if (!pending) {
+    pending = (async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`could not load the sound (${response.status})`);
+      const buffer = await context().decodeAudioData(await response.arrayBuffer());
+      samples.set(url, buffer);
+      return buffer;
+    })().finally(() => loading.delete(url));
+    loading.set(url, pending);
+  }
+  return pending;
+}
+
+/**
+ * Have a join sound ready before it is wanted.
+ *
+ * The first time somebody's sound plays it has to be fetched and decoded, and that lands on the moment they
+ * arrive: the sound comes late, and the decoding competes with the call being set up. Done ahead of time,
+ * playing it is only starting a buffer. A file that will not load is left for playJoinSound to report, when
+ * it matters; here it is only not warmed.
+ */
+export function preloadJoinSound(url) {
+  return loadSample(url).then(() => true, () => false);
+}
+
 /** Join sounds still playing, so leaving the room can end them. */
 const activeJoinSounds = new Set();
 
@@ -996,13 +1079,7 @@ const activeJoinSounds = new Set();
  * @param {{maxSeconds?: number}} options
  */
 export async function playJoinSound(url, { maxSeconds = 10 } = {}) {
-  let buffer = samples.get(url);
-  if (!buffer) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`could not load the sound (${response.status})`);
-    buffer = await context().decodeAudioData(await response.arrayBuffer());
-    samples.set(url, buffer);
-  }
+  const buffer = await loadSample(url);
   const level = cueVolume * CUE_PEAK * 2.2;
   if (level <= 0) return null;
 

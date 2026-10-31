@@ -1,27 +1,45 @@
 // Plays interleaved S16LE stereo PCM pushed in from the native capture.
 //
 // Runs on the audio thread, so it must never allocate unpredictably or block.
-// The design is a plain chunk queue with a hard cap: audio arrives over IPC in
-// bursts that do not line up with the 128-frame render quantum, so some
-// buffering is unavoidable, but an unbounded queue would turn a momentary
-// hiccup into permanent lip-sync drift. When the queue runs long we drop the
-// oldest audio and keep latency bounded instead.
+// The design is a chunk queue: audio arrives over IPC in bursts that do not
+// line up with the 128-frame render quantum, so some buffering is unavoidable.
+//
+// What the queue holds is delay on the sound, and nothing else takes it back
+// out. A page that stalls for a moment (a game taking the processor) delivers
+// the audio late and all at once; the audio that was waiting then plays out as
+// a backlog that stays a backlog, because audio arrives in real time and is
+// played in real time. Every stall longer than the backlog already there makes
+// it longer, hour after hour, and the sound falls behind the picture by that
+// much (measured on the file as it was: a 150 ms stall every ten minutes left
+// the sound 160 ms behind for the rest of a three-hour run).
+//
+// So the queue is brought back down: while it holds more than it needs, the
+// audio is played 3% faster -- interpolated, so there are no clicks and a
+// pitch change of half a semitone -- until it is back near live. A backlog of
+// 300 ms is gone in ten seconds. The hard cap below is only for the case where
+// even that cannot keep up.
 
-const MAX_QUEUED_FRAMES = 48000 * 0.4; // 400 ms at 48 kHz
-const TARGET_QUEUED_FRAMES = 48000 * 0.1; // drain back to 100 ms
+const MAX_QUEUED_FRAMES = 48000 * 0.4; // 400 ms at 48 kHz: past this, drop the oldest audio
+const TARGET_QUEUED_FRAMES = 48000 * 0.04; // catching up ends, and a drop ends, at 40 ms
+const CATCH_UP_FROM_FRAMES = 48000 * 0.08; // catching up starts above 80 ms: more than two chunks' worth
+const CATCH_UP_RATE = 1.03;
 
 class PcmPlayer extends AudioWorkletProcessor {
   constructor() {
     super();
     /** @type {{left: Float32Array, right: Float32Array}[]} */
     this.chunks = [];
-    this.readOffset = 0;
-    this.queuedFrames = 0;
+    /** Where the next sample comes from, in frames into the first chunk; fractional while catching up. */
+    this.readPos = 0;
+    /** Frames in all the chunks, whole, whatever has been read of the first. */
+    this.totalFrames = 0;
+    this.catchingUp = false;
     this.closed = false;
-    // What the debug log reads: how much audio has been thrown away to stay near live, how much silence
-    // was played because none had arrived, and how far behind it is playing. Counted in frames.
+    // What the debug log reads: how much audio has been thrown away to stay near live, how much has been
+    // played faster to get there, how much silence was played because none had arrived. Counted in frames.
     this.started = false;
     this.droppedFrames = 0;
+    this.catchUpFrames = 0;
     this.underrunFrames = 0;
     this.sinceReport = 0;
 
@@ -32,12 +50,18 @@ class PcmPlayer extends AudioWorkletProcessor {
         this.push(payload);
       } else if (type === 'flush') {
         this.chunks.length = 0;
-        this.readOffset = 0;
-        this.queuedFrames = 0;
+        this.readPos = 0;
+        this.totalFrames = 0;
+        this.catchingUp = false;
       } else if (type === 'close') {
         this.closed = true;
       }
     };
+  }
+
+  /** How many frames are waiting to be played. */
+  get queuedFrames() {
+    return this.totalFrames - this.readPos;
   }
 
   /** @param {ArrayBuffer} buffer interleaved S16LE stereo */
@@ -54,15 +78,15 @@ class PcmPlayer extends AudioWorkletProcessor {
     }
 
     this.chunks.push({ left, right });
-    this.queuedFrames += frames;
+    this.totalFrames += frames;
     this.started = true;
 
-    // Too far behind: throw away the oldest audio rather than let the delay grow.
+    // Too far behind even for catching up: throw away the oldest audio rather than let the delay grow.
     while (this.queuedFrames > MAX_QUEUED_FRAMES && this.chunks.length > 1) {
       const dropped = this.chunks.shift();
-      this.queuedFrames -= dropped.left.length - this.readOffset;
-      this.droppedFrames += dropped.left.length - this.readOffset;
-      this.readOffset = 0;
+      this.droppedFrames += dropped.left.length - this.readPos;
+      this.totalFrames -= dropped.left.length;
+      this.readPos = 0;
       if (this.queuedFrames <= TARGET_QUEUED_FRAMES) break;
     }
   }
@@ -73,25 +97,46 @@ class PcmPlayer extends AudioWorkletProcessor {
     const outR = output[1] ?? output[0];
     const need = outL.length;
 
+    // Faster while there is more than is needed, until there is not: two thresholds, so it does not
+    // flutter on and off around one.
+    const queued = this.queuedFrames;
+    if (queued > CATCH_UP_FROM_FRAMES) this.catchingUp = true;
+    else if (queued <= TARGET_QUEUED_FRAMES) this.catchingUp = false;
+    const rate = this.catchingUp ? CATCH_UP_RATE : 1;
+
     let written = 0;
     while (written < need && this.chunks.length > 0) {
       const chunk = this.chunks[0];
-      const available = chunk.left.length - this.readOffset;
-      const take = Math.min(available, need - written);
+      const length = chunk.left.length;
+      const at = Math.floor(this.readPos);
+      const part = this.readPos - at;
 
-      for (let i = 0; i < take; i++) {
-        outL[written + i] = chunk.left[this.readOffset + i];
-        outR[written + i] = chunk.right[this.readOffset + i];
+      let l = chunk.left[at];
+      let r = chunk.right[at];
+      if (part > 0) {
+        // Between two frames: the next one may be in the next chunk, or not there yet (hold this one).
+        const next = at + 1 < length ? chunk : this.chunks[1];
+        const index = at + 1 < length ? at + 1 : 0;
+        const l2 = next ? next.left[index] : l;
+        const r2 = next ? next.right[index] : r;
+        l += (l2 - l) * part;
+        r += (r2 - r) * part;
       }
+      outL[written] = l;
+      outR[written] = r;
+      written++;
 
-      written += take;
-      this.readOffset += take;
-      this.queuedFrames -= take;
-
-      if (this.readOffset >= chunk.left.length) {
+      this.readPos += rate;
+      if (rate !== 1) this.catchUpFrames += rate - 1;
+      while (this.chunks.length > 0 && this.readPos >= this.chunks[0].left.length) {
+        this.readPos -= this.chunks[0].left.length;
+        this.totalFrames -= this.chunks[0].left.length;
         this.chunks.shift();
-        this.readOffset = 0;
       }
+    }
+    if (this.chunks.length === 0) {
+      this.readPos = 0;
+      this.totalFrames = 0;
     }
 
     // Underrun: emit silence. Better a brief gap than a click or a stall.
@@ -109,6 +154,7 @@ class PcmPlayer extends AudioWorkletProcessor {
         type: 'stats',
         queuedMs: ms(this.queuedFrames),
         droppedMs: ms(this.droppedFrames),
+        catchUpMs: ms(this.catchUpFrames),
         underrunMs: ms(this.underrunFrames),
       });
     }

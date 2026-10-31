@@ -10,7 +10,7 @@ import { drawTrayIcons } from './tray-icons.js';
 import { t, texts, setLanguage, languages, currentLanguage, resolveLanguage, cachedPreference, onLanguageChange } from './i18n.js';
 import {
   createSink, MAX_GAIN, asPercent, playSample, setOutputDevice, monitorStream, playCue,
-  setCueVolume, setMasterVolume, playJoinSound, stopJoinSounds, cueStatus,
+  setCueVolume, setMasterVolume, playJoinSound, preloadJoinSound, stopJoinSounds, cueStatus,
 } from './gain.js';
 import { NAME_FONTS, nameFontOf } from './name-fonts.js';
 import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
@@ -818,33 +818,63 @@ const state = {
 };
 
 /*
- * How loudly each person is played, kept across restarts.
+ * How loudly each person is played, and each person's screen share, kept across restarts.
  *
  * The session itself only remembers them while the app runs; this hands it what was kept when a
  * call is joined and keeps what changes. The copy waiting to be written is read before the
  * settings, because a settings read in between would bring back the file as it was a moment ago.
+ * Written once the slider settles, and at once when the window is going (see flushKept).
  */
-let peerVolumesPending = null;
-let peerVolumesTimer = null;
-const savedPeerVolumes = () => peerVolumesPending ?? state.settings?.peerVolumes ?? {};
+const kept = [];
+
+/** One setting of the shape { [serverKey]: { [userId]: value } }, written a moment after it last changed. */
+function keepPerServer(name) {
+  let pending = null;
+  let timer = null;
+  const entry = {
+    read: () => pending ?? state.settings?.[name] ?? {},
+    /** `value` undefined removes the person: they are back at the default. */
+    set(userId, value) {
+      const key = serverKey(state.voiceServer ?? state.server);
+      const all = { ...entry.read() };
+      const mine = { ...(all[key] ?? {}) };
+      if (value === undefined) delete mine[userId];
+      else mine[userId] = value;
+      if (Object.keys(mine).length) all[key] = mine;
+      else delete all[key];
+      pending = all;
+      // A slider sends dozens of these a second; the file is written once it settles.
+      clearTimeout(timer);
+      timer = setTimeout(entry.flush, 400);
+    },
+    flush() {
+      clearTimeout(timer);
+      const wanted = pending;
+      pending = null;
+      return wanted ? harmony.settings.set({ [name]: wanted }) : undefined;
+    },
+  };
+  kept.push(entry);
+  return entry;
+}
+
+const keptPeers = keepPerServer('peerVolumes');
+const keptStreams = keepPerServer('streamVolumes');
+const savedPeerVolumes = () => keptPeers.read();
+const savedStreamVolumes = () => keptStreams.read();
 
 state.voice.onPeerPrefs = (userId, pref) => {
-  const key = serverKey(state.voiceServer ?? state.server);
-  const all = { ...savedPeerVolumes() };
-  const mine = { ...(all[key] ?? {}) };
-  if (pref.gain === 1 && !pref.muted) delete mine[userId];
-  else mine[userId] = { gain: pref.gain, muted: pref.muted };
-  if (Object.keys(mine).length) all[key] = mine;
-  else delete all[key];
-  peerVolumesPending = all;
-  // A slider sends dozens of these a second; the file is written once it settles.
-  clearTimeout(peerVolumesTimer);
-  peerVolumesTimer = setTimeout(async () => {
-    const wanted = peerVolumesPending;
-    peerVolumesPending = null;
-    if (wanted) await harmony.settings.set({ peerVolumes: wanted });
-  }, 400);
+  keptPeers.set(userId, pref.gain === 1 && !pref.muted ? undefined : { gain: pref.gain, muted: pref.muted });
 };
+state.voice.onStreamPrefs = (userId, gain) => {
+  keptStreams.set(userId, gain === 1 ? undefined : gain);
+};
+
+/** A change made in the last moments is written now: the window may be about to go, for an update among others. */
+const flushKept = () => { for (const entry of kept) void entry.flush(); };
+window.addEventListener('pagehide', flushKept);
+window.addEventListener('beforeunload', flushKept);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushKept(); });
 
 function showView(id) {
   el.views.forEach((v) => {
@@ -3375,6 +3405,7 @@ function previewJoinSound() {
  * change any part of it.
  */
 function refreshKeepSet() {
+  warmJoinSounds();
   return harmony.media.keep([
     ...[...state.users.values()].flatMap((u) => [u.avatarHash, u.bannerHash, u.joinSoundHash])
       .filter(Boolean),
@@ -3382,6 +3413,24 @@ function refreshKeepSet() {
     ...state.emojis.list.map((e) => e.hash),
     ...state.chat.pinned.map((m) => m.attachmentHash).filter(Boolean),
   ]).catch(() => { /* the cache is a cache */ });
+}
+
+/** The most people's join sounds that are kept decoded ahead of time. */
+const WARM_JOIN_SOUNDS = 60;
+
+/**
+ * Everybody's join sound, fetched and decoded before they arrive, so that it starts the moment they do
+ * instead of after a download and a decode (and not on top of the work of setting up the call). Whoever
+ * is already warm costs nothing; whoever has none, or has turned custom sounds off here, is left alone.
+ */
+function warmJoinSounds() {
+  if (state.settings?.voiceSounds === false || state.settings?.customJoinSounds === false) return;
+  let count = 0;
+  for (const user of state.users.values()) {
+    if (!user.joinSoundHash) continue;
+    if (count++ >= WARM_JOIN_SOUNDS) break;
+    void preloadJoinSound(harmony.mediaUrl(user.joinSoundHash));
+  }
 }
 
 /** Pull the roster so every id in a message or a roster row has a picture. */
@@ -5095,17 +5144,34 @@ function voiceRt(type, payload) {
   return rt(type, payload, state.voiceServer ?? state.server);
 }
 
-async function joinVoice(channel, password) {
+async function joinVoice(channel, password, { cued = false } = {}) {
   if (state.channels.joining) return;
   state.channels.joining = true;
   showChannelsError('');
+  /*
+   * The sound is made the moment you ask, not when the connection is up. Everything after this (the server's
+   * answer, the microphone, the peer connections) keeps the page busy, and a sound that waits for it is
+   * played into that: it comes late and breaks up. Its being a little early is the lesser fault. If the
+   * join does not happen, `undone` takes it back with the sound for leaving.
+   */
+  if (!cued) {
+    // Whatever was still playing from the room being left ends here, and not in leaveVoice, which would also
+    // end this one.
+    if (state.voice.channelId) stopJoinSounds();
+    playConnectCue();
+  }
+  const undone = () => {
+    stopJoinSounds();
+    voiceCue('disconnect');
+  };
   // Whether the server has put us in the room, so that a join that fails after
   // that can say so rather than leave a member standing in it who is not.
   let admitted = false;
 
   try {
     // On this server the join itself leaves the old room; a call on another one is ended properly.
-    if (state.voice.channelId) await leaveVoice({ silent: voiceHere() });
+    // quiet: a move from one room to another makes one sound, the one for arriving.
+    if (state.voice.channelId) await leaveVoice({ silent: voiceHere(), quiet: true });
 
     const reply = await requestAgain('voice:join', {
       channelId: channel.id,
@@ -5121,9 +5187,12 @@ async function joinVoice(channel, password) {
           okLabel: t('app.join'),
           fields: [{ name: 'password', label: t('app.password'), type: 'password', required: true }],
         });
-        if (answer?.password) return joinVoice(channel, answer.password);
+        // The arriving sound was already made; the retry is the same attempt and does not make another.
+        if (answer?.password) return joinVoice(channel, answer.password, { cued: true });
+        undone();
         return;
       }
+      undone();
       if (reply.error === 'channel_full') {
         return showChannelsError(t('app.is_full_people', { name: channel.name, cap: reply.cap }));
       }
@@ -5132,6 +5201,7 @@ async function joinVoice(channel, password) {
 
     admitted = true;
     state.voice.loadPeerPrefs(savedPeerVolumes()[serverKey(state.server)]);
+    state.voice.loadStreamPrefs(savedStreamVolumes()[serverKey(state.server)]);
     state.voice.configure({
       channelId: channel.id,
       mid: reply.mid,
@@ -5165,7 +5235,6 @@ async function joinVoice(channel, password) {
     // A new channel is a new room: without this, arriving somewhere with
     // five people in it plays five join sounds at once.
     resetCues();
-    voiceCue('connect');
     applyStage();
 
     // Push to talk first, so a microphone that opens is already silent if the
@@ -5320,6 +5389,7 @@ async function joinVoice(channel, password) {
     }, VOICE_RECONCILE_MS), 'voice');
   } catch (err) {
     showChannelsError(err.message);
+    undone();
     await leaveVoice({ silent: true }).catch(() => {});
     // Silent leaves are the first half of a move and say nothing to the server;
     // this one is a join that did not happen, and everybody else would
@@ -5424,7 +5494,11 @@ async function refreshVoiceTokens() {
   }
 }
 
-async function leaveVoice({ silent = false } = {}) {
+async function leaveVoice({ silent = false, quiet = false } = {}) {
+  // The sound first, before the awaits below take the page for a while: you hear that you left when you
+  // asked to, not when the last of the tearing down is done. Not on a silent leave (the first half of a
+  // move to another channel, whose own "connect" is the sound that move should make) nor a quiet one.
+  if (!silent && !quiet && state.voice.channelId) voiceCue('disconnect');
   clearTimers('voice');
   // Before the service goes: the share runs inside it.
   await stopNativeShare();
@@ -5436,9 +5510,6 @@ async function leaveVoice({ silent = false } = {}) {
   if (state.share.target?.channelId === channelId) await teardown();
   await state.voice.leave();
   if (channelId && !silent) {
-    // Not on a silent leave: that is the first half of moving to another
-    // channel, whose own "connect" is the sound that move should make.
-    voiceCue('disconnect');
     await voiceRt('voice:leave', { channelId }).catch(() => {});
   }
   const callServer = state.voiceServer;
@@ -5446,7 +5517,7 @@ async function leaveVoice({ silent = false } = {}) {
   state.voiceCtx = null;
   state.channels.roster = [];
   resetCues();
-  stopJoinSounds();
+  if (!quiet) stopJoinSounds();
   // No call, so no key to watch for.
   syncPtt();
   closePeerMenu();
@@ -5986,6 +6057,22 @@ function playJoinCue(userId, me) {
   }
   playJoinSound(harmony.mediaUrl(hash), { maxSeconds: MAX_JOIN_SOUND_SECONDS })
     .catch(() => playCue('join'));
+}
+
+/**
+ * The sound for you arriving: your own join sound if you have one (the one everybody else hears when you
+ * come in) and it is not switched off here, and the room's own arriving tone otherwise, including when the
+ * file will not load. Voice sounds off silences both.
+ */
+function playConnectCue() {
+  if (state.settings?.voiceSounds === false) return;
+  const hash = state.auth.user?.joinSoundHash;
+  if (!hash || state.settings?.customJoinSounds === false) {
+    playCue('connect');
+    return;
+  }
+  playJoinSound(harmony.mediaUrl(hash), { maxSeconds: MAX_JOIN_SOUND_SECONDS })
+    .catch(() => playCue('connect'));
 }
 
 function playRosterCues(roster) {
@@ -6896,6 +6983,7 @@ function pttSet(held) {
   clearTimeout(ptt.tail);
   ptt.tail = null;
   const apply = (value) => {
+    if (value !== ptt.held) voiceCue(value ? 'pttDown' : 'pttUp');
     ptt.held = value;
     state.voice.setPttHeld(value);
     applyVoiceButtons();
@@ -11851,6 +11939,7 @@ async function startCamera() {
       await voiceRt('voice:publishing', {
         channelId: state.voice.channelId, kind: 'c', on: true,
       });
+      voiceCue('cameraOn');
       // Looked at in the background: it costs a call nothing while the picture is fine.
       void healBlackCamera();
       return undefined;
@@ -11886,6 +11975,7 @@ async function startCamera() {
     );
     state.camera.session = session;
     el.voiceCam.textContent = t('app.stop_camera');
+    voiceCue('cameraOn');
   } catch (err) {
     showChannelsError(err.message);
     opened?.getTracks().forEach((track) => track.stop());
@@ -12000,6 +12090,7 @@ async function stopCamera() {
   if (state.voice.camLive) {
     const channelId = state.voice.channelId;
     await state.voice.stopCam();
+    voiceCue('cameraOff');
     if (channelId) {
       await voiceRt('voice:publishing', {
         channelId, kind: 'c', on: false,
@@ -12023,6 +12114,7 @@ async function stopCamera() {
   }
   const session = state.camera.session;
   state.camera.session = null;
+  if (session) voiceCue('cameraOff');
   if (session) {
     await harmony.api.release(state.server, session.username, session.token).catch(() => {});
   }

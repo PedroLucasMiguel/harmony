@@ -217,6 +217,12 @@ const DEFAULTS = {
    */
   peerVolumes: {},
   /*
+   * How loudly each person's screen share is played, for you only: { [serverKey]: { [userId]: gain } }.
+   * Kept apart from peerVolumes because a game's sound and the voice are different things to want at
+   * different levels. Only those that differ from 100% are kept.
+   */
+  streamVolumes: {},
+  /*
    * Global hotkeys, as Electron accelerators ("Ctrl+Shift+M"). Empty is
    * unbound. Soundpad clips are kept per SERVER, because a clip id is only
    * meaningful on the server that issued it: { [serverUrl]: { [clipId]: accel } }.
@@ -280,7 +286,12 @@ function read() {
   if (cache) return cache;
   try {
     cache = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) };
-  } catch {
+  } catch (err) {
+    // No file is a first run. A file that is there and cannot be read (cut short by a quit in the middle of a
+    // write, say) is set aside rather than overwritten by the next write: every setting is in it.
+    if (err.code !== 'ENOENT') {
+      try { fs.renameSync(FILE, `${FILE}.unreadable`); } catch { /* nothing more to be done */ }
+    }
     cache = { ...DEFAULTS };
   }
   return cache;
@@ -290,7 +301,11 @@ function write(patch) {
   cache = { ...read(), ...patch };
   try {
     fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.writeFileSync(FILE, JSON.stringify(cache, null, 2));
+    // Written beside the file and moved over it: a write cut off by the app quitting (an update restarts it)
+    // leaves the old file whole instead of half of a new one.
+    const scratch = `${FILE}.tmp`;
+    fs.writeFileSync(scratch, JSON.stringify(cache, null, 2));
+    fs.renameSync(scratch, FILE);
   } catch (err) {
     console.warn('[settings] could not persist:', err.message);
   }
