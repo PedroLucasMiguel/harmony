@@ -169,8 +169,7 @@ const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 1
 const style = (page, selector) => page.evaluate(`{
   const n = document.querySelector(${JSON.stringify(selector)});
   const c = getComputedStyle(n);
-  return { color: c.color, fill: c.webkitTextFillColor, image: c.backgroundImage, animation: c.animationName,
-           duration: c.animationDuration, kind: n.dataset.nameStyle ?? null, clip: c.backgroundClip };
+  return { color: c.color, fill: c.webkitTextFillColor, image: c.backgroundImage, speed: n.style.getPropertyValue('--name-speed'), kind: n.dataset.nameStyle ?? null, clip: c.backgroundClip };
 }`);
 const setColor = (page, selector, value) => page.evaluate(`{
   const i = document.querySelector(${JSON.stringify(selector)}); i.value = ${JSON.stringify(value)};
@@ -230,12 +229,12 @@ async function run() {
     const r = document.getElementById('profile-color-speed'); r.value = ${30 + 1 - 2};
     r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return true;
   }`);
-  await until(me, `getComputedStyle(document.querySelector('${row}')).animationDuration === '2s'`, { label: 'the speed' });
+  await until(me, `document.querySelector('${row}').style.getPropertyValue('--name-speed') === '2s'`, { label: 'the speed' });
   const g = await style(me, row);
   check('a gradient is drawn as an animated background clipped to the text, in the colours chosen',
     g.kind === 'gradient' && g.image.includes('linear-gradient') && g.image.includes('rgb(255, 0, 0)') && g.image.includes('rgb(0, 0, 255)')
-    && g.animation === 'name-flow' && g.clip === 'text' && g.fill === 'rgba(0, 0, 0, 0)', JSON.stringify(g));
-  check('with three colours and the speed that was set (2 s)', g.duration === '2s' && (g.image.match(/rgb\(/g) ?? []).length === 4, JSON.stringify(g));
+    && g.speed !== '' && g.clip === 'text' && g.fill === 'rgba(0, 0, 0, 0)', JSON.stringify(g));
+  check('with three colours and the speed that was set (2 s)', g.speed === '2s' && (g.image.match(/rgb\(/g) ?? []).length === 4, JSON.stringify(g));
   await click(me, '#profile-color-stops .name-color-stop:nth-child(3) button');
   await until(me, "document.querySelectorAll('#profile-color-stops input[type=color]').length === 2", { label: 'a stop removed' });
   check('a colour can be taken away again, down to two', await me.evaluate("return document.querySelectorAll('#profile-color-stops .name-color-stop button').length === 0"), '');
@@ -243,13 +242,13 @@ async function run() {
   await sleep(300);
   await shot(me, 'name-color');
   const seen = await style(bob, row);
-  check('Bob sees the moving gradient too', seen.kind === 'gradient' && seen.animation === 'name-flow', JSON.stringify(seen));
+  check('Bob sees the moving gradient too', seen.kind === 'gradient' && seen.speed !== '', JSON.stringify(seen));
 
   // --- rainbow ---------------------------------------------------------------------------------------------------
   await kind(me, 'Rainbow');
   await until(me, `document.querySelector('${row}').dataset.nameStyle === 'rainbow'`, { label: 'the rainbow' });
   const r = await style(me, row);
-  check('the rainbow is a gradient through the spectrum that moves', r.image.includes('linear-gradient') && r.animation === 'name-flow' && r.fill === 'rgba(0, 0, 0, 0)', JSON.stringify(r));
+  check('the rainbow is a gradient through the spectrum that moves', r.image.includes('linear-gradient') && r.speed !== '' && r.fill === 'rgba(0, 0, 0, 0)', JSON.stringify(r));
   check('with no colour pickers, only a speed', await me.evaluate("return document.querySelectorAll('#profile-color-stops input').length === 0 && !document.getElementById('profile-color-speed-row').hidden"), '');
 
   // --- it shows wherever the name does ---------------------------------------------------------------------------

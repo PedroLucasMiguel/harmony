@@ -8513,7 +8513,9 @@ body.pip-window {
  * A gradient that moves, or the rainbow: the text is a window onto a
  * background wider than itself, slid along by one whole width per cycle. The
  * gradient starts and ends on the same colour (name-color.js), so the loop has
- * no seam. --name-gradient and --name-speed are set from script.
+ * no seam. --name-gradient and --name-speed are set from script, and so is the
+ * slide itself (name-motion.js): a CSS animation here was a repaint at every
+ * step and a new frame at every refresh of the display, for names nobody sees.
  */
 [data-name-style] {
   background-image: var(--name-gradient);
@@ -8522,32 +8524,12 @@ body.pip-window {
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
-  /* Stepped, not smooth: this animates a background that is painted, so every step is a repaint of
-     every such name on screen, and a smooth one does it once per refresh of the display -- 240 times a
-     second on a fast monitor, which was a core of the graphics process all day. A hundred and twenty
-     steps a cycle is 20 a second at the usual speed, which is still a drift to the eye. */
-  animation: name-flow var(--name-speed, 6s) steps(120) infinite;
-}
-/* And not at all while nobody is looking: the window is behind a game or another program. */
-html[data-blurred] [data-name-style] {
-  animation-play-state: paused;
 }
 [data-name-style='rainbow'] {
   --name-gradient: linear-gradient(
     90deg, #ff4d4d, #ffa64d, #ffe14d, #5ce65c, #4dd2ff, #6b7bff, #c04dff, #ff4d4d
   );
 }
-@keyframes name-flow {
-  to {
-    background-position: 200% 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  [data-name-style] {
-    animation: none;
-  }
-}
-
 .name-color-editor {
   display: flex;
   flex-wrap: wrap;

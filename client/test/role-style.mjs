@@ -170,7 +170,7 @@ const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 1
 const look = (page, selector) => page.evaluate(`{
   const n = document.querySelector(${JSON.stringify(selector)});
   const c = getComputedStyle(n);
-  return { color: c.color, image: c.backgroundImage, kind: n.dataset.nameStyle ?? null, animation: c.animationName, clip: c.backgroundClip };
+  return { color: c.color, image: c.backgroundImage, kind: n.dataset.nameStyle ?? null, speed: n.style.getPropertyValue('--name-speed'), clip: c.backgroundClip };
 }`);
 const setColor = (page, selector, value) => page.evaluate(`{
   const i = document.querySelector(${JSON.stringify(selector)}); i.value = ${JSON.stringify(value)};
@@ -217,7 +217,7 @@ async function run() {
   const saved = (await rest('chief', '/api/roles')).body.roles.find((r) => r.id === crew.id);
   check('Save keeps the gradient, and its first colour as the role\'s plain colour', saved.style?.mode === 'gradient' && saved.color === '#ff0000' && JSON.stringify(saved.style.colors) === JSON.stringify(['#ff0000', '#0000ff']), JSON.stringify(saved));
   const g = await look(owner, row);
-  check('members\' names move through the gradient, in the owner\'s member list', g.kind === 'gradient' && g.animation === 'name-flow' && g.clip === 'text' && g.image.includes('rgb(0, 0, 255)'), JSON.stringify(g));
+  check('members\' names move through the gradient, in the owner\'s member list', g.kind === 'gradient' && g.speed !== '' && g.clip === 'text' && g.image.includes('rgb(0, 0, 255)'), JSON.stringify(g));
   await until(bobPage, "document.getElementById('channels-who').dataset.nameStyle === 'gradient'", { timeoutMs: 4000, label: 'Bob\'s own name' });
   check('and on the member\'s own window at once', true, '');
   const heading = await owner.evaluate("const h = [...document.querySelectorAll('#member-items .member-head')].find((x) => x.textContent.startsWith('Crew')); return { kind: h.querySelector('span').dataset.nameStyle ?? null, dot: h.dataset.dot !== undefined }");
@@ -235,7 +235,7 @@ async function run() {
   await click(owner, '#role-save');
   await until(owner, `document.querySelector('${row}').dataset.nameStyle === 'rainbow'`, { label: 'the rainbow' });
   const r = await look(owner, row);
-  check('the rainbow works for a role too', r.kind === 'rainbow' && r.image.includes('linear-gradient') && r.animation === 'name-flow', JSON.stringify(r));
+  check('the rainbow works for a role too', r.kind === 'rainbow' && r.image.includes('linear-gradient') && r.speed !== '', JSON.stringify(r));
 
   // --- back to plain ------------------------------------------------------------------------------------------------
   await kind(owner, 'Solid');

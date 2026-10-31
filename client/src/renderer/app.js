@@ -24,6 +24,7 @@ import { elapsedText } from './elapsed.js';
 import { parkMedia, takeMedia, dropParked, keepable } from './media-keep.js';
 import { probeBlack } from './camera-probe.js';
 import { openBestCamera } from './camera-best.js';
+import { startNameMotion } from './name-motion.js';
 import { createServerRail } from './server-rail.js';
 import { createBackgroundSessions } from './server-sessions.js';
 import { serverKeyOf } from './server-key.js';
@@ -6936,6 +6937,7 @@ window.addEventListener('blur', markBlurred);
 window.addEventListener('focus', markBlurred);
 document.addEventListener('visibilitychange', markBlurred);
 markBlurred();
+startNameMotion();
 
 // Losing focus while the key is down means its keyup goes to somebody else.
 window.addEventListener('blur', () => {
