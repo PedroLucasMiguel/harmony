@@ -777,7 +777,7 @@ p {
 .dm-row-server + .dm-row-time {
   margin-left: 6px;
 }
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
   /* One column at a time: the list, or the conversation once one is open (its close button comes back). */
   #view-dms .dms-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -796,7 +796,7 @@ p {
   opacity: 0.55;
   pointer-events: none;
 }
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
   /* A phone keeps most of its width: a slimmer rail, smaller bubbles. */
   #app-shell {
     --rail-width: 52px;
@@ -1124,7 +1124,7 @@ select:focus {
   cursor: col-resize !important;
   user-select: none !important;
 }
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
   .col-resizer {
     display: none;
   }
@@ -1214,7 +1214,7 @@ select:focus {
   white-space: nowrap;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
   .channels-layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
@@ -1233,7 +1233,7 @@ select:focus {
 }
 /* Stacked on a narrow window, the channels sit ABOVE the rest, and a line
    down their right edge would divide them from nothing. */
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
   .channel-list {
     border-right: none;
     padding-right: 0;
@@ -4120,6 +4120,21 @@ button.danger {
   flex: 0 0 5rem;
   min-width: 0;
 }
+#soundpad-add {
+  white-space: nowrap;
+}
+/* A phone: the search gets a row of its own, as the volume and the button squeezed it to a sliver. */
+@media (max-width: 720px) {
+  .soundpad-head {
+    flex-wrap: wrap;
+  }
+  #soundpad-search {
+    flex: 1 1 100%;
+  }
+  .soundpad-head .peer-volume {
+    flex: 1 1 5rem;
+  }
+}
 
 .soundpad-grid {
   flex: 1 1 auto;
@@ -4996,6 +5011,9 @@ button.danger {
 .settings-main {
   flex: 1 1 auto;
   min-width: 0;
+  /* Without it a column layout (a phone) lets the pages be as tall as their content, which is more than the
+     dialog: they cannot scroll, the dialog clips them, and the Done button is below the screen. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -5259,6 +5277,11 @@ input.switch:focus-visible {
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
     overflow-y: hidden;
+    /* It scrolls by swiping; a bar under the tabs is only clutter on a touchscreen. */
+    scrollbar-width: none;
+  }
+  .settings-nav::-webkit-scrollbar {
+    display: none;
   }
   .settings-nav h2 {
     display: none;
@@ -6542,6 +6565,10 @@ button.tiny:disabled {
   font-size: 12px;
   margin-top: 2px;
 }
+/* In a settings page, room before whatever field comes next: it ran straight into the next label. */
+.settings-page .check {
+  margin-bottom: 0.8rem;
+}
 
 .toast {
   position: fixed;
@@ -6852,7 +6879,7 @@ input[type='range'][data-boosted] {
   min-width: 0;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
   .narrow-only {
     display: inline-flex;
     align-items: center;
@@ -6983,11 +7010,60 @@ input[type='range'][data-boosted] {
   .mobile-dock .channel-dock {
     margin-top: 0;
   }
+  /*
+   * The call, as one row of the dock instead of a block.
+   *
+   * Where it is is what a chat loses: the controls were two stacked boxes (the state, then two wide buttons)
+   * and a third for you, a fifth of the screen, with a keyboard coming up on top of it. Now the state, the
+   * buttons and the hang-up share a row, and the strip below is as small as the buttons in it.
+   */
+  .mobile-dock {
+    padding: 0 0.5rem 0.35rem;
+  }
   .mobile-dock .voice-panel {
-    margin-bottom: 0.4rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    margin-bottom: 4px;
+  }
+  /* Its children join the panel's row: the state, then the buttons, then the hang-up. */
+  .mobile-dock .voice-panel-head {
+    display: contents;
+  }
+  .mobile-dock .voice-panel-where {
+    flex: 1 1 auto;
+  }
+  .mobile-dock .voice-panel-where strong {
+    font-size: 0.8rem;
+  }
+  .mobile-dock .voice-panel-where .muted {
+    font-size: 0.7rem;
+  }
+  .mobile-dock .voice-panel-actions {
+    order: 2;
+    display: flex;
+    gap: 4px;
+    margin-top: 0;
+    flex: 0 0 auto;
+  }
+  .mobile-dock .voice-panel .icon-btn.hangup {
+    order: 3;
+    margin-left: 0;
+  }
+  .mobile-dock .voice-panel .voice-action,
+  .mobile-dock .voice-panel .icon-btn {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0 8px;
   }
   .mobile-dock .self-strip {
     margin-top: 0;
+    padding: 2px 4px;
+  }
+  .mobile-dock .self-actions .icon-btn {
+    min-width: 36px;
+    min-height: 36px;
   }
 
   /* Bigger targets for a finger. */
@@ -7007,6 +7083,25 @@ input[type='range'][data-boosted] {
 
   .ask {
     max-width: calc(100vw - 24px);
+  }
+}
+
+/*
+ * A phone on its side: wider than 720 px and 390 high. It gets the drawers like a portrait phone (the three
+ * columns left no room for a single channel once the call was in the first), and the call and the strip
+ * share the one row along the bottom.
+ */
+@media (pointer: coarse) and (max-height: 500px) {
+  .mobile-dock .channel-dock {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .mobile-dock .voice-panel,
+  .mobile-dock .self-strip {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-bottom: 0;
   }
 }
 
@@ -7351,6 +7446,10 @@ input[data-saved] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+/* A row in the person's menu, not an icon on its own: its words start at the edge like the rows under it. */
+.peer-menu .peer-mute[data-icon] {
+  justify-content: flex-start;
 }
 
 .tooltip {

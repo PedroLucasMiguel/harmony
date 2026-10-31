@@ -130,6 +130,16 @@ export class VoiceSession {
    * its downstream bandwidth.
    */
   #closedVideo = new Set();
+
+  /**
+   * Whether a screen share somebody starts is opened for you by itself. Off, it is held back as a closed tile
+   * and opened by a click; a camera is not affected (it costs little, and has no sound).
+   */
+  autoWatchShares = true;
+  /** The shares already seen since they started, so that the choice above is made once per share, on its first sight. */
+  #sawShares = new Set();
+  /** The closed tiles that are closed because nobody opened them yet, as against closed by hand. */
+  #heldBack = new Set();
   #micChain = null;
   /**
    * The noise gate, when the microphone goes out as it is: it listens on a
@@ -1448,6 +1458,7 @@ export class VoiceSession {
    * different from the stream simply ending.
    */
   closeVideo(key) {
+    this.#heldBack.delete(key);
     this.#closedVideo.add(key);
     this.unsubscribeVideo(key);
   }
@@ -1455,6 +1466,7 @@ export class VoiceSession {
   /** Watch it again. The next syncVideo opens it. */
   reopenVideo(key) {
     this.#closedVideo.delete(key);
+    this.#heldBack.delete(key);
   }
 
   /** Closed tiles whose owner is still publishing, for the empty squares. */
@@ -1462,7 +1474,7 @@ export class VoiceSession {
     const out = [];
     for (const key of this.#closedVideo) {
       const [mid, kind] = key.split(':');
-      out.push({ key, mid: Number(mid), kind });
+      out.push({ key, mid: Number(mid), kind, unopened: this.#heldBack.has(key) });
     }
     return out.sort((a, b) => a.mid - b.mid || a.kind.localeCompare(b.kind));
   }
@@ -1588,10 +1600,28 @@ export class VoiceSession {
     // goes away with the stream, and if they ever share again it opens
     // normally rather than staying invisibly suppressed.
     for (const key of [...this.#closedVideo]) {
-      if (!wanted.has(key)) this.#closedVideo.delete(key);
+      if (!wanted.has(key)) {
+        this.#closedVideo.delete(key);
+        this.#heldBack.delete(key);
+      }
+    }
+
+    // A share that has ended is forgotten, so that when it starts again it is a start again.
+    for (const key of [...this.#sawShares]) {
+      if (!wanted.has(key)) this.#sawShares.delete(key);
     }
 
     let changed = false;
+    // The first sight of a share, with automatic watching off: it is shown as a closed square, not opened.
+    for (const [key, { kind }] of wanted) {
+      if (kind !== 's' || this.#sawShares.has(key)) continue;
+      this.#sawShares.add(key);
+      if (!this.autoWatchShares && !this.#video.has(key) && !this.#openingVideo.has(key)) {
+        this.#closedVideo.add(key);
+        this.#heldBack.add(key);
+        changed = true;
+      }
+    }
     const missed = [];
     for (const [key, { mid, kind }] of wanted) {
       if (this.#closedVideo.has(key)) continue;
@@ -1841,6 +1871,8 @@ export class VoiceSession {
     this.#micChain = null;
     this.#closeValve();
     this.#closedVideo.clear();
+    this.#heldBack.clear();
+    this.#sawShares.clear();
     this.#videoHealth.clear();
     this.#videoRebuilds.clear();
     this.#tileGains.clear();

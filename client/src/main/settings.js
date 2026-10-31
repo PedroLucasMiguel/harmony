@@ -122,6 +122,9 @@ const DEFAULTS = {
    * costs nothing to anybody who is looking, and they come back at once.
    */
   pauseHiddenCameras: true,
+  // Whether a screen share somebody starts in your voice channel opens by itself. Off, it is a closed square
+  // until you click it, which spends nothing on a stream you did not want to watch.
+  autoWatchStreams: true,
   // The channel's streams as one small floating window instead of a stage: off,
   // because it changes where everything is. pipRect remembers where the person
   // left the window and how big they made it ({ x, y, w } in pixels).

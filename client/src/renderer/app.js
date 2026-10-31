@@ -265,6 +265,7 @@ const el = {
   pipPopOut: $('pip-pop-out'),
   pipResize: $('pip-resize'),
   pauseHiddenCameras: $('pause-hidden-cameras'),
+  autoWatchStreams: $('auto-watch-streams'),
   autoSignIn: $('auto-sign-in'),
   pttEnabled: $('ptt-enabled'),
   pttOptions: $('ptt-options'),
@@ -8268,7 +8269,7 @@ function renderChannelVideo() {
    * the whole list to be ordered by something stabler than "who joined
    * first". Keeping them together at the end is honest about what they are.
    */
-  for (const { key, mid, kind } of state.voice.closedTiles) {
+  for (const { key, mid, kind, unopened } of state.voice.closedTiles) {
     const node = document.createElement('figure');
     node.className = 'channel-tile ghost-tile';
     node.dataset.key = `closed:${key}`;
@@ -8280,7 +8281,7 @@ function renderChannelVideo() {
 
     const hint = document.createElement('span');
     hint.className = 'ghost-hint';
-    hint.textContent = t('app.closed_click_to_watch_again');
+    hint.textContent = unopened ? t('app.click_to_watch') : t('app.closed_click_to_watch_again');
 
     node.append(name, hint);
     ghostBackground(node, knownUser(state.channels.roster.find((m) => m.mid === mid)?.userId));
@@ -15081,6 +15082,10 @@ el.profileSoundFile.addEventListener('change', () => {
 el.autoSignIn.addEventListener('change', async () => {
   await harmony.settings.set({ autoSignIn: el.autoSignIn.checked });
 });
+el.autoWatchStreams.addEventListener('change', async () => {
+  state.voice.autoWatchShares = el.autoWatchStreams.checked;
+  await harmony.settings.set({ autoWatchStreams: el.autoWatchStreams.checked });
+});
 el.pauseHiddenCameras.addEventListener('change', async () => {
   await harmony.settings.set({ pauseHiddenCameras: el.pauseHiddenCameras.checked });
   state.settings = await harmony.settings.get();
@@ -15279,6 +15284,8 @@ el.voiceConfig.addEventListener('click', () => {
   el.linkPreviews.checked = state.settings?.linkPreviews !== false;
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
   el.pauseHiddenCameras.checked = state.settings?.pauseHiddenCameras !== false;
+  el.autoWatchStreams.checked = state.settings?.autoWatchStreams !== false;
+  state.voice.autoWatchShares = state.settings?.autoWatchStreams !== false;
   el.autoSignIn.checked = state.settings?.autoSignIn !== false;
   el.pictureInPicture.checked = pipEnabled();
   el.pipPopOut.checked = state.settings?.pipPopOut !== false;
@@ -16679,12 +16686,13 @@ el.updateBannerLater.addEventListener('click', async () => {
 // Phones
 // ---------------------------------------------------------------------------
 //
-// Below 720 px the channel and member lists are drawers (see "Phones" in
+// Below 720 px (or on a phone held sideways) the channel and member lists are drawers (see "Phones" in
 // styles.css). The CSS does the layout; this opens and closes them, moves the
 // call controls between the sidebar and the bottom dock, and answers
 // Android's back button.
 
-const narrowScreen = window.matchMedia('(max-width: 720px)');
+// Narrow, or a phone on its side (see the same query in styles.css).
+const narrowScreen = window.matchMedia('(max-width: 720px), (pointer: coarse) and (max-height: 500px)');
 
 function openDrawer(which) {
   if (!narrowScreen.matches) return;
@@ -16844,6 +16852,7 @@ function swipeRelease() {
 }
 
 document.addEventListener('touchstart', (event) => {
+  unbindSwipeTarget();
   swipe = null;
   if (!narrowScreen.matches || event.touches.length !== 1) return;
   if (!document.getElementById('view-channels')?.hasAttribute('data-active')) return;
@@ -16853,10 +16862,28 @@ document.addEventListener('touchstart', (event) => {
     x0: touch.clientX, y0: touch.clientY, t0: event.timeStamp,
     axis: null, drawer: null, opening: false, width: 0, shown: 0,
     open: el.channelsLayout.dataset.drawer || '',
+    target: event.target,
   };
+  /*
+   * A touch is delivered to the element it began on, wherever that goes. If something redraws that
+   * element mid-gesture (the member list is rebuilt by every presence change) the document hears no more
+   * of it, and the swipe would hang. So the same handlers listen on the element itself as well; they
+   * are safe to run twice, which is what happens while it is still in the page.
+   */
+  swipe.target.addEventListener('touchmove', swipeMove, { passive: true });
+  swipe.target.addEventListener('touchend', endSwipe, { passive: true });
+  swipe.target.addEventListener('touchcancel', endSwipe, { passive: true });
 }, { passive: true });
 
-document.addEventListener('touchmove', (event) => {
+function unbindSwipeTarget() {
+  const target = swipe?.target;
+  if (!target) return;
+  target.removeEventListener('touchmove', swipeMove);
+  target.removeEventListener('touchend', endSwipe);
+  target.removeEventListener('touchcancel', endSwipe);
+}
+
+function swipeMove(event) {
   if (!swipe || swipe.axis === 'y') return;
   const touch = event.touches[0];
   const dx = touch.clientX - swipe.x0;
@@ -16878,7 +16905,13 @@ document.addEventListener('touchmove', (event) => {
       swipe.axis = 'y'; // dragging an open drawer further open: nothing to do
       return;
     }
-    if (swipe.drawer === 'members') applyMemberList(true);
+    /*
+     * Only to open it. Showing the member list builds its rows again, and a finger that is down on one of
+     * them is left holding a row that is no longer in the page: the browser sends the rest of the touch
+     * (every move, and the end) to that row and not to the document, so the swipe that was closing the
+     * drawer never finished and the drawer stayed stuck part way. A drawer being closed is already drawn.
+     */
+    if (swipe.drawer === 'members' && swipe.opening) applyMemberList(true);
     const node = swipeDrawerNode(swipe.drawer);
     swipe.width = node.getBoundingClientRect().width || 300;
     for (const n of [node, el.drawerScrim]) n.style.transition = 'none';
@@ -16891,9 +16924,11 @@ document.addEventListener('touchmove', (event) => {
     : Math.min(1, Math.max(0, 1 + travel / swipe.width));
   swipe.shown = shown;
   swipePaint(shown);
-}, { passive: true });
+}
+document.addEventListener('touchmove', swipeMove, { passive: true });
 
 function endSwipe(event) {
+  unbindSwipeTarget();
   if (!swipe || swipe.axis !== 'x') {
     swipe = null;
     return;
