@@ -24,6 +24,8 @@ export class AudioBridge {
   #destination = null;
   #unsubscribe = null;
   #monitoring = false;
+  /** What the PCM player last said about itself: {queuedMs, droppedMs, underrunMs}. */
+  #pcmStats = null;
 
   get monitoring() {
     return this.#monitoring;
@@ -74,6 +76,9 @@ export class AudioBridge {
       outputChannelCount: [2],
     });
     this.#pcmNode.connect(this.#gain);
+    this.#pcmNode.port.onmessage = (event) => {
+      if (event.data?.type === 'stats') this.#pcmStats = event.data;
+    };
 
     this.#unsubscribe = harmony.audio.onPcm((chunk) => {
       // `chunk` arrives as a Uint8Array view over an IPC buffer. Copy it into a
@@ -84,7 +89,21 @@ export class AudioBridge {
     });
   }
 
+  /**
+   * What the mix is doing, for the debug log: the audio context's own latency, and for native capture how
+   * far behind the player is, and how much it has dropped or played as silence since it started.
+   */
+  stats() {
+    if (!this.#context) return null;
+    return {
+      ctxState: this.#context.state,
+      baseLatency_ms: Math.round(this.#context.baseLatency * 1000),
+      ...(this.#pcmNode && this.#pcmStats ? { pcm: { queued_ms: this.#pcmStats.queuedMs, dropped_ms: this.#pcmStats.droppedMs, underrun_ms: this.#pcmStats.underrunMs } } : {}),
+    };
+  }
+
   detachPcm() {
+    this.#pcmStats = null;
     this.#unsubscribe?.();
     this.#unsubscribe = null;
     if (this.#pcmNode) {

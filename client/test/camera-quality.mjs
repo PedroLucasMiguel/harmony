@@ -140,7 +140,11 @@ const STUBS = `
     }
     if (c.video) {
       const v = c.video;
-      const ask = { width: v.width?.ideal, height: v.height?.ideal, frameRate: v.frameRate?.ideal };
+      const ask = { width: v.width?.ideal, height: v.height?.ideal, frameRate: v.frameRate?.ideal, floor: v.frameRate?.min ?? null };
+      // A camera that cannot reach a floor says so, as a real one does; window.__noFloor turns that on.
+      // A camera of 1080p at 60: a mode bigger or faster than that is refused, as a browser does.
+      if ((v.width?.min ?? 0) > 1920 || (v.height?.min ?? 0) > 1080 || (v.frameRate?.min ?? 0) > 60) { const e = new Error('no such mode'); e.name = 'OverconstrainedError'; e.constraint = 'width'; throw e; }
+      if (window.__noFloor && ask.floor) { const e = new Error('no mode that fast'); e.name = 'OverconstrainedError'; window.__refused = (window.__refused ?? 0) + 1; throw e; }
       window.__asked.push(ask);
       const width = Math.min(ask.width ?? 640, 1920);
       const height = Math.min(ask.height ?? 360, 1080);
@@ -290,9 +294,20 @@ async function run() {
   a = await asked();
   size = await sizeOf(ana);
   fps = await rateOf(ana, 4000);
-  check('native asks for more than any webcam has', a.width >= 3840 && a.frameRate >= 120, JSON.stringify(a));
+  check('native goes down from the biggest picture and the best rate until the camera says yes: 1080p, at 30 fps or more', a.width === 1920 && a.height === 1080 && a.floor === 30, JSON.stringify(a));
   check('and sends the camera\'s best, 1920x1080', size?.join('x') === '1920x1080', String(size));
   check('at its full rate, with no ceiling left over from before', fps > 45, `${fps.toFixed(1)} fps`);
+
+  // --- a camera that has no mode as fast as the floor still opens ----------------------------
+  await pedro.evaluate('window.__noFloor = true; return true;');
+  await pick('cam-resolution', '720');
+  await pick('cam-framerate', '30');
+  await sleep(5000);
+  a = await asked();
+  size = await sizeOf(ana);
+  const refused = await pedro.evaluate('return window.__refused ?? 0');
+  check('a camera that cannot reach the floor is asked again without it, and opens', refused >= 1 && a.floor === null && size?.join('x') === '1280x720', JSON.stringify({ refused, a, size }));
+  await pedro.evaluate('window.__noFloor = false; return true;');
 
   // --- back down -------------------------------------------------------------------------------
   await pick('cam-resolution', '480');

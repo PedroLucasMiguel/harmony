@@ -781,6 +781,7 @@ export function createDmUi(deps) {
           return opened.blob.arrayBuffer();
         },
         sinkId: () => state.settings?.voiceOutputId ?? '',
+        volume: () => (state.settings?.masterVolume ?? 100) / 100,
         t,
       });
     }

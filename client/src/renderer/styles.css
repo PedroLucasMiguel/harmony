@@ -8522,7 +8522,15 @@ body.pip-window {
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
-  animation: name-flow var(--name-speed, 6s) linear infinite;
+  /* Stepped, not smooth: this animates a background that is painted, so every step is a repaint of
+     every such name on screen, and a smooth one does it once per refresh of the display -- 240 times a
+     second on a fast monitor, which was a core of the graphics process all day. A hundred and twenty
+     steps a cycle is 20 a second at the usual speed, which is still a drift to the eye. */
+  animation: name-flow var(--name-speed, 6s) steps(120) infinite;
+}
+/* And not at all while nobody is looking: the window is behind a game or another program. */
+html[data-blurred] [data-name-style] {
+  animation-play-state: paused;
 }
 [data-name-style='rainbow'] {
   --name-gradient: linear-gradient(

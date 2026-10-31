@@ -454,10 +454,12 @@ async function sourceUrl(key, load) {
  * @param {string} options.key  identifies this message's sound
  * @param {() => Promise<ArrayBuffer>} options.load  its bytes
  * @param {() => string} [options.sinkId]  the speakers chosen in the settings
+ * @param {() => number} [options.volume]  the volume of the application, 1 being as it is; a sound
+ *   element cannot be louder than itself, so what is above 1 plays at full
  * @param {(key: string) => string} options.t
  * @returns {HTMLElement}
  */
-export function voiceNote({ key, load, sinkId = () => '', t }) {
+export function voiceNote({ key, load, sinkId = () => '', volume = () => 1, t }) {
   const wrap = document.createElement('span');
   wrap.className = 'attachment voice-note';
 
@@ -566,6 +568,7 @@ export function voiceNote({ key, load, sinkId = () => '', t }) {
     if (playing && playing !== audio) playing.pause();
     playing = audio;
     audio.playbackRate = e.rate;
+    audio.volume = Math.max(0, Math.min(1, Number(volume()) || 0));
     try {
       if (typeof audio.setSinkId === 'function') await audio.setSinkId(sinkId() || '');
     } catch { /* the default speakers */ }

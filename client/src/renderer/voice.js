@@ -295,6 +295,7 @@ export class VoiceSession {
     // Turning somebody up from zero is unambiguous: you want to hear them.
     if (pref.gain > 0) pref.muted = false;
     this.#applyPref(userId);
+    this.onPeerPrefs?.(userId, { ...pref });
     return pref.gain;
   }
 
@@ -302,7 +303,38 @@ export class VoiceSession {
     const pref = this.#prefFor(userId);
     pref.muted = Boolean(muted);
     this.#applyPref(userId);
+    this.onPeerPrefs?.(userId, { ...pref });
     return pref.muted;
+  }
+
+  /**
+   * Called with (userId, {gain, muted}) whenever somebody's level changes, so the owner can keep it.
+   * Not called by loadPeerPrefs: what was loaded is already kept.
+   *
+   * @type {((userId: number, pref: {gain: number, muted: boolean}) => void) | null}
+   */
+  onPeerPrefs = null;
+
+  /**
+   * Replace every person's level with what was kept for the server being joined.
+   *
+   * The ids are only meaningful on one server, so these are swapped, not merged, when the voice
+   * moves to another; and what is already in a call is brought to the new levels.
+   *
+   * @param {Record<string, {gain?: number, muted?: boolean}> | null | undefined} saved
+   */
+  loadPeerPrefs(saved) {
+    this.#peerPrefs = new Map();
+    for (const [id, pref] of Object.entries(saved ?? {})) {
+      const userId = Number(id);
+      if (!Number.isInteger(userId)) continue;
+      const gain = Number(pref?.gain);
+      this.#peerPrefs.set(userId, {
+        gain: Number.isFinite(gain) ? Math.max(0, Math.min(MAX_GAIN, gain)) : 1,
+        muted: Boolean(pref?.muted),
+      });
+    }
+    for (const userId of new Set(this.#owners.values())) this.#applyPref(userId);
   }
 
   /**

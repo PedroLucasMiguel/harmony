@@ -18,6 +18,12 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.readOffset = 0;
     this.queuedFrames = 0;
     this.closed = false;
+    // What the debug log reads: how much audio has been thrown away to stay near live, how much silence
+    // was played because none had arrived, and how far behind it is playing. Counted in frames.
+    this.started = false;
+    this.droppedFrames = 0;
+    this.underrunFrames = 0;
+    this.sinceReport = 0;
 
     this.port.onmessage = (event) => {
       const { type, payload } = event.data;
@@ -49,11 +55,13 @@ class PcmPlayer extends AudioWorkletProcessor {
 
     this.chunks.push({ left, right });
     this.queuedFrames += frames;
+    this.started = true;
 
     // Too far behind: throw away the oldest audio rather than let the delay grow.
     while (this.queuedFrames > MAX_QUEUED_FRAMES && this.chunks.length > 1) {
       const dropped = this.chunks.shift();
       this.queuedFrames -= dropped.left.length - this.readOffset;
+      this.droppedFrames += dropped.left.length - this.readOffset;
       this.readOffset = 0;
       if (this.queuedFrames <= TARGET_QUEUED_FRAMES) break;
     }
@@ -90,6 +98,19 @@ class PcmPlayer extends AudioWorkletProcessor {
     for (let i = written; i < need; i++) {
       outL[i] = 0;
       outR[i] = 0;
+    }
+    if (this.started) this.underrunFrames += need - written;
+
+    this.sinceReport += need;
+    if (this.sinceReport >= sampleRate) {
+      this.sinceReport = 0;
+      const ms = (frames) => Math.round((frames / sampleRate) * 1000);
+      this.port.postMessage({
+        type: 'stats',
+        queuedMs: ms(this.queuedFrames),
+        droppedMs: ms(this.droppedFrames),
+        underrunMs: ms(this.underrunFrames),
+      });
     }
 
     return !this.closed;

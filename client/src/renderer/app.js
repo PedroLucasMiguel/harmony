@@ -10,7 +10,7 @@ import { drawTrayIcons } from './tray-icons.js';
 import { t, texts, setLanguage, languages, currentLanguage, resolveLanguage, cachedPreference, onLanguageChange } from './i18n.js';
 import {
   createSink, MAX_GAIN, asPercent, playSample, setOutputDevice, monitorStream, playCue,
-  setCueVolume, playJoinSound, stopJoinSounds, cueStatus,
+  setCueVolume, setMasterVolume, playJoinSound, stopJoinSounds, cueStatus,
 } from './gain.js';
 import { NAME_FONTS, nameFontOf } from './name-fonts.js';
 import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
@@ -23,6 +23,7 @@ import { firstLink, linkEmbed } from './link-embed.js';
 import { elapsedText } from './elapsed.js';
 import { parkMedia, takeMedia, dropParked, keepable } from './media-keep.js';
 import { probeBlack } from './camera-probe.js';
+import { openBestCamera } from './camera-best.js';
 import { createServerRail } from './server-rail.js';
 import { createBackgroundSessions } from './server-sessions.js';
 import { serverKeyOf } from './server-key.js';
@@ -53,7 +54,12 @@ const RESOLUTIONS = {
   native: { get label() { return t('quality.native'); }, width: null, height: null },
 };
 
-const FRAMERATES = [30, 60, 120];
+// 0 is native: as fast as the screen goes, which the capture answers with its own refresh rate. The
+// ceiling handed to the encoder is a number it will never reach rather than a limit.
+const FRAMERATES = [30, 60, 120, 0];
+const NATIVE_STREAM_FPS = 240;
+/** Native is the 120 row's bitrate with room for more frames, as that row was worked out from the one before it. */
+const NATIVE_BITRATE_FACTOR = 1.25;
 
 /*
  * Bitrate ceilings in Mbit/s, one per frame rate above. Ceilings, not
@@ -85,12 +91,13 @@ const LEGACY_QUALITY = {
 /** The encoder settings for a resolution and frame rate. */
 function streamPreset(resolution, fps) {
   const res = RESOLUTIONS[resolution] ? resolution : '1080';
-  const index = Math.max(0, FRAMERATES.indexOf(Number(fps)));
+  const native = Number(fps) === 0 && fps !== '' && fps != null;
+  const index = native ? FRAMERATES.indexOf(120) : Math.max(0, FRAMERATES.indexOf(Number(fps)));
   return {
     width: RESOLUTIONS[res].width,
     height: RESOLUTIONS[res].height,
-    fps: FRAMERATES[index],
-    bitrate: BITRATE_MBPS[res][index] * 1_000_000,
+    fps: native ? NATIVE_STREAM_FPS : FRAMERATES[index],
+    bitrate: Math.round(BITRATE_MBPS[res][index] * 1_000_000 * (native ? NATIVE_BITRATE_FACTOR : 1)),
   };
 }
 
@@ -403,6 +410,8 @@ const el = {
   voiceSounds: $('voice-sounds'),
   soundVolume: $('sound-volume'),
   soundVolumeLabel: $('sound-volume-label'),
+  masterVolume: $('master-volume'),
+  masterVolumeLabel: $('master-volume-label'),
   bgGroup: $('bg-group'),
   bgMode: $('bg-mode'),
   bgBlur: $('bg-blur'),
@@ -802,6 +811,35 @@ const state = {
   timers: {},
 };
 
+/*
+ * How loudly each person is played, kept across restarts.
+ *
+ * The session itself only remembers them while the app runs; this hands it what was kept when a
+ * call is joined and keeps what changes. The copy waiting to be written is read before the
+ * settings, because a settings read in between would bring back the file as it was a moment ago.
+ */
+let peerVolumesPending = null;
+let peerVolumesTimer = null;
+const savedPeerVolumes = () => peerVolumesPending ?? state.settings?.peerVolumes ?? {};
+
+state.voice.onPeerPrefs = (userId, pref) => {
+  const key = serverKey(state.voiceServer ?? state.server);
+  const all = { ...savedPeerVolumes() };
+  const mine = { ...(all[key] ?? {}) };
+  if (pref.gain === 1 && !pref.muted) delete mine[userId];
+  else mine[userId] = { gain: pref.gain, muted: pref.muted };
+  if (Object.keys(mine).length) all[key] = mine;
+  else delete all[key];
+  peerVolumesPending = all;
+  // A slider sends dozens of these a second; the file is written once it settles.
+  clearTimeout(peerVolumesTimer);
+  peerVolumesTimer = setTimeout(async () => {
+    const wanted = peerVolumesPending;
+    peerVolumesPending = null;
+    if (wanted) await harmony.settings.set({ peerVolumes: wanted });
+  }, 400);
+};
+
 function showView(id) {
   el.views.forEach((v) => {
     if (v.id === id) v.setAttribute('data-active', '');
@@ -1019,6 +1057,7 @@ async function boot() {
   await harmony.api.setPassword(el.password.value, state.settings.serverUrl);
 
   setCueVolume((state.settings.soundVolume ?? 100) / 100);
+  setMasterVolume((state.settings.masterVolume ?? 100) / 100);
   // Mute and deafen are bound from the start; clips join once the soundpad
   // of a server has loaded, since their ids mean nothing before that.
   syncHotkeys();
@@ -1049,7 +1088,7 @@ async function boot() {
     ? Number(state.settings.framerate)
     : legacy[1];
   const resolutionEntries = Object.entries(RESOLUTIONS).map(([key, r]) => [key, r.label]);
-  const framerateEntries = FRAMERATES.map((fps) => [fps, `${fps} fps`]);
+  const framerateEntries = FRAMERATES.map((fps) => [fps, fps ? `${fps} fps` : t('quality.native')]);
 
   fillSegmented(el.resolution, resolutionEntries, resolution);
   fillSegmented(el.framerate, framerateEntries, framerate);
@@ -5086,6 +5125,7 @@ async function joinVoice(channel, password) {
     }
 
     admitted = true;
+    state.voice.loadPeerPrefs(savedPeerVolumes()[serverKey(state.server)]);
     state.voice.configure({
       channelId: channel.id,
       mid: reply.mid,
@@ -6888,6 +6928,15 @@ window.addEventListener('mouseup', (event) => {
   const binding = pttBinding();
   if (binding && mouseButtonNumber(event.button) === Number(/^Mouse(\d+)$/.exec(binding.key)?.[1])) pttSet(false);
 }, true);
+// Animated names stand still while the window is not the one in front (see [data-name-style] in styles.css):
+// somebody playing a game with Harmony on the other monitor is not looking at them, and they are repainted
+// at the refresh rate of the display.
+const markBlurred = () => document.documentElement.toggleAttribute('data-blurred', !document.hasFocus());
+window.addEventListener('blur', markBlurred);
+window.addEventListener('focus', markBlurred);
+document.addEventListener('visibilitychange', markBlurred);
+markBlurred();
+
 // Losing focus while the key is down means its keyup goes to somebody else.
 window.addEventListener('blur', () => {
   if (pttInWindow() && ptt.held) pttSet(false);
@@ -9982,6 +10031,7 @@ function attachmentNode(message) {
         return res.arrayBuffer();
       },
       sinkId: () => state.settings.voiceOutputId ?? '',
+      volume: () => (state.settings.masterVolume ?? 100) / 100,
       t,
     });
   }
@@ -11189,6 +11239,8 @@ const CAMERA_SIZES = {
 /** 0 is native. */
 const CAMERA_RATES = [24, 30, 60, 0];
 const NATIVE_RATE = 120;
+/** The slowest a camera mode may be and still be chosen: under this it is a slideshow, not a call. */
+const CAMERA_MIN_FPS = 15;
 /** Bits per pixel per frame: 640x360 at 24 fps has always been 400 kbps. */
 const CAMERA_BITS_PER_PIXEL = 0.075;
 const CAMERA_MIN_BITRATE = 300_000;
@@ -11233,11 +11285,24 @@ function cameraSend(stream) {
 const openCamera = (deviceId, facing) => {
   const { size, rate } = cameraQuality();
   const wanted = CAMERA_SIZES[size];
-  return navigator.mediaDevices.getUserMedia({
+  // Native is the best picture this camera can move, found by asking: see camera-best.js.
+  if (size === 'native') {
+    return openBestCamera((c) => navigator.mediaDevices.getUserMedia(c), {
+      rate,
+      device: deviceId ? { deviceId: { exact: deviceId } } : facing ? { facingMode: { ideal: facing } } : {},
+    });
+  }
+  const ask = (withFloor) => navigator.mediaDevices.getUserMedia({
     video: {
       width: { ideal: wanted.width },
       height: { ideal: wanted.height },
-      frameRate: { ideal: rate || NATIVE_RATE },
+      // A floor as well as a wish: asked for the biggest picture there is, a webcam answers with its
+      // largest mode, and for several (a C920 at 2304x1536) that mode is uncompressed over USB and
+      // comes at two frames a second. A floor rules those modes out, so "native" is the biggest
+      // picture the camera can still move.
+      frameRate: withFloor
+        ? { min: CAMERA_MIN_FPS, ideal: rate || NATIVE_RATE }
+        : { ideal: rate || NATIVE_RATE },
       // A device, or else a direction: facingMode is how a phone's front and
       // back cameras are asked for, and a desktop webcam simply ignores it.
       ...(deviceId
@@ -11245,6 +11310,8 @@ const openCamera = (deviceId, facing) => {
         : facing ? { facingMode: { ideal: facing } } : {}),
     },
   });
+  // A camera that cannot reach the floor at all still opens, at whatever it does.
+  return ask(true).catch((err) => (err?.name === 'OverconstrainedError' ? ask(false) : Promise.reject(err)));
 };
 
 /** Whether there is more than one camera to switch between. */
@@ -12898,7 +12965,8 @@ async function previewCopy(track) {
 async function openCapture(source, preset, plan) {
   if (source.kind === 'composite') {
     const { width, height } = compositeSize(preset);
-    const compositor = new Compositor({ width, height, fps: preset.fps });
+    // Drawn by this page, frame by frame: native means the most that is worth drawing.
+    const compositor = new Compositor({ width, height, fps: Math.min(preset.fps, 120) });
     // One at a time, in the order they were ticked: that order is the
     // stacking order, first at the bottom.
     for (const initial of source.initial ?? []) {
@@ -12908,6 +12976,14 @@ async function openCapture(source, preset, plan) {
   }
 
   if (source.kind === 'camera') {
+    // Native resolution: the best picture this camera can move, as for a call. See camera-best.js.
+    if (!preset.width) {
+      const stream = await openBestCamera((c) => navigator.mediaDevices.getUserMedia({ ...c, audio: false }), {
+        rate: preset.fps > 60 ? 0 : preset.fps,
+        device: { deviceId: { exact: source.id } },
+      });
+      return { track: stream.getVideoTracks()[0], rawStream: stream };
+    }
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         deviceId: { exact: source.id },
@@ -14384,6 +14460,7 @@ window.__harmonyPip = () => ({
 
 /** What our microphone is putting on the wire. Async; see publishStats. */
 window.__harmonyPublish = () => state.voice.publishStats();
+window.__harmonyVoice = () => state.voice;
 
 /** What each voice subscription is receiving. Async; see subscribeStats. */
 window.__harmonySubs = () => state.voice.subscribeStats();
@@ -15016,6 +15093,17 @@ el.soundVolume.addEventListener('change', async () => {
   state.settings = await harmony.settings.get();
 });
 
+el.masterVolume.addEventListener('input', () => {
+  const percent = Number(el.masterVolume.value);
+  showVolume(el.masterVolume, el.masterVolumeLabel, percent);
+  setMasterVolume(percent / 100);
+});
+el.masterVolume.addEventListener('change', async () => {
+  playCue('join');
+  await harmony.settings.set({ masterVolume: Number(el.masterVolume.value) });
+  state.settings = await harmony.settings.get();
+});
+
 el.voiceSounds.addEventListener('change', async () => {
   await harmony.settings.set({ voiceSounds: el.voiceSounds.checked });
   state.settings = await harmony.settings.get();
@@ -15037,6 +15125,9 @@ const debugLog = createDebugLog({
   voice: () => state.voice,
   effectStats: () => state.camera.effect?.stats ?? null,
   settings: () => state.settings,
+  live: () => (state.pc && state.live.videoTrack
+    ? { pc: state.pc, videoTrack: state.live.videoTrack, audioMode: state.live.audioMode, mix: state.bridge.stats() }
+    : null),
 });
 harmony.debug?.stop().catch(() => {});
 
@@ -15089,6 +15180,7 @@ el.voiceConfig.addEventListener('click', () => {
   el.pipPopOut.checked = state.settings?.pipPopOut !== false;
   renderPttSettings();
   showVolume(el.soundVolume, el.soundVolumeLabel, state.settings?.soundVolume ?? 100);
+  showVolume(el.masterVolume, el.masterVolumeLabel, state.settings?.masterVolume ?? 100);
   renderHotkeyList();
   // No save: this is drawing the dialog from what is already stored, and
   // writing it back on every open is a write for nothing.

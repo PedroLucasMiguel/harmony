@@ -842,7 +842,7 @@ export default {
   'quality.native': 'Native',
   'quality.note_heavy': 'Higher quality uses more bandwidth and more of this computer, and the camera background has more to do with a bigger picture.',
   'quality.note_live': 'Applies to a running camera straight away.',
-  'quality.note_native': 'Native asks the camera for the most it offers, which the sent picture follows.',
+  'quality.note_native': 'Native asks the camera for its biggest picture that it can still keep at 30 fps or more, and the sent picture follows.',
 
   // --- rail
   'rail.dm_pick': 'Pick a conversation to read it.',
@@ -973,6 +973,8 @@ export default {
   'settings.sounds.members_join_sounds_hint': 'When somebody who has picked their own join sound joins your voice channel, you hear theirs instead of the usual tone. Off plays the usual tone for everybody.',
   'settings.sounds.mention_sound': 'Mention sound',
   'settings.sounds.sound_effects_volume': 'Sound effects volume',
+  'settings.sounds.master_volume': 'Master volume',
+  'settings.sounds.master_volume_hint': "The volume of everything Harmony plays: voices, streams, sound effects and the soundpad. Each person's own volume and the other sliders still apply on top.",
   'settings.sounds.sounds': 'Sounds',
   'settings.sounds.three_rising_notes_when': 'Three rising notes when somebody writes your name, and the only cue that fires for a channel you are not looking at.',
   'settings.sounds.voice_channel_sounds': 'Voice channel sounds',

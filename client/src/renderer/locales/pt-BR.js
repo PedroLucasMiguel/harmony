@@ -832,7 +832,7 @@ export default {
   'quality.native': 'Nativa',
   'quality.note_heavy': 'Qualidade maior usa mais banda e mais recursos deste computador, e o fundo da câmera tem mais trabalho com uma imagem maior.',
   'quality.note_live': 'Vale na hora para uma câmera em uso.',
-  'quality.note_native': 'Nativa pede à câmera o máximo que ela oferece, e a imagem enviada acompanha.',
+  'quality.note_native': 'Nativa pede à câmera a maior imagem que ela ainda consegue manter a 30 fps ou mais, e a imagem enviada acompanha.',
 
   // --- rail
   'rail.dm_pick': 'Escolha uma conversa para lê-la.',
@@ -963,6 +963,8 @@ export default {
   'settings.sounds.members_join_sounds_hint': 'Quando alguém que escolheu o próprio som de entrada entra no seu canal de voz, você ouve o dele no lugar do toque padrão. Desativado toca o toque padrão para todos.',
   'settings.sounds.mention_sound': 'Som de menção',
   'settings.sounds.sound_effects_volume': 'Volume dos efeitos sonoros',
+  'settings.sounds.master_volume': 'Volume geral',
+  'settings.sounds.master_volume_hint': 'O volume de tudo o que o Harmony toca: vozes, transmissões, efeitos sonoros e o soundpad. O volume de cada pessoa e os outros controles continuam valendo por cima.',
   'settings.sounds.sounds': 'Sons',
   'settings.sounds.three_rising_notes_when': 'Três notas ascendentes quando alguém escreve seu nome, e o único aviso que toca para um canal que você não está vendo.',
   'settings.sounds.voice_channel_sounds': 'Sons do canal de voz',

@@ -14,6 +14,8 @@
 //
 // OFF at every start: nothing here is remembered between runs. See main/debug-log.js.
 
+import { describePc } from './webrtc.js';
+
 const TICK_MS = 2000;
 
 /** Running totals: written as the change since the last sample. */
@@ -39,7 +41,7 @@ const SECOND_VALUES = new Set(['jitter', 'roundTripTime']);
 
 /** Settings worth knowing about when reading a log: none of them names anybody. */
 const SETTINGS_SHOWN = [
-  'hardwareEncoding', 'gpuAdapter', 'cameraResolution', 'cameraFramerate', 'cameraPreview',
+  'hardwareEncoding', 'gpuAdapter', 'cameraResolution', 'cameraFramerate', 'cameraPreview', 'resolution', 'framerate', 'priority',
   'micGain', 'micSensitivity', 'micEchoCancellation', 'micNoiseSuppression', 'micAiSuppression', 'pushToTalk',
   'pauseHiddenCameras', 'pictureInPicture', 'uiScale', 'soundVolume', 'voiceSounds',
 ];
@@ -52,8 +54,10 @@ const round = (n, digits = 1) => (Number.isFinite(n) ? Number(n.toFixed(digits))
  * @param {() => import('./voice.js').VoiceSession} deps.voice
  * @param {() => object|null} deps.effectStats        the camera's background effect, if running
  * @param {() => object|undefined} deps.settings
+ * @param {() => ({pc: RTCPeerConnection, videoTrack: MediaStreamTrack, audioMode: string, mix: object|null}|null)} [deps.live]
+ *   the live or screen share being sent, if there is one
  */
-export function createDebugLog({ harmony, voice, effectStats, settings }) {
+export function createDebugLog({ harmony, voice, effectStats, settings, live = () => null }) {
   let on = false;
   let timer = null;
   let lagTimer = null;
@@ -173,16 +177,35 @@ export function createDebugLog({ harmony, voice, effectStats, settings }) {
       const effect = effectStats();
       if (effect) send('CAMFX', pairs('camfx', effect, dt));
 
+      // Chromium names the encoder only when it is a hardware one, so the
+      // absence is the answer -- written out, because nobody reading a log
+      // should have to know that.
+      const named = (section, field) => {
+        if (!section) return;
+        section.encoder = section[field] ? `hardware:${section[field]}` : 'software-or-not-reported';
+      };
+
+      // A live or a screen share: the same questions as for the camera -- is the encoder keeping up, what is it
+      // doing about it -- and the two that only it raises: what the capture gives, and how the sound gets in.
+      const sharing = live();
+      if (sharing?.pc) {
+        const net = await describePc(sharing.pc);
+        named(net.outVideo, 'encoderImplementation');
+        send('NET', `live ${pairs('net:live', net, dt)}`);
+        const s = sharing.videoTrack?.getSettings?.() ?? {};
+        send('AUDIO', `liveCapture ${pairs('liveCapture', {
+          state: sharing.videoTrack?.readyState,
+          size: s.width ? `${s.width}x${s.height}` : undefined,
+          fps: s.frameRate,
+          contentHint: sharing.videoTrack?.contentHint || undefined,
+          audioMode: sharing.audioMode,
+          ...(sharing.mix ?? {}),
+        }, dt)}`);
+      }
+
       const v = voice();
       if (v?.channelId != null) {
         const snap = await v.debugSnapshot();
-        // Chromium names the encoder only when it is a hardware one, so the
-        // absence is the answer -- written out, because nobody reading a log
-        // should have to know that.
-        const named = (section, field) => {
-          if (!section) return;
-          section.encoder = section[field] ? `hardware:${section[field]}` : 'software-or-not-reported';
-        };
         named(snap.cam?.outVideo, 'encoderImplementation');
         for (const s of snap.video) named(s.inVideo, 'decoderImplementation');
         const rtt = await v.rtt().catch(() => null);

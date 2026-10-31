@@ -56,7 +56,9 @@ async function run() {
     return document.querySelectorAll('#resolution button').length
       + document.querySelectorAll('#framerate button').length;
   `);
-  check('boot() populated resolutions and frame rates', presetCount === 7, `${presetCount} buttons`);
+  check('boot() populated resolutions and frame rates', presetCount === 8, `${presetCount} buttons`);
+  const rates = await cdp.evaluate("return [...document.querySelectorAll('#framerate button')].map((b) => b.textContent.trim());");
+  check('a live can be set to the screen\'s own frame rate, as Native', rates.join(',') === '30 fps,60 fps,120 fps,Native', rates.join(','));
 
   const modulesOk = await cdp.evaluate(
     "return typeof (await import('./webrtc.js')).publish === 'function';",

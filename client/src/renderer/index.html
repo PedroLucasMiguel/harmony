@@ -2100,6 +2100,15 @@
               <h3 class="settings-page-title" data-i18n="settings.sounds.sounds">Sounds</h3>
 
               <div class="setting-group">
+                <div class="setting-head">
+                  <label class="setting-title" for="master-volume" data-i18n="settings.sounds.master_volume">Master volume</label>
+                  <output class="value-pill" id="master-volume-label" for="master-volume">100%</output>
+                </div>
+                <input id="master-volume" type="range" min="0" max="200" step="5" value="100" />
+                <p class="setting-note" data-i18n="settings.sounds.master_volume_hint">The volume of everything Harmony plays: voices, streams, sound effects and the soundpad. Each person's own volume and the other sliders still apply on top.</p>
+              </div>
+
+              <div class="setting-group">
                 <label class="setting-toggle">
                   <span class="setting-text">
                     <span class="setting-title" data-i18n="settings.sounds.voice_channel_sounds">Voice channel sounds</span>

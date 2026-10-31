@@ -609,7 +609,7 @@ function bus(ctx) {
   limiter.ratio.value = 12;
   limiter.attack.value = 0.002;
   limiter.release.value = 0.12;
-  limiter.connect(ctx.destination);
+  limiter.connect(output());
   cueBus = limiter;
   return cueBus;
 }
@@ -688,7 +688,7 @@ export function monitorStream(stream, gain = 1) {
   const node = context().createGain();
   node.gain.value = Math.max(0, Math.min(MAX_GAIN, gain));
   source.connect(node);
-  node.connect(context().destination);
+  node.connect(output());
   return {
     set(value) {
       node.gain.value = Math.max(0, Math.min(MAX_GAIN, Number(value) || 0));
@@ -773,6 +773,37 @@ function context() {
   return ctx;
 }
 
+/** Loudest the master volume goes: twice what everything is already set to. */
+export const MAX_MASTER = 2;
+let masterVolume = 1;
+let masterNode = null;
+
+/**
+ * Where everything that plays ends up: a voice, a screen share's sound, a cue, a soundpad clip.
+ *
+ * One gain in front of the speakers, so the volume of the whole application is one number and
+ * nothing that plays has to know about it.
+ */
+function output() {
+  const c = context();
+  if (!masterNode) {
+    masterNode = c.createGain();
+    masterNode.gain.value = masterVolume;
+    masterNode.connect(c.destination);
+  }
+  return masterNode;
+}
+
+/** The volume of the whole application, 0..MAX_MASTER. 1 leaves everything as it was set. */
+export function setMasterVolume(value) {
+  masterVolume = Math.max(0, Math.min(MAX_MASTER, Number(value) || 0));
+  // Eased, for the same reason a sink is: a step in the gain is a click.
+  masterNode?.gain.setTargetAtTime(masterVolume, masterNode.context.currentTime, 0.015);
+  return masterVolume;
+}
+
+export const getMasterVolume = () => masterVolume;
+
 /**
  * Route a received stream's audio through a gain node.
  *
@@ -782,7 +813,7 @@ function context() {
 export function createSink(stream) {
   const node = context().createGain();
   node.gain.value = 1;
-  node.connect(context().destination);
+  node.connect(output());
 
   /*
    * The analyser sits BEFORE the gain node, so what it reports is what the
@@ -934,7 +965,7 @@ export async function playSample(url, { gain = 1 } = {}) {
   const node = context().createGain();
   node.gain.value = Math.max(0, Math.min(MAX_GAIN, gain));
   source.connect(node);
-  node.connect(context().destination);
+  node.connect(output());
   source.start();
   // Overlapping presses are fine -- each gets its own source node -- but the
   // nodes have to be released or they accumulate for the life of the context.

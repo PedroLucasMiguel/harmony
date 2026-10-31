@@ -206,6 +206,17 @@ const DEFAULTS = {
    */
   soundVolume: 100,
   /*
+   * The volume of the whole application, as a percentage: voices, streams, cues, the soundpad.
+   * 100 leaves everything at the level it was set to; up to 200 for a quiet speaker.
+   */
+  masterVolume: 100,
+  /*
+   * How loudly each person is played, and whether they are muted, for you only:
+   * { [serverKey]: { [userId]: { gain, muted } } }. Per server, because a user id is only
+   * meaningful on the server that issued it. Only those who differ from the default are kept.
+   */
+  peerVolumes: {},
+  /*
    * Global hotkeys, as Electron accelerators ("Ctrl+Shift+M"). Empty is
    * unbound. Soundpad clips are kept per SERVER, because a clip id is only
    * meaningful on the server that issued it: { [serverUrl]: { [clipId]: accel } }.
