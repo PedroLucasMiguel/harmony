@@ -68,6 +68,8 @@ export const SCENARIOS = [
   { name: 'jitter-0', ...base, jitterBufferTarget: 0 },
   { name: 'jitter-100', ...base, jitterBufferTarget: 100 },
   { name: 'hint-0', ...base, playoutDelayHint: 0 },
+  // the viewer's audio buffer has grown (what a long-open share does to it) and the sound plays behind the picture
+  { name: 'audio-buffer-600', ...base, audioJitterBufferTarget: 600 },
   { name: 'late-join', ...base, viewerDelayMs: 12000, seconds: 15 },
 
   // --- the sound

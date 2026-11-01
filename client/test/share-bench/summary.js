@@ -87,7 +87,7 @@ export function summarize(run) {
       const g = groups.find((x) => x[0].sent >= T - 5 && x[0].sent <= T + 80);
       const heard = onsetList.filter((o) => o > T && o < T + 2000).sort((x, y) => x - y)[0];
       if (!g || heard == null || T < from) continue;
-      found.push({ audio: heard - T, video: g[0].shown - T, offset: heard - T - (g[0].shown - T) });
+      found.push({ T, audio: heard - T, video: g[0].shown - T, offset: heard - T - (g[0].shown - T) });
     }
     return found;
   };
@@ -115,6 +115,8 @@ export function summarize(run) {
     audioDelayMs: pairs.length ? median(pairs.map((p) => p.audio)) : null,
     videoDelayMs: pairs.length ? median(pairs.map((p) => p.video)) : null,
     avPairs: pairs.length,
+    lipSeries: vin.filter((_, i) => i % 5 === 0).map((x) => [Math.round((x.at - vin[0].at) / 1000), x.jt, x.eps]),
+    avSeries: pairs.map((p) => [Math.round((p.T - (first?.[0] ?? 0)) / 1000), Math.round(p.offset)]),
     localOffsetMs: local.length ? median(local.map((p) => p.offset)) : null,
     stereoRatio,
     sender: {

@@ -305,7 +305,7 @@ window.__inTimer = setInterval(async () => {
   const rows = []; (await pc.getStats()).forEach((r) => rows.push(r));
   const v = rows.find((r) => r.type === 'inbound-rtp' && r.kind === 'video');
   const a = rows.find((r) => r.type === 'inbound-rtp' && r.kind === 'audio');
-  window.__in.push({ at: Date.now(), v: v && { ...v }, a: a && { ...a } });
+  window.__in.push({ at: Date.now(), v: v && { ...v }, a: a && { ...a }, jt: [audioRx?.jitterBufferTarget, videoRx?.jitterBufferTarget], eps: a?.estimatedPlayoutTimestamp != null && v?.estimatedPlayoutTimestamp != null ? Math.round(a.estimatedPlayoutTimestamp - v.estimatedPlayoutTimestamp) : null });
 }, 1000);
 
 window.__viewer = { frames: probe.frames, flashes: probe.flashes, onsets: audio.onsets, rms: audio.rms, sink, actx };
