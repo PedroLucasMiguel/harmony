@@ -15,14 +15,23 @@
 //
 // So the queue is brought back down: while it holds more than it needs, the
 // audio is played 3% faster -- interpolated, so there are no clicks and a
-// pitch change of half a semitone -- until it is back near live. A backlog of
-// 300 ms is gone in ten seconds. The hard cap below is only for the case where
-// even that cannot keep up.
+// pitch change of half a semitone -- until it is back near live (6% when the
+// backlog is large). A backlog of 150 ms is gone in five seconds. The hard cap
+// below is for the case where even that is too slow.
+//
+// And the first thing it does is forget what was waiting before it started. A
+// share's audio is captured before the page's audio context is running (a
+// context that starts suspended can stay so for seconds), and everything
+// delivered meanwhile was queued: the sound then began a quarter of a second
+// behind the picture and stayed there, some shares and not others, until the
+// share was stopped and started again.
 
-const MAX_QUEUED_FRAMES = 48000 * 0.4; // 400 ms at 48 kHz: past this, drop the oldest audio
+const MAX_QUEUED_FRAMES = 48000 * 0.25; // 250 ms at 48 kHz: past this, drop the oldest audio
 const TARGET_QUEUED_FRAMES = 48000 * 0.04; // catching up ends, and a drop ends, at 40 ms
 const CATCH_UP_FROM_FRAMES = 48000 * 0.08; // catching up starts above 80 ms: more than two chunks' worth
 const CATCH_UP_RATE = 1.03;
+const CATCH_UP_FAST_FROM_FRAMES = 48000 * 0.16; // a backlog this big is caught up with at twice the rate
+const CATCH_UP_FAST_RATE = 1.06;
 
 class PcmPlayer extends AudioWorkletProcessor {
   constructor() {
@@ -34,6 +43,8 @@ class PcmPlayer extends AudioWorkletProcessor {
     /** Frames in all the chunks, whole, whatever has been read of the first. */
     this.totalFrames = 0;
     this.catchingUp = false;
+    // Whether what was waiting when playing began has been put aside (see the top of the file).
+    this.primed = false;
     this.closed = false;
     // What the debug log reads: how much audio has been thrown away to stay near live, how much has been
     // played faster to get there, how much silence was played because none had arrived. Counted in frames.
@@ -82,12 +93,16 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.started = true;
 
     // Too far behind even for catching up: throw away the oldest audio rather than let the delay grow.
-    while (this.queuedFrames > MAX_QUEUED_FRAMES && this.chunks.length > 1) {
+    if (this.queuedFrames > MAX_QUEUED_FRAMES) this.trim();
+  }
+
+  /** Throw away the oldest audio until about the target is left (always keeping the newest piece). */
+  trim() {
+    while (this.queuedFrames > TARGET_QUEUED_FRAMES && this.chunks.length > 1) {
       const dropped = this.chunks.shift();
-      this.droppedFrames += dropped.left.length - this.readPos;
+      this.droppedFrames += dropped.left.length - Math.floor(this.readPos);
       this.totalFrames -= dropped.left.length;
       this.readPos = 0;
-      if (this.queuedFrames <= TARGET_QUEUED_FRAMES) break;
     }
   }
 
@@ -99,10 +114,14 @@ class PcmPlayer extends AudioWorkletProcessor {
 
     // Faster while there is more than is needed, until there is not: two thresholds, so it does not
     // flutter on and off around one.
+    if (!this.primed && this.chunks.length > 0) {
+      this.primed = true;
+      this.trim();
+    }
     const queued = this.queuedFrames;
     if (queued > CATCH_UP_FROM_FRAMES) this.catchingUp = true;
     else if (queued <= TARGET_QUEUED_FRAMES) this.catchingUp = false;
-    const rate = this.catchingUp ? CATCH_UP_RATE : 1;
+    const rate = !this.catchingUp ? 1 : queued > CATCH_UP_FAST_FROM_FRAMES ? CATCH_UP_FAST_RATE : CATCH_UP_RATE;
 
     let written = 0;
     while (written < need && this.chunks.length > 0) {

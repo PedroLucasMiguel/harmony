@@ -105,16 +105,6 @@ export const DEFAULT_FILE_BYTES = MAX_UPLOAD_BYTES;
 export const DISK_RESERVE_BYTES = 512 * 1024 * 1024;
 
 /**
- * Per-clip ceiling for the soundpad, far below the generic upload cap.
- *
- * Clips are prefetched by every client on sign-in so the first press of a
- * button is not a download, which makes their size a cost paid N times on
- * every join rather than once. Two megabytes is about a minute of 128 kbps
- * audio -- longer than anything anyone actually puts on a soundpad.
- */
-export const MAX_CLIP_BYTES = 2 * 1024 * 1024;
-
-/**
  * Per-avatar ceiling.
  *
  * Refused rather than resized: resizing means an image library, and a library
@@ -949,11 +939,6 @@ export class Soundpad {
     if (mediaTypeOf(upload.content_type) !== 'audio') {
       return { ok: false, error: 'not_audio' };
     }
-    // Checked against the stored row rather than the request: the upload may
-    // have been made by somebody else, or reused from an old message, and the
-    // cap has to hold either way.
-    if (upload.bytes > MAX_CLIP_BYTES) return { ok: false, error: 'clip_too_large' };
-
     this.#db.exec('BEGIN');
     try {
       const info = this.#q.insert.run(

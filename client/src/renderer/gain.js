@@ -984,6 +984,22 @@ export function createSink(stream) {
 
 /** Decoded clips, so the second press of a soundpad button is instant. */
 const samples = new Map();
+/** Clips longer than this are not kept decoded: a few minutes of stereo is hundreds of megabytes of memory. */
+const KEEP_SAMPLE_SECONDS = 60;
+
+/** The clips playing right now, so that they can be stopped. */
+const playingSamples = new Set();
+/** Counts the stops. A clip still being fetched when one comes is not played after it. */
+let sampleStops = 0;
+
+/** Silence every soundpad clip that is playing, and any that is still on its way. */
+export function stopSamples() {
+  sampleStops += 1;
+  for (const source of playingSamples) {
+    try { source.stop(); } catch { /* already ended */ }
+  }
+  playingSamples.clear();
+}
 
 /**
  * Play a one-shot sound into the PLAYBACK context.
@@ -1002,13 +1018,16 @@ const samples = new Map();
  * @param {{gain?: number}} options
  */
 export async function playSample(url, { gain = 1 } = {}) {
+  const stopsAtStart = sampleStops;
   let buffer = samples.get(url);
   if (!buffer) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`could not load the clip (${response.status})`);
     buffer = await context().decodeAudioData(await response.arrayBuffer());
-    samples.set(url, buffer);
+    if (buffer.duration <= KEEP_SAMPLE_SECONDS) samples.set(url, buffer);
   }
+  // Stopped while it was loading: it is not wanted now.
+  if (sampleStops !== stopsAtStart) return null;
 
   const source = context().createBufferSource();
   source.buffer = buffer;
@@ -1017,9 +1036,11 @@ export async function playSample(url, { gain = 1 } = {}) {
   source.connect(node);
   node.connect(output());
   source.start();
+  playingSamples.add(source);
   // Overlapping presses are fine -- each gets its own source node -- but the
   // nodes have to be released or they accumulate for the life of the context.
   source.addEventListener('ended', () => {
+    playingSamples.delete(source);
     try {
       source.disconnect();
       node.disconnect();
@@ -1115,6 +1136,7 @@ export function cueStatus() {
     volume: cueVolume,
     playingJoinSounds: activeJoinSounds.size,
     cachedJoinSounds: samples.size,
+    playingClips: playingSamples.size,
   };
 }
 

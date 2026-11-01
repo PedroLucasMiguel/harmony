@@ -239,17 +239,18 @@ describe('profile pictures', () => {
   });
 });
 
-describe('soundpad size cap', () => {
-  it('refuses a clip over 2 MB, even though the upload itself is allowed', async () => {
+describe('soundpad size', () => {
+  it('takes a clip over 2 MB: a clip is held to what an upload is, and no less', async () => {
     const big = Buffer.concat([OGG, Buffer.alloc(3 * 1024 * 1024, 3)]);
     const { hash, bytes } = await upload(big, 'audio/ogg', ownerToken);
     assert.ok(bytes > 2 * 1024 * 1024, 'the upload must succeed for this to test anything');
 
     const res = await api('/api/soundpad', {
-      method: 'POST', body: { name: 'too big', hash }, token: ownerToken,
+      method: 'POST', body: { name: 'a long one', hash }, token: ownerToken,
     });
-    assert.equal(res.status, 400);
-    assert.equal(res.body.error, 'clip_too_large');
+    assert.equal(res.status, 201);
+    // Taken out again: the tests after this one count what is on the pad.
+    await api(`/api/soundpad/${res.body.clip.id}/delete`, { method: 'POST', token: ownerToken });
   });
 });
 

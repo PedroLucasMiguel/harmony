@@ -151,8 +151,11 @@ check('and it has not had to throw audio away to stay that way (no hard drops)',
     return samples.buffer;
   };
   let n = 0;
-  // 400 ms of tone in one go (a backlog), then a piece every 20 ms
-  for (let k = 0; k < 20; k += 1) { player.port.onmessage({ data: { type: 'pcm', payload: tone(n) } }); n += CHUNK; }
+  // a stream that is running (a piece in hand, and played), then 200 ms of tone in one go (a backlog), then a
+  // piece every 20 ms
+  player.port.onmessage({ data: { type: 'pcm', payload: tone(n) } }); n += CHUNK;
+  player.process([], [out]);
+  for (let k = 0; k < 10; k += 1) { player.port.onmessage({ data: { type: 'pcm', payload: tone(n) } }); n += CHUNK; }
   let nextPiece = 0;
   let worstStep = 0;
   let last = null;
@@ -167,8 +170,21 @@ check('and it has not had to throw audio away to stay that way (no hard drops)',
       last = v;
     }
   }
-  // a 1 kHz tone at 0.5 moves at most 0.0654 a sample; 3% faster, at most 0.0674
-  check('catching up from a 400 ms backlog stays smooth: no sample jumps more than the tone itself does', catching > 0 && worstStep < 0.075, `worst step ${worstStep.toFixed(4)} over ${catching} quanta of catching up`);
+  // a 1 kHz tone at 0.5 moves at most 0.0654 a sample; 6% faster, at most 0.0694
+  check('catching up from a 200 ms backlog stays smooth: no sample jumps more than the tone itself does', catching > 0 && worstStep < 0.078, `worst step ${worstStep.toFixed(4)} over ${catching} quanta of catching up`);
+}
+
+// The start: audio that was captured before the page could play it (a context that starts suspended) is not
+// played late. Whatever waited, the first thing played is within about the target of live.
+{
+  const { player } = load();
+  const out = [new Float32Array(QUANTUM), new Float32Array(QUANTUM)];
+  for (let k = 0; k < 12; k += 1) player.port.onmessage({ data: { type: 'pcm', payload: piece() } }); // 240 ms waiting
+  const before = player.queuedFrames;
+  player.process([], [out]);
+  const after = player.queuedFrames;
+  check('what was waiting when playing begins is put aside: 240 ms in the queue, about the target after the first quantum',
+    before >= RATE * 0.2 && after <= RATE * 0.06, `${Math.round((before / RATE) * 1000)} ms before, ${Math.round((after / RATE) * 1000)} ms after`);
 }
 
 const failed = summary();

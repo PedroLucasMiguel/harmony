@@ -377,6 +377,39 @@ describe('playing a clip', () => {
   });
 });
 
+describe('stopping a clip', () => {
+  it('is an admin\'s, and reaches everyone in the channel', async () => {
+    const a = connect(ownerToken);
+    const b = connect(memberToken);
+    await a.hello();
+    await b.hello();
+    await a.request({ type: 'voice:join', channelId: voiceChannelId });
+    await b.request({ type: 'voice:join', channelId: voiceChannelId });
+
+    const heardByB = b.next((m) => m.type === 'soundpad:stop');
+    const ok = await a.request({ type: 'soundpad:stop', channelId: voiceChannelId });
+    assert.equal(ok.type, 'voice:ok');
+    const event = await heardByB;
+    assert.equal(event.channelId, voiceChannelId);
+    assert.equal(event.by, 'boss');
+
+    // A member may not: it would be a way to silence anybody's clip.
+    const refused = await b.request({ type: 'soundpad:stop', channelId: voiceChannelId });
+    assert.equal(refused.error, 'forbidden');
+
+    a.ws.close();
+    b.ws.close();
+  });
+
+  it('is refused from somebody not in the channel', async () => {
+    const a = connect(ownerToken);
+    await a.hello();
+    const res = await a.request({ type: 'soundpad:stop', channelId: voiceChannelId });
+    assert.equal(res.error, 'not_in_channel');
+    a.ws.close();
+  });
+});
+
 describe('moving a user between channels', () => {
   it('is refused to non-admins', async () => {
     const c = connect(memberToken);

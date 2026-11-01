@@ -1015,10 +1015,11 @@ export default {
 
   // --- soundpad
   'share.capture_blocked_mac': 'O macOS bloqueou a captura de tela. Abra o seletor de fontes e siga o aviso no topo: se o Harmony já estiver ativado em Gravação de Tela e Áudio do Sistema, use "Redefinir e reiniciar".',
+  'soundpad.stop': 'Parar',
+  'soundpad.stop_hint': 'Parar o que está tocando, para todos no canal',
   'soundpad.emoji_hint': 'O emoji é opcional, e é o que ajuda a achar um clipe numa grade de vinte botões idênticos.',
   'soundpad.find_the_perfect_sound': 'Encontre o som perfeito',
   'soundpad.how_loudly_soundpad_clips': 'Quão alto os clipes do Soundpad tocam para você',
-  'soundpad.too_big': '"{name}" tem {size} MB. Os clipes são limitados a {limit} MB -- todo cliente baixa todos os clipes.',
 
   // --- soundpad_add
   'soundpad_add.add': '+ Adicionar',
@@ -1183,6 +1184,7 @@ export default {
   'app.pip_next': 'Próxima transmissão',
   'app.pip_resize': 'Arraste para redimensionar',
   'app.pip_back_to_the_stage': 'Devolver as transmissões ao palco',
+  'app.pip_close': 'Fechar por enquanto: volta na próxima vez que o Harmony for minimizado',
   'app.pip_talking': '{name} está falando',
   'app.pip_move': 'Arraste para mover',
   'settings.voice.pip_pop_out': 'Soltar a janela quando o Harmony for minimizado',

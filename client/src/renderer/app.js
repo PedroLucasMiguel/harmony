@@ -9,7 +9,7 @@ import { Compositor, openCompositionEditor } from './compositor.js';
 import { drawTrayIcons } from './tray-icons.js';
 import { t, texts, setLanguage, languages, currentLanguage, resolveLanguage, cachedPreference, onLanguageChange } from './i18n.js';
 import {
-  createSink, MAX_GAIN, asPercent, playSample, setOutputDevice, monitorStream, playCue,
+  createSink, MAX_GAIN, asPercent, playSample, stopSamples, setOutputDevice, monitorStream, playCue,
   setCueVolume, setMasterVolume, playJoinSound, preloadJoinSound, stopJoinSounds, cueStatus,
 } from './gain.js';
 import { NAME_FONTS, nameFontOf } from './name-fonts.js';
@@ -261,6 +261,7 @@ const el = {
   pipCount: $('pip-count'),
   pipNote: $('pip-note'),
   pipStage: $('pip-stage'),
+  pipClose: $('pip-close'),
   pipDetach: $('pip-detach'),
   pipPopOut: $('pip-pop-out'),
   pipResize: $('pip-resize'),
@@ -384,6 +385,7 @@ const el = {
   emojiAdd: $('emoji-add'),
   emojiFile: $('emoji-file'),
   soundpadAdd: $('soundpad-add'),
+  soundpadStop: $('soundpad-stop'),
   soundpadFile: $('soundpad-file'),
   soundpadGrid: $('soundpad-grid'),
   soundpadSearch: $('soundpad-search'),
@@ -1098,6 +1100,9 @@ async function boot() {
   // Mute and deafen are bound from the start; clips join once the soundpad
   // of a server has loaded, since their ids mean nothing before that.
   syncHotkeys();
+  // The chosen speakers from the start: the sounds and the streams watched outside a call play on them too, and
+  // used to play on the system default until the settings were opened.
+  refreshVoiceDevices().catch((err) => console.warn('[devices]', err.message));
   if (harmony.capabilities.tray) {
     // Off the critical path: the tray shows the app's own icon until these
     // arrive, which is what it shows outside a call anyway.
@@ -5247,6 +5252,10 @@ async function joinVoice(channel, password, { cued = false } = {}) {
     // few awaits later.
     applyMicTuning();
     await applyMicProcessing();
+    // What is plugged in is read before the microphone is chosen. The list was only ever filled by opening the
+    // settings (or by a device being plugged in), so until then the saved microphone was "not there" and the
+    // default one was opened instead.
+    await refreshVoiceDevices({ apply: false }).catch(() => { /* the default is used */ });
     await state.voice.startMic(
       reply.publish.voice,
       // The voice preference, not the capture-card one. See settings.js.
@@ -5286,8 +5295,9 @@ async function joinVoice(channel, password, { cued = false } = {}) {
     // Labels are only populated once a getUserMedia has been granted, which
     // startMic above has just done -- so this is the first moment the pickers
     // can show device names rather than blanks.
-    await refreshVoiceDevices({ apply: false });
-    await applyVoiceOutput(el.voiceOutput.value);
+    // Applied, not only listed: where the first read could not tell the saved microphone from the others (the
+    // ids are blank until the microphone has been allowed), it is switched to now.
+    await refreshVoiceDevices();
 
     // The speaking ring. 100 ms is the usual figure for this: slower and a
     // short word never lights it, faster and it costs more than it is worth
@@ -7453,6 +7463,22 @@ let channelFocusKey = null;
 let channelFocusArea = null;
 let channelStripArea = null;
 
+/**
+ * Make `parent` hold exactly `nodes`, in that order, moving only what is out of place.
+ *
+ * replaceChildren takes every child out and puts it back, even when the list is the one that was there, and
+ * an element that has been taken out of the page is no longer fullscreen. The tiles are placed again on every
+ * change of the roster (somebody muting is one), so a stream that was fullscreen was left every time anybody
+ * in the channel did anything. Here a tile that is already where it belongs is not touched.
+ */
+function placeChildren(parent, nodes) {
+  nodes.forEach((node, i) => {
+    const at = parent.children[i];
+    if (at !== node) parent.insertBefore(node, at ?? null);
+  });
+  while (parent.children.length > nodes.length) parent.lastElementChild.remove();
+}
+
 function channelVideoAreas() {
   if (!channelFocusArea) {
     channelFocusArea = document.createElement('div');
@@ -7574,8 +7600,13 @@ const pipEnabled = () => state.settings?.pictureInPicture === true;
  * ARE the stage, as the grid -- a floating copy of one of them over the others
  * would be the same picture twice.
  */
-const pipWanted = () => pipEnabled() && pip.figures.length > 0
+const pipWanted = () => pipEnabled() && !pipDismissed && pip.figures.length > 0
   && (Boolean(state.chat.channelId) || pipDetached());
+/**
+ * The window was closed for now. It stays closed (the streams are on the stage) until Harmony has been out of
+ * sight and come back; the next time it goes out of sight the window is there again.
+ */
+let pipDismissed = false;
 /** What the window should show now: the camera of somebody talking, else the pick. */
 function pipChoice() {
   const keys = pip.figures.map((f) => f.dataset.key);
@@ -7745,6 +7776,13 @@ function stepPip(by) {
   pip.pickedUntil = performance.now() + PIP_PICK_MS;
   refreshPip();
 }
+// Closed for now, from the app's own window or the popped-out one. Not the setting: that is the switch in
+// the settings. See pipDismissed.
+el.pipClose.addEventListener('click', () => {
+  pipDismissed = true;
+  returnPip({ render: false });
+  renderChannelVideo();
+});
 el.pipPrev.addEventListener('click', () => stepPip(-1));
 el.pipNext.addEventListener('click', () => stepPip(1));
 // The streams back on the stage, as the grid. NOT "turn picture in picture off":
@@ -7837,7 +7875,13 @@ function fillPipWindow() {
 
   doc.body.append(el.pip);
   el.pip.toggleAttribute('data-detached', true);
-  win.addEventListener('pagehide', returnPip, { once: true });
+  // The window's own close button. One that was put there because Harmony went out of sight and is closed
+  // while it still is has been dismissed, and stays so until Harmony has come back. One popped out by hand just
+  // goes back into the app, as it always did.
+  win.addEventListener('pagehide', () => {
+    if (pipWindow === win && pipPoppedBy === 'auto' && pipAway) pipDismissed = true;
+    returnPip();
+  }, { once: true });
   paintPipDetach();
   placePip();
   for (const video of el.pip.querySelectorAll('video')) video.play().catch(() => {});
@@ -7898,7 +7942,7 @@ function syncPipPopOut() {
   if (!harmony.capabilities.popout) return;
   const away = pipAway || document.hidden;
   if (away) {
-    if (pipAutoTimer || !pipEnabled() || state.settings?.pipPopOut === false) return;
+    if (pipDismissed || pipAutoTimer || !pipEnabled() || state.settings?.pipPopOut === false) return;
     if (!pip.figures.length || pipDetached()) return;
     pipAutoTimer = setTimeout(() => {
       pipAutoTimer = null;
@@ -7908,7 +7952,11 @@ function syncPipPopOut() {
   }
   clearTimeout(pipAutoTimer);
   pipAutoTimer = null;
+  // Harmony is back: whatever was closed for now is wanted again the next time it goes.
+  const wasDismissed = pipDismissed;
+  pipDismissed = false;
   if (pipDetached() && pipPoppedBy === 'auto') returnPip();
+  else if (wasDismissed) renderChannelVideo();
 }
 document.addEventListener('visibilitychange', syncPipPopOut);
 harmony.onWindowVisibility((visible) => {
@@ -8256,8 +8304,8 @@ function renderChannelVideo() {
     figure.toggleAttribute('data-focus', on);
     figure.title = pipShown ? '' : on ? t('app.back_to_the_grid') : t('app.show_this_one_big');
   }
-  areas.focus.replaceChildren(...(focused ? [focused] : []));
-  areas.strip.replaceChildren(...figures.filter((f) => f !== focused && f !== pipShown));
+  placeChildren(areas.focus, focused ? [focused] : []);
+  placeChildren(areas.strip, figures.filter((f) => f !== focused && f !== pipShown));
   showInPip(pipShown);
   syncPipPopOut();
 
@@ -11102,6 +11150,7 @@ function playSoundpadClip(clip, button = null) {
 
 function renderSoundpad() {
   el.soundpadAdd.hidden = !isAdmin();
+  el.soundpadStop.hidden = !isAdmin();
   applySoundpadVolume();
   if (el.soundpad.hidden) return;
 
@@ -11254,28 +11303,9 @@ async function nudgeClip(id, delta) {
   }
 }
 
-/*
- * The server's own per-clip ceiling, repeated here so the refusal happens
- * before a two-megabyte upload rather than after it.
- *
- * It was deleted along with the old soundpad markup when the pad became a
- * popover, and nothing noticed: the only reference is inside addSoundpadClip,
- * so the file picked up a ReferenceError that only fired when somebody
- * actually added a clip. Which is the argument for the test that caught it --
- * every other soundpad test puts clips in through the API.
- */
-const MAX_CLIP_BYTES = 2 * 1024 * 1024;
-
 async function addSoundpadClip(file) {
   try {
     el.channelsError.hidden = true;
-    if (file.size > MAX_CLIP_BYTES) {
-      throw new Error(
-        t('soundpad.too_big', {
-          name: file.name, size: (file.size / 1024 / 1024).toFixed(1), limit: MAX_CLIP_BYTES / 1024 / 1024,
-        }),
-      );
-    }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const upload = await harmony.media.upload(state.server, bytes, file.type);
     const answer = await ask({
@@ -12364,6 +12394,11 @@ function onRealtimeEvent(msg) {
       // Into the PLAYBACK context, never the outgoing mix. See playSample().
       playSample(harmony.mediaUrl(msg.hash), { gain: soundpadGain() }).catch((err) =>
         showChannelsError(t('app.could_not_play', { name: msg.name, message: err.message })));
+      break;
+
+    case 'soundpad:stop':
+      // Sent to the channel by an admin; each client stops its own copy.
+      stopSamples();
       break;
 
     case 'voice:moved':
@@ -14566,6 +14601,8 @@ window.__harmonyPip = () => ({
 /** What our microphone is putting on the wire. Async; see publishStats. */
 window.__harmonyPublish = () => state.voice.publishStats();
 window.__harmonyVoice = () => state.voice;
+/** How the stream tiles are put back after a change: see placeChildren. For the tests. */
+window.__harmonyPlaceChildren = placeChildren;
 
 /** What each voice subscription is receiving. Async; see subscribeStats. */
 window.__harmonySubs = () => state.voice.subscribeStats();
@@ -15469,6 +15506,13 @@ el.voiceCam.addEventListener('click', () =>
   (state.camera.publication || state.voice.camLive ? stopCamera() : startCamera()));
 
 el.soundpadAdd.addEventListener('click', () => el.soundpadFile.click());
+// An admin's: stops what the pad is playing for everybody in the channel (the server checks).
+el.soundpadStop.addEventListener('click', () => {
+  if (!voiceHere()) return;
+  stopSamples();
+  voiceRt('soundpad:stop', { channelId: state.voice.channelId })
+    .catch((err) => showChannelsError(err.message));
+});
 el.soundpadFile.addEventListener('change', () => {
   const file = el.soundpadFile.files?.[0];
   el.soundpadFile.value = '';

@@ -37,7 +37,7 @@ import {
   Chat, Soundpad, Emojis,
   publicMessage, publicClip, publicEmoji, mediaTypeOf, mentionsIn,
   MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MAX_JOIN_SOUND_BYTES,
-  MAX_JOIN_SOUND_SECONDS, MAX_CLIP_BYTES, MAX_EMOJI_BYTES, MAX_EMOJIS,
+  MAX_JOIN_SOUND_SECONDS, MAX_EMOJI_BYTES, MAX_EMOJIS,
   MAX_FILE_LIMIT, DEFAULT_FILE_BYTES, SEALED_TYPE,
 } from './chat.js';
 import { UploadSessions } from './upload-sessions.js';
@@ -1921,9 +1921,6 @@ app.post('/api/soundpad', requireAdmin, (req, res) => {
       invalid_name: 'Give the clip a name.',
       no_such_upload: 'Upload the audio first.',
       not_audio: 'Soundpad clips have to be audio.',
-      clip_too_large:
-        `Soundpad clips are limited to ${Math.round(MAX_CLIP_BYTES / 1024 / 1024)} MB -- `
-        + 'every client downloads every clip.',
     };
     return res.status(400).json({ error: result.error, message: messages[result.error] });
   }

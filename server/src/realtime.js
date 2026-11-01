@@ -243,6 +243,7 @@ export class Realtime {
       'voice:publishing': this.#voicePublishing,
       'voice:refresh': this.#voiceRefresh,
       'soundpad:play': this.#soundpadPlay,
+      'soundpad:stop': this.#soundpadStop,
       'admin:force-mute': this.#adminForceMute,
       'admin:move': this.#adminMove,
     };
@@ -356,6 +357,22 @@ export class Realtime {
         name: clip.name,
         by: user.nickname,
       });
+    }
+    return { type: 'voice:ok' };
+  }
+
+  /**
+   * Stop what the soundpad is playing, for everyone in the channel. An admin's call: a clip is played by every
+   * client from its own copy, so there is no one stream to cut, only everybody to tell. Anything that was
+   * started after this plays as normal.
+   */
+  #soundpadStop(user, msg) {
+    if (!this.#deps.roles.context(user).admin) return { type: 'voice:error', error: 'forbidden' };
+    const channelId = Number(msg.channelId);
+    if (!this.#deps.voice.find(channelId, user.id)) return { type: 'voice:error', error: 'not_in_channel' };
+
+    for (const member of this.#deps.voice.roster(channelId)) {
+      this.toUser(member.userId, { type: 'soundpad:stop', channelId, by: user.nickname });
     }
     return { type: 'voice:ok' };
   }

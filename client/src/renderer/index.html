@@ -565,6 +565,7 @@
             <span class="pip-note" id="pip-note"></span>
             <button type="button" class="tile-btn" id="pip-detach" data-cap="popout" data-icon="arrow-square-out" data-i18n-title="app.pip_pop_out" title="Pop out of Harmony"></button>
             <button type="button" class="tile-btn" id="pip-stage" data-icon="squares-four" data-i18n-title="app.pip_back_to_the_stage" title="Put the streams back on the stage"></button>
+            <button type="button" class="tile-btn" id="pip-close" data-icon="x" data-i18n-title="app.pip_close" title="Close for now: it comes back the next time Harmony is minimised"></button>
           </div>
           <div class="pip-body" id="pip-body"></div>
           <div class="pip-resize" id="pip-resize" data-i18n-title="app.pip_resize" title="Drag to resize"></div>
@@ -1081,6 +1082,7 @@
           title="How loudly soundpad clips play for you" data-i18n-title="soundpad.how_loudly_soundpad_clips"
         />
         <span class="peer-volume-label" id="soundpad-volume-label">100%</span>
+        <button class="ghost small" id="soundpad-stop" hidden data-i18n="soundpad.stop" title="Stop what is playing, for everybody in the channel" data-i18n-title="soundpad.stop_hint">Stop</button>
         <button class="ghost small" id="soundpad-add" hidden data-i18n="soundpad_add.add">+ Add</button>
         <input id="soundpad-file" type="file" accept="audio/*" hidden />
       </div>

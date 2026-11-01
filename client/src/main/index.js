@@ -75,6 +75,14 @@ const MODULES_DIR = path.join(__dirname, '..', '..', 'node_modules');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+/*
+ * Windows decides for itself whether a window is covered or minimised ("native window occlusion") and
+ * tells the page it is hidden, which pauses it however the switches above are set. A page that is paused
+ * answers nothing, and a hotkey pressed in a game is delivered to a page that is not running. The page is
+ * left running whatever the window is doing, and Chromium's own slowing of timers in a page that has been
+ * hidden for a few minutes ("intensive wake-up throttling") is off for the same reason.
+ */
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
 
 /*
  * Chromium's own processes dying -- above all the GPU's, which draws every video.
@@ -524,7 +532,11 @@ app.on('will-quit', () => { hotkeys.clear(); ptt.stop(); debugLog.stop(); });
 
 // A hotkey fired, wherever the focus was. The renderer decides what it means.
 hotkeys.onFire((id) => {
-  if (win && !win.isDestroyed()) win.webContents.send('hotkey:fired', id);
+  if (!win || win.isDestroyed()) return;
+  // In the debug log, with what the window was doing: a key that "does nothing" is told apart from one that
+  // never arrived by whether this line is there.
+  debugLog.event('HOTKEY', `${id} pressed, window ${win.isMinimized() ? 'minimised' : win.isVisible() ? 'shown' : 'hidden'}`);
+  win.webContents.send('hotkey:fired', id);
 });
 
 app.on('window-all-closed', () => {

@@ -553,12 +553,68 @@ export async function watch({
 
     const { answer: relayAnswer, resourceUrl } = await harmony.api.sdp(url, pc.localDescription.sdp);
     await pc.setRemoteDescription({ type: 'answer', sdp: stereoAudio ? tuneOpusStereo(relayAnswer) : relayAnswer });
+    if (media !== 'audio') keepLipSync(pc);
 
     return { pc, stream, resourceUrl };
   } catch (err) {
     pc.close();
     throw err;
   }
+}
+
+/** The most the sound is held back to wait for the picture, in ms (the browser accepts up to 4000). */
+const LIPSYNC_MAX_MS = 3000;
+/** The most the hold changes by in a second: a faster change is heard as the sound being stretched. */
+const LIPSYNC_STEP_MS = 80;
+
+/**
+ * Keep a stream's sound with its picture.
+ *
+ * Something that goes wrong on the way TO the relay (a packet of the sharer's picture lost, and the relay waiting
+ * a round trip for it) delays the picture and not the sound, which has fewer packets and is not held behind
+ * anything. The browser is meant to correct that by holding the sound back, and measured here it did not: with
+ * 1% of the sharer's upload lost the sound was heard half a second before the picture it belonged to (the
+ * benchmark, loss1-publisher-leg: -573 ms, against +42 ms without the loss).
+ *
+ * So it is done here. Once a second the two tracks' playout timestamps say which moment of the sender's
+ * time each is playing right now; the difference is how far ahead the sound is, and the audio receiver's
+ * jitter buffer is raised (or lowered, once the picture catches up) by it. Smoothed, and limited in how fast it
+ * moves. Stops by itself when the connection is closed.
+ *
+ * @param {RTCPeerConnection} pc
+ */
+function keepLipSync(pc) {
+  let hold = 0;
+  let skew = null;
+  const timer = setInterval(async () => {
+    if (pc.connectionState === 'closed') {
+      clearInterval(timer);
+      return;
+    }
+    const receiver = pc.getReceivers().find((r) => r.track?.kind === 'audio');
+    if (!receiver || !('jitterBufferTarget' in receiver)) return;
+    let rows;
+    try {
+      rows = [...(await pc.getStats()).values()];
+    } catch {
+      clearInterval(timer);
+      return;
+    }
+    const heard = rows.find((r) => r.type === 'inbound-rtp' && r.kind === 'audio');
+    const seen = rows.find((r) => r.type === 'inbound-rtp' && r.kind === 'video');
+    if (heard?.estimatedPlayoutTimestamp == null || seen?.estimatedPlayoutTimestamp == null) return;
+
+    // Positive: the sound is playing something that happened later than the picture shows.
+    const now = heard.estimatedPlayoutTimestamp - seen.estimatedPlayoutTimestamp;
+    skew = skew === null ? now : skew * 0.6 + now * 0.4;
+    const change = Math.max(-LIPSYNC_STEP_MS, Math.min(LIPSYNC_STEP_MS, skew));
+    // Inside what the ear does not notice (and what the loss-free case measures), leave it alone.
+    if (Math.abs(skew) < 30) return;
+    const next = Math.max(0, Math.min(LIPSYNC_MAX_MS, hold + change));
+    if (Math.round(next) === Math.round(hold)) return;
+    hold = next;
+    try { receiver.jitterBufferTarget = Math.round(hold); } catch { /* an engine that refuses it */ }
+  }, 1000);
 }
 
 export async function hangup(pc, resourceUrl) {
