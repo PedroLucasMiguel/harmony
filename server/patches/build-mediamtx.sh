@@ -9,12 +9,16 @@
 # is for.
 #
 # The release tarball is not used because it is a binary. The source for a tag is, and a tag's source
-# does not contain two files the project generates, so they are made here:
+# does not contain some files the project generates, so they are made here:
 #
 #   internal/core/VERSION          what `mediamtx --version` prints: the version, `-harmony.` and the patch id, so
 #                                  a re-run of the installer can tell a build with these patches from any other
 #   internal/servers/hls/hls.min.js  the HLS player's script. Harmony turns HLS off (mediamtx.yml), so an
 #                                    empty file is enough to satisfy the embed.
+#   internal/staticsources/rpicamera/mtxrpicam_64, mtxrpicam_32
+#                                  the Raspberry Pi camera helper, which is downloaded when a release is made and
+#                                  embedded on ARM. Harmony has no camera source, so a placeholder in each is
+#                                  enough; without one an ARM build fails with "no matching files found".
 #
 # Environment:
 #   GOOS, GOARCH, GOARM   cross-compile (the Dockerfile sets them from the target platform)
@@ -81,9 +85,13 @@ if [ -n "${NACK_INTERVAL_MS:-}" ]; then
   cp "$WORK/peer_connection.go" "$SRC/internal/protocols/webrtc/peer_connection.go"
 fi
 
-# The two files a tag's source lacks (see above).
+# The files a tag's source lacks (see above).
 printf 'v%s-harmony.%s' "$VERSION" "$(patch_id)" > "$SRC/internal/core/VERSION"
 : > "$SRC/internal/servers/hls/hls.min.js"
+for dir in mtxrpicam_64 mtxrpicam_32; do
+  mkdir -p "$SRC/internal/staticsources/rpicamera/$dir"
+  : > "$SRC/internal/staticsources/rpicamera/$dir/placeholder"
+done
 
 if [ "$PREPARE_ONLY" = yes ]; then
   echo "==> Prepared in $SRC (not built)"
