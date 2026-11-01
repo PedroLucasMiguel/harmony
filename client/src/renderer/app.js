@@ -820,6 +820,9 @@ const state = {
   timers: {},
 };
 
+// Read from the saved settings each time it matters, so that it is right from the start and cannot go stale.
+state.voice.autoWatch = () => state.settings?.autoWatchStreams !== false;
+
 /*
  * How loudly each person is played, and each person's screen share, kept across restarts.
  *
@@ -15120,8 +15123,7 @@ el.autoSignIn.addEventListener('change', async () => {
   await harmony.settings.set({ autoSignIn: el.autoSignIn.checked });
 });
 el.autoWatchStreams.addEventListener('change', async () => {
-  state.voice.autoWatchShares = el.autoWatchStreams.checked;
-  await harmony.settings.set({ autoWatchStreams: el.autoWatchStreams.checked });
+  state.settings = await harmony.settings.set({ autoWatchStreams: el.autoWatchStreams.checked });
 });
 el.pauseHiddenCameras.addEventListener('change', async () => {
   await harmony.settings.set({ pauseHiddenCameras: el.pauseHiddenCameras.checked });
@@ -15322,7 +15324,6 @@ el.voiceConfig.addEventListener('click', () => {
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
   el.pauseHiddenCameras.checked = state.settings?.pauseHiddenCameras !== false;
   el.autoWatchStreams.checked = state.settings?.autoWatchStreams !== false;
-  state.voice.autoWatchShares = state.settings?.autoWatchStreams !== false;
   el.autoSignIn.checked = state.settings?.autoSignIn !== false;
   el.pictureInPicture.checked = pipEnabled();
   el.pipPopOut.checked = state.settings?.pipPopOut !== false;

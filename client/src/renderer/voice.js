@@ -134,8 +134,11 @@ export class VoiceSession {
   /**
    * Whether a screen share somebody starts is opened for you by itself. Off, it is held back as a closed tile
    * and opened by a click; a camera is not affected (it costs little, and has no sound).
+   *
+   * Asked each time, not stored: a copy kept here is only as right as the last time something remembered to update
+   * it, and the first time it was not, a person who had turned this off was still having shares opened for them.
    */
-  autoWatchShares = true;
+  autoWatch = () => true;
   /** The shares already seen since they started, so that the choice above is made once per share, on its first sight. */
   #sawShares = new Set();
   /** The closed tiles that are closed because nobody opened them yet, as against closed by hand. */
@@ -1616,7 +1619,7 @@ export class VoiceSession {
     for (const [key, { kind }] of wanted) {
       if (kind !== 's' || this.#sawShares.has(key)) continue;
       this.#sawShares.add(key);
-      if (!this.autoWatchShares && !this.#video.has(key) && !this.#openingVideo.has(key)) {
+      if (!this.autoWatch() && !this.#video.has(key) && !this.#openingVideo.has(key)) {
         this.#closedVideo.add(key);
         this.#heldBack.add(key);
         changed = true;

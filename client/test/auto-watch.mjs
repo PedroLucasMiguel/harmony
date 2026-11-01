@@ -3,7 +3,7 @@
 //
 //   node client/test/auto-watch.mjs
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,7 +25,7 @@ async function run() {
   const start = await page.evaluate(`
     const s = await harmony.settings.get();
     const box = document.getElementById('auto-watch-streams');
-    return { setting: (s.data ?? s).autoWatchStreams, checked: box.checked, session: window.__harmonyVoice().autoWatchShares };`);
+    return { setting: (s.data ?? s).autoWatchStreams, checked: box.checked, session: window.__harmonyVoice().autoWatch() };`);
   check('it starts on, in the settings, the switch and the session',
     start.setting === true && start.checked === true && start.session === true, JSON.stringify(start));
 
@@ -34,11 +34,11 @@ async function run() {
     box.click();
     await new Promise((r) => setTimeout(r, 300));
     const s = await harmony.settings.get();
-    const off = { setting: (s.data ?? s).autoWatchStreams, session: window.__harmonyVoice().autoWatchShares };
+    const off = { setting: (s.data ?? s).autoWatchStreams, session: window.__harmonyVoice().autoWatch() };
     box.click();
     await new Promise((r) => setTimeout(r, 300));
     const s2 = await harmony.settings.get();
-    return { off, back: { setting: (s2.data ?? s2).autoWatchStreams, session: window.__harmonyVoice().autoWatchShares } };`);
+    return { off, back: { setting: (s2.data ?? s2).autoWatchStreams, session: window.__harmonyVoice().autoWatch() } };`);
   check('the switch is kept and reaches the session, both ways',
     toggled.off.setting === false && toggled.off.session === false && toggled.back.setting === true && toggled.back.session === true,
     JSON.stringify(toggled));
@@ -50,7 +50,7 @@ async function run() {
 
     const off = new VoiceSession();
     off.mid = 1;
-    off.autoWatchShares = false;
+    off.autoWatch = () => false;
     const first = await off.syncVideo(roster(true));
     const afterFirst = tiles(off);
     const again = await off.syncVideo(roster(true));
@@ -76,7 +76,26 @@ async function run() {
   check('on: nothing is held back', held.on.length === 0, JSON.stringify(held.on));
 }
 
-run().catch((err) => { console.error(err); process.exitCode = 1; }).finally(() => {
+// The reported bug: the option saved as off, the app started, and no settings dialog opened -- the session must
+// already be off. (It was told only when the dialog opened, so every restart opened shares by itself again.)
+async function runRestarted() {
+  const dir = mkdtempSync(join(tmpdir(), 'harmony-autowatch-off-'));
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ autoWatchStreams: false }));
+  const second = launchApp({
+    port: PORT + 1,
+    userDataDir: dir,
+    extraArgs: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+  });
+  process.on('exit', () => { try { second.kill(); } catch { /* gone */ } });
+  const page = await attach(await findPage(PORT + 1));
+  await sleep(2000);
+  const state = await page.evaluate(`return { session: window.__harmonyVoice().autoWatch(), setting: ((await harmony.settings.get()).data ?? (await harmony.settings.get())).autoWatchStreams };`);
+  check('saved as off, a fresh start has it off in the session without opening any dialog',
+    state.session === false && state.setting === false, JSON.stringify(state));
+  second.kill();
+}
+
+run().then(runRestarted).catch((err) => { console.error(err); process.exitCode = 1; }).finally(() => {
   const failed = summary();
   setTimeout(() => process.exit(process.exitCode ?? (failed ? 1 : 0)), 200);
 });
