@@ -36,7 +36,7 @@ import { mintMediaKey, verifyMediaKey } from './media-keys.js';
 import {
   Chat, Soundpad, Emojis,
   publicMessage, publicClip, publicEmoji, mediaTypeOf, mentionsIn,
-  MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MAX_JOIN_SOUND_BYTES,
+  MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_AVATAR_GIF_BYTES, MAX_BANNER_BYTES, MAX_JOIN_SOUND_BYTES,
   MAX_JOIN_SOUND_SECONDS, MAX_EMOJI_BYTES, MAX_EMOJIS,
   MAX_FILE_LIMIT, DEFAULT_FILE_BYTES, SEALED_TYPE, SEARCH_PAGE, HAS_KINDS,
 } from './chat.js';
@@ -521,10 +521,12 @@ app.post('/api/accounts/avatar', requireLogin, (req, res) => {
         message: 'A profile picture has to be an image.',
       });
     }
-    if (upload.bytes > MAX_AVATAR_BYTES) {
+    // A GIF is every frame of it: it has more room, and says so in its refusal.
+    const limit = upload.content_type === 'image/gif' ? MAX_AVATAR_GIF_BYTES : MAX_AVATAR_BYTES;
+    if (upload.bytes > limit) {
       return res.status(400).json({
         error: 'avatar_too_large',
-        message: `Profile pictures are limited to ${Math.round(MAX_AVATAR_BYTES / 1024)} KB.`,
+        message: `Profile pictures are limited to ${Math.round(limit / 1024)} KB${limit === MAX_AVATAR_BYTES ? ' (a GIF may be up to ' + Math.round(MAX_AVATAR_GIF_BYTES / 1024) + ' KB)' : ''}.`,
       });
     }
     chat.retain(hash);

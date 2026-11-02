@@ -113,6 +113,8 @@ export const DISK_RESERVE_BYTES = 512 * 1024 * 1024;
  * see the picture.
  */
 export const MAX_AVATAR_BYTES = 256 * 1024;
+/** A profile picture that moves (a GIF) has every frame to keep, and more room for them. */
+export const MAX_AVATAR_GIF_BYTES = 1024 * 1024;
 
 /**
  * Per-banner ceiling. Larger than an avatar, because a banner may be a GIF and

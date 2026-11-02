@@ -386,6 +386,9 @@ async function run() {
     dt.items.add(new File([blob], 'a.png', { type: 'image/png' }));
     input.files = dt.files;
     input.dispatchEvent(new Event('change', { bubbles: true }));
+    // The picture is cropped first: Save keeps it as it stands.
+    for (let i = 0; i < 60 && !document.querySelector('dialog.image-editor[open] .ie-save'); i += 1) await new Promise((r) => setTimeout(r, 100));
+    document.querySelector('dialog.image-editor .ie-save')?.click();
     return true;
   `);
   await waitFor(a, "Boolean(document.querySelector('#channels-avatar img'))", {

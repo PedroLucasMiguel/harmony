@@ -31,6 +31,8 @@
 [data-icon='star'] { --icon: url('icons/star.svg'); }
 [data-icon='trash'] { --icon: url('icons/trash.svg'); }
 [data-icon='arrow-bend-up-left'] { --icon: url('icons/arrow-bend-up-left.svg'); }
+[data-icon='arrow-clockwise'] { --icon: url('icons/arrow-clockwise.svg'); }
+[data-icon='arrow-counter-clockwise'] { --icon: url('icons/arrow-counter-clockwise.svg'); }
 [data-icon='eye'] { --icon: url('icons/eye.svg'); }
 [data-icon='eye-slash'] { --icon: url('icons/eye-slash.svg'); }
 [data-icon='squares-four'] { --icon: url('icons/squares-four.svg'); }

@@ -28,6 +28,8 @@ const ICONS = [
   // the composer and messages
   'plus-circle', 'smiley', 'paper-plane-right', 'x', 'download-simple',
   'pencil-simple', 'push-pin', 'star', 'trash', 'arrow-bend-up-left',
+  // cropping a picture
+  'arrow-clockwise', 'arrow-counter-clockwise',
   // tiles and players
   'eye', 'eye-slash', 'squares-four', 'corners-out', 'arrows-out', 'arrows-in', 'scissors',
   'play', 'pause',

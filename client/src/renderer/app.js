@@ -38,6 +38,8 @@ import { StarError, channelSnapshot, createStarStore, matches as hasWords } from
 import { createStarsUi } from './stars-ui.js';
 import { keepEnd } from './chat-follow.js';
 import { expiring } from './expiring.js';
+import { openImageEditor } from './image-editor.js';
+import { installSliderInput } from './slider-input.js';
 import { createProfileCard } from './profile-card.js';
 import { createDebugLog } from './debug-log.js';
 import { NAME_COLOR_SPEED, NAME_COLOR_STOPS, paintName, startingPoint } from './name-color.js';
@@ -2747,6 +2749,8 @@ function showChannelsError(message) {
 expiring(el.channelsError, () => showChannelsError(''));
 el.channelsError.title = t('app.dismiss');
 el.channelsError.addEventListener('click', () => showChannelsError(''));
+// Every slider answers the wheel, and every volume takes a number typed in (see slider-input.js).
+installSliderInput({ t });
 // The line under the message box says what was done (saved, downloading, a refusal) in the same way.
 expiring(el.chatNote, () => { el.chatNote.textContent = ''; });
 
@@ -2875,8 +2879,7 @@ async function askConfirm(title, { text, okLabel = 'OK' } = {}) {
 
 /** Profile pictures ------------------------------------------------------ */
 
-/** Square side we store an avatar at, and the ceiling the server enforces. */
-const AVATAR_PX = 256;
+/** The ceiling the server enforces on a badge's picture (a profile picture is sized by image-crop.js). */
 const AVATAR_MAX_BYTES = 256 * 1024;
 
 /*
@@ -3133,50 +3136,16 @@ function renderProfileStyle() {
   el.profileSoundRemove.disabled = !me.joinSoundHash;
 }
 
-const BANNER_MAX_BYTES = 2 * 1024 * 1024;
-/** A banner is drawn about 250 px wide; this leaves room for a big window. */
-const BANNER_MAX_PX = 960;
-
 /**
- * Upload a banner: a GIF as it is, anything else shrunk first.
- *
- * A GIF cannot be shrunk on a canvas without losing its animation, so it goes
- * up untouched and is refused if it is over the server's limit. A still
- * picture is scaled down and re-encoded until it fits, which makes the limit
- * something only a GIF can run into.
+ * Upload a banner: cropped to the strip it is shown in, zoomed and turned as its owner likes. A GIF stays a GIF.
+ * See openImageEditor.
  */
 async function setOwnBanner(file) {
   try {
     profileNote(el.profileBannerNote, '');
-    let bytes;
-    let type;
-    if (file.type === 'image/gif') {
-      if (file.size > BANNER_MAX_BYTES) throw new Error(t('profile.banner_too_big'));
-      bytes = new Uint8Array(await file.arrayBuffer());
-      type = 'image/gif';
-    } else {
-      const bitmap = await createImageBitmap(file).catch(() => null);
-      if (!bitmap) throw new Error(t('app.could_not_read_that_image'));
-      const scale = Math.min(1, BANNER_MAX_PX / bitmap.width, BANNER_MAX_PX / bitmap.height);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      const ctx = canvas.getContext('2d');
-      // Under transparency, so a cut-out PNG is not drawn on a black bar.
-      ctx.fillStyle = '#202225';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close();
-      let blob = null;
-      for (const quality of [0.85, 0.7, 0.5, 0.35]) {
-        blob = await new Promise((done) => canvas.toBlob(done, 'image/jpeg', quality));
-        if (blob && blob.size <= BANNER_MAX_BYTES) break;
-      }
-      if (!blob || blob.size > BANNER_MAX_BYTES) throw new Error(t('profile.banner_too_big'));
-      bytes = new Uint8Array(await blob.arrayBuffer());
-      type = 'image/jpeg';
-    }
-    const upload = await harmony.media.upload(state.server, bytes, type);
+    const blob = await openImageEditor({ file, kind: 'banner', t });
+    if (!blob) return;
+    const upload = await harmony.media.upload(state.server, new Uint8Array(await blob.arrayBuffer()), blob.type);
     const { user } = await harmony.api.setBanner(state.server, upload.hash);
     adoptOwnUser(user);
     profileNote(el.profileBannerNote, t('profile.banner_changed'));
@@ -3488,27 +3457,12 @@ async function refreshUsers() {
 async function setOwnAvatar(file) {
   try {
     showChannelsError('');
-    const bitmap = await createImageBitmap(file);
-    const canvas = document.createElement('canvas');
-    canvas.width = AVATAR_PX;
-    canvas.height = AVATAR_PX;
-    const ctx = canvas.getContext('2d');
-    // Cover rather than fit: a letterboxed avatar in a circle looks broken.
-    const scale = Math.max(AVATAR_PX / bitmap.width, AVATAR_PX / bitmap.height);
-    const w = bitmap.width * scale;
-    const h = bitmap.height * scale;
-    ctx.drawImage(bitmap, (AVATAR_PX - w) / 2, (AVATAR_PX - h) / 2, w, h);
-    bitmap.close();
-
-    const encode = (quality) =>
-      new Promise((done) => canvas.toBlob(done, 'image/jpeg', quality));
-    let blob = await encode(0.85);
-    if (blob && blob.size > AVATAR_MAX_BYTES) blob = await encode(0.6);
-    if (!blob) throw new Error(t('app.could_not_read_that_image'));
-    if (blob.size > AVATAR_MAX_BYTES) throw new Error(t('app.that_picture_is_too_detailed'));
+    // Moved, zoomed and turned under the circle it is shown in; a GIF stays a GIF.
+    const blob = await openImageEditor({ file, kind: 'avatar', t });
+    if (!blob) return;
 
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    const upload = await harmony.media.upload(state.server, bytes, 'image/jpeg');
+    const upload = await harmony.media.upload(state.server, bytes, blob.type);
     const { user } = await harmony.api.setAvatar(state.server, upload.hash);
     adoptOwnUser(user);
     profileNote(el.profilePictureNote, t('profile.picture_changed'));
@@ -5941,7 +5895,7 @@ function openPeerMenu(channelId, mid, event) {
     volume.className = 'peer-volume';
     volume.min = '0';
     volume.max = String(asPercent(MAX_GAIN));
-    volume.step = '5';
+    volume.step = '1';
     volume.title = t('app.how_loudly_you_hear_this');
     const label = document.createElement('span');
     label.className = 'peer-volume-label';

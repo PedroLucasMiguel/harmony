@@ -10,6 +10,7 @@
 //
 //   MEDIAMTX_BIN=/path/to/mediamtx node client/test/profile-style.mjs
 
+import { GIFEncoder } from '../src/renderer/gifenc.js';
 import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -283,8 +284,18 @@ async function run() {
   check('the choice is the one marked in Settings', chosen === 'Pacifico', String(chosen));
 
   // --- the banner ----------------------------------------------------------------------------------
-  const GIF = "const b = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), (c) => c.charCodeAt(0)); return new File([b], 'b.gif', { type: 'image/gif' });";
+  // Two frames: a GIF of one is a still, and is kept as one.
+  const moving = GIFEncoder();
+  for (const shade of [0, 255]) moving.writeFrame(new Uint8Array(32 * 16).fill(shade ? 1 : 0), 32, 16, { palette: [[0, 0, 0], [255, 255, 255]], delay: 100 });
+  moving.finish();
+  const GIF = `const b = Uint8Array.from(atob('${Buffer.from(moving.bytes()).toString('base64')}'), (c) => c.charCodeAt(0)); return new File([b], 'b.gif', { type: 'image/gif' });`;
+  // Choosing a picture opens the editor; Save keeps it as it stands.
+  const keepCropped = async (page) => {
+    await waitFor(page, "document.querySelector('dialog.image-editor')?.open === true", { label: 'the editor' });
+    await page.evaluate("document.querySelector('dialog.image-editor .ie-save').click(); return true;");
+  };
   await pickFile(pedro, 'profile-banner-file', GIF);
+  await keepCropped(pedro);
   await sleep(2000);
   seen = await rowOf(ana, '#member-items .member-row');
   check('Ana sees a banner behind Pedro in the member list', seen?.has && seen.banner?.loaded, JSON.stringify(seen?.banner));
@@ -326,12 +337,13 @@ async function run() {
     const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
     return new File([blob], 'wide.png', { type: 'image/png' });`;
   await pickFile(pedro, 'profile-banner-file', STILL);
+  await keepCropped(pedro);
   await sleep(2000);
   const shrunk = await pedro.evaluate(`
     const r = await harmony.api.roster(${JSON.stringify(BASE)}); const u = (r.data ?? r).users.find((x) => x.nickname === 'pedro');
     const res = await fetch('harmony://app/media/' + u.bannerHash); const bmp = await createImageBitmap(await res.blob());
     return { type: res.headers.get('content-type'), w: bmp.width, h: bmp.height };`);
-  check('a big still picture is shrunk to 960 wide before it is sent',
+  check('a big still picture is cropped to the banner\'s strip, 960 x 320, before it is sent',
     shrunk.type === 'image/jpeg' && shrunk.w === 960 && shrunk.h === 320, JSON.stringify(shrunk));
   const preview = await pedro.evaluate("const r = document.getElementById('profile-banner-preview'); return r.classList.contains('has-banner') && !!r.querySelector('img.profile-banner')");
   check('and the preview in Settings shows it', preview);
@@ -369,6 +381,7 @@ async function run() {
     const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
     input.dispatchEvent(new Event('change', { bubbles: true }));
     return true;`);
+  await keepCropped(pedro);
   await sleep(1500);
   await pedro.evaluate("document.getElementById('voice-cam').click(); return true;");
   await waitFor(ana, "document.querySelector('#channel-video .channel-tile[data-key$=\":c\"] video')?.videoWidth > 0", {

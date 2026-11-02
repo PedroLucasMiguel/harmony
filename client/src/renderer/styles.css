@@ -10124,3 +10124,154 @@ input[type='color'] {
   padding: 0.6rem 0.3rem;
   font-size: 0.85rem;
 }
+
+/*
+ * The window a profile picture or a banner is cropped in: the picture behind its mask, and under it what moves it.
+ * The mask is the shape it will be seen in, with a very large shadow outside it to dim what is not kept (the stage
+ * clips it); the picture is drawn at its own size and put in place by a transform (see image-crop.js).
+ */
+.image-editor {
+  width: min(420px, 94vw);
+  max-height: 94vh;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.image-editor::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+.image-editor-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.7rem;
+  padding: 1rem 1.2rem 1.1rem;
+}
+.image-editor h3 {
+  margin: 0;
+}
+.ie-hint {
+  margin: 0;
+  font-size: 0.85rem;
+}
+.ie-stage {
+  position: relative;
+  align-self: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #000;
+  cursor: grab;
+  /* A finger on it moves the picture: the page must not scroll under it. */
+  touch-action: none;
+  user-select: none;
+}
+.ie-stage:active {
+  cursor: grabbing;
+}
+.ie-stage:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ie-image {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+.ie-mask {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid rgb(255 255 255 / 0.9);
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 0.62);
+  pointer-events: none;
+}
+.ie-mask[data-shape='circle'] {
+  border-radius: 50%;
+}
+.ie-strip {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed rgb(255 255 255 / 0.7);
+  pointer-events: none;
+}
+.ie-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.ie-label {
+  flex: 0 0 4.2rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+.ie-row input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ie-tool {
+  flex: 0 0 auto;
+}
+.ie-note {
+  margin: 0;
+}
+.ie-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.ie-spacer {
+  flex: 1 1 auto;
+}
+
+/*
+ * A volume's number is a thing to press, to type an exact value in its place (see slider-input.js). It looks the same
+ * until the pointer is on it; the box that replaces it is as small as the number was.
+ */
+.volume-value[data-exact],
+.peer-volume-label[data-exact],
+.tile-volume-label[data-exact],
+.value-pill[data-exact] {
+  cursor: text;
+}
+.volume-value[data-exact]:hover,
+.peer-volume-label[data-exact]:hover,
+.tile-volume-label[data-exact]:hover,
+.value-pill[data-exact]:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.volume-exact-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  font: inherit;
+  white-space: nowrap;
+}
+input[type='number'].volume-exact {
+  box-sizing: content-box;
+  width: 3.2em;
+  min-width: 0;
+  margin: 0;
+  padding: 1px 3px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type='number'].volume-exact::-webkit-inner-spin-button,
+input[type='number'].volume-exact::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

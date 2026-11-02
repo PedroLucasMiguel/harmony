@@ -179,6 +179,30 @@ describe('profile pictures', () => {
     assert.equal(res.body.error, 'avatar_too_large');
   });
 
+  it('takes a GIF that moves a good deal larger than a still, and refuses one over that', async () => {
+    const GIF = Buffer.from('R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==', 'base64');
+    // Over what a still may be (256 KB) and under what a GIF may (1 MB).
+    const medium = Buffer.concat([GIF, Buffer.alloc(600 * 1024, 7)]);
+    const mediumHash = (await upload(medium, 'image/gif', memberToken)).hash;
+    const ok = await api('/api/accounts/avatar', { method: 'POST', body: { hash: mediumHash }, token: memberToken });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(ok.body.user.avatarHash, mediumHash);
+
+    const huge = Buffer.concat([GIF, Buffer.alloc(1100 * 1024, 7)]);
+    const hugeHash = (await upload(huge, 'image/gif', memberToken)).hash;
+    const refused = await api('/api/accounts/avatar', { method: 'POST', body: { hash: hugeHash }, token: memberToken });
+    assert.equal(refused.status, 400);
+    assert.equal(refused.body.error, 'avatar_too_large');
+    assert.match(refused.body.message, /1024 KB|1,024 KB/);
+
+    // The same size as a PNG is still refused: the room is for the frames of a GIF.
+    const pngMedium = Buffer.concat([PNG, Buffer.alloc(600 * 1024, 7)]);
+    const pngHashMedium = (await upload(pngMedium, 'image/png', memberToken)).hash;
+    const still = await api('/api/accounts/avatar', { method: 'POST', body: { hash: pngHashMedium }, token: memberToken });
+    assert.equal(still.status, 400);
+    assert.match(still.body.message, /256 KB.*GIF/);
+  });
+
   it('refuses anything that is not a hash at all', async () => {
     const res = await api('/api/accounts/avatar', {
       method: 'POST', body: { hash: '../../etc/passwd' }, token: memberToken,

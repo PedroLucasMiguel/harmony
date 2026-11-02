@@ -1,6 +1,6 @@
 {
   "name": "@harmony/client",
-  "version": "4.5.1",
+  "version": "4.6.0",
   "private": true,
   "description": "Harmony desktop client: share a screen or window, or watch someone else's",
   "author": "Pedro Lucas Miguel",
@@ -18,6 +18,8 @@
     "test:search": "node test/search-ui.mjs",
     "test:search-mobile": "node test/search-mobile.mjs",
     "test:member-search": "node test/member-search.mjs",
+    "test:image-editor": "node test/image-editor.mjs",
+    "test:sliders": "node test/sliders.mjs",
     "test:pin-permission": "node test/pin-permission.mjs",
     "test:stars": "node test/stars.mjs && node --test test/stars-store.test.mjs",
     "test:chat-scroll": "node test/chat-scroll.mjs",
@@ -71,6 +73,7 @@
     "test:background-load-live": "node test/background-load-live.mjs",
     "test:devtools-keys": "node --test test/devtools-keys.mjs",
     "build:noble": "node scripts/build-noble.js",
+    "build:gifenc": "node scripts/build-gifenc.js",
     "test:load": "node test/load.mjs",
     "test:profile-style": "node test/profile-style.mjs",
     "test:stream-layout": "node test/stream-layout.mjs",
@@ -102,7 +105,8 @@
     "@phosphor-icons/core": "^2.1.1",
     "electron": "^44.4.3",
     "electron-builder": "^26.15.3",
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "gifenc": "^1.0.3"
   },
   "optionalDependencies": {
     "loopback-capture": "^3.0.2",

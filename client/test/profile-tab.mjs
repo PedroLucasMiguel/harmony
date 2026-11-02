@@ -170,6 +170,9 @@ async function run() {
     const files = new DataTransfer(); files.items.add(new File([blob], 'me.png', { type: 'image/png' }));
     input.files = files.files;
     input.dispatchEvent(new Event('change', { bubbles: true }));
+    // The picture is cropped first: Save keeps it as it stands.
+    for (let i = 0; i < 60 && !document.querySelector('dialog.image-editor[open] .ie-save'); i += 1) await new Promise((r) => setTimeout(r, 100));
+    document.querySelector('dialog.image-editor .ie-save')?.click();
     return true;`);
   // "Change picture" opens the file chooser by clicking the hidden input.
   const opens = await cdp.evaluate(`
