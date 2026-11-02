@@ -460,3 +460,29 @@ describe('the keys on this computer, kept between runs', () => {
     assert.equal(vault.state, KeyState.Failed);
   });
 });
+
+describe('starred messages kept on this computer', () => {
+  it('are sealed under the account key and open for the key that sealed them', async () => {
+    const [a, b] = await pairUp();
+    const kept = a.sealLocal('star/dm/9', JSON.stringify({ body: 'oi' }));
+    assert.equal(kept.key, 10);
+    assert.equal(a.openLocal(10, 'star/dm/9', kept.sealed), '{"body":"oi"}');
+    assert.equal(b.openLocal(10, 'star/dm/9', kept.sealed), null, 'somebody else does not have the key');
+    assert.equal(a.openLocal(10, 'star/dm/1', kept.sealed), null, 'and it is for one message only');
+  });
+
+  it('are not kept at all where the key is not held, and are not opened without it', () => {
+    const none = new Vault(new MemoryKeyFile(), 1);
+    assert.equal(none.sealLocal('star/dm/9', 'oi'), null);
+    assert.equal(none.openLocal(10, 'star/dm/9', 'AAAA'), null);
+  });
+
+  it('still open after the account gets another key, while this computer keeps the old one', async () => {
+    const [a] = await pairUp();
+    const kept = a.sealLocal('star/dm/9', 'old');
+    const next = Vault.create();
+    await a.adopt({ id: 11, publicKey: next.identity.publicB64, wrapped: next.wrapped }, next.identity, next.recovery, false);
+    assert.equal(a.openLocal(kept.key, 'star/dm/9', kept.sealed), 'old');
+    assert.equal(a.sealLocal('star/dm/9', 'new').key, 11);
+  });
+});

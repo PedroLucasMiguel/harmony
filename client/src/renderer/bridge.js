@@ -225,6 +225,7 @@ const desktop = () => ({
     editMessage: lift(raw.api.editMessage),
     setAttachment: lift(raw.api.setAttachment),
     search: lift(raw.api.search),
+    searchAll: lift(raw.api.searchAll),
     deleteAccount: lift(raw.api.deleteAccount),
     serverInfo: lift(raw.api.serverInfo),
     updateServer: lift(raw.api.updateServer),

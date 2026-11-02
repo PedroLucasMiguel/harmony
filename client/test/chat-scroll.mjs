@@ -4,6 +4,9 @@
 //   - after scrolling up, going to another channel and coming back: where it
 //     was left, even with messages arriving in the meantime
 //   - after leaving it at the bottom: at the bottom again, with what arrived
+//   - older messages on request, and the pins
+//
+// (Searching has its own test: search-ui.mjs.)
 //
 // MediaMTX is stubbed, as in channels-ui.mjs: nothing here touches media.
 //
@@ -186,7 +189,10 @@ async function run() {
   );
 
   // --- scroll up, leave, come back ---------------------------------------
-  await cdp.evaluate("document.getElementById('chat-log').scrollTop = 700; return true;");
+  // A reader's wheel first: it is what ends the four seconds of staying at the bottom while a page settles, and a scroll
+  // made from a script is not one (it would be put back, and "where it was left" would be the bottom).
+  await cdp.evaluate(`const log = document.getElementById('chat-log');
+    log.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); log.scrollTop = 700; return true;`);
   await sleep(150);
   const before = await logState(cdp);
   const firstSeenBefore = await cdp.evaluate(`
@@ -255,21 +261,104 @@ async function run() {
     `${s.fromBottom}px from the bottom, last: "${s.lastText.slice(-30)}"`,
   );
 
-  // --- searching and clearing keeps the place ------------------------------
+  // --- loading older messages ----------------------------------------------------------------------------------------------
+  // A channel shows its newest 50. The rest is a button away -- also with a message pinned, whose strip sits above the log --
+  // and a channel with no more than a page has no button.
+  const history = (await api(`/api/channels/${general.id}/messages`)).messages;
+  await api(`/api/messages/${history.at(-1).id}/pin`, { pinned: true });
+  const quiet = (await api('/api/channels', { kind: 'text', name: 'quiet' })).channel;
+  for (let i = 1; i <= 8; i += 1) await post(quiet.id, `quiet message ${i}`);
+  await waitFor(cdp, `[...document.querySelectorAll('#channel-items li.channel-row .channel-name')].some((n) => n.textContent === 'quiet')`, { label: 'the quiet channel' });
+
+  await openChannel(cdp, random.name);
   await openChannel(cdp, general.name);
-  await cdp.evaluate("document.getElementById('chat-log').scrollTop = 400; return true;");
+  const older = () => cdp.evaluate(`
+    const log = document.getElementById('chat-log');
+    const button = log.querySelector('.chat-older');
+    const box = button?.getBoundingClientRect();
+    const rows = log.querySelectorAll('.chat-msg').length;
+    return {
+      button: Boolean(button),
+      first: log.firstElementChild === button,
+      shown: Boolean(button && button.offsetParent),
+      inside: Boolean(box && box.top >= log.getBoundingClientRect().top - 1),
+      pinned: !document.getElementById('chat-pinned').hidden,
+      rows,
+    };`);
+  // A reader's own wheel, which is what ends the app's four seconds of staying at the bottom while a page settles; a
+  // scroll made from a script is not one, and would otherwise be put back.
+  await cdp.evaluate(`const log = document.getElementById('chat-log');
+    log.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); log.scrollTop = 0; return true;`);
   await sleep(150);
-  const beforeSearch = await logState(cdp);
-  await set('chat-search', 'message 5');
-  await sleep(800);
-  await set('chat-search', '');
-  await sleep(800);
-  s = await logState(cdp);
-  check(
-    'clearing a search comes back to where the search was started from',
-    Math.abs(s.top - beforeSearch.top) <= 3,
-    `scrollTop ${beforeSearch.top} -> ${s.top}`,
-  );
+  let o = await older();
+  check('a channel with more than a page shows "Load older messages" at the top of its log, under the pinned strip',
+    o.button && o.first && o.shown && o.inside && o.pinned && o.rows === 50, JSON.stringify(o));
+
+  const anchorBefore = await cdp.evaluate(`
+    const log = document.getElementById('chat-log');
+    const row = log.querySelector('.chat-msg');
+    return { id: row.dataset.id, offset: Math.round(row.getBoundingClientRect().top - log.getBoundingClientRect().top) };`);
+  await cdp.evaluate("document.querySelector('#chat-log .chat-older').click(); return true;");
+  await waitFor(cdp, "document.querySelectorAll('#chat-log .chat-msg').length > 50", { label: 'the older messages' });
+  await sleep(200);
+  o = await older();
+  const anchorAfter = await cdp.evaluate(`
+    const log = document.getElementById('chat-log');
+    const row = log.querySelector('.chat-msg[data-id="${anchorBefore.id}"]');
+    return { offset: Math.round(row.getBoundingClientRect().top - log.getBoundingClientRect().top) };`);
+  check('clicking it puts the older messages above the rest', o.rows >= 71, `${o.rows} messages`);
+  check('and what was at the top of the view has not moved', Math.abs(anchorAfter.offset - anchorBefore.offset) <= 3, `${anchorBefore.offset} -> ${anchorAfter.offset}`);
+  check('and when that was the beginning of the channel the button goes', !o.button, JSON.stringify(o));
+
+  // --- the pins: one in the strip, all of them behind the button ----------------------------------------------------------------
+  // Three pins now: the newest message (pinned above), one in the middle, and last of all the oldest of the page -- which
+  // is the one the strip must show, being the one pinned most recently, not the newest message.
+  const lastPinned = history[0];
+  await api(`/api/messages/${history[10].id}/pin`, { pinned: true });
+  await sleep(20);
+  await api(`/api/messages/${lastPinned.id}/pin`, { pinned: true });
+  await openChannel(cdp, random.name);
+  await openChannel(cdp, general.name);
+  const strip = await cdp.evaluate(`
+    const strip = document.getElementById('chat-pinned');
+    return {
+      lines: strip.querySelectorAll('.pinned-line').length,
+      text: strip.querySelector('.pinned-line')?.textContent ?? '',
+      more: strip.querySelector('.pinned-more')?.textContent ?? '',
+    };`);
+  check('the strip holds only the message pinned last, with a way to the others',
+    strip.lines === 1 && strip.text.includes(lastPinned.body) && /3/.test(strip.more), JSON.stringify(strip));
+
+  await cdp.evaluate("document.getElementById('chat-pins').click(); return true;");
+  await sleep(150);
+  const panel = await cdp.evaluate(`
+    const pop = document.getElementById('pins-pop');
+    const box = pop.getBoundingClientRect();
+    return {
+      open: !pop.hidden,
+      cards: [...pop.querySelectorAll('.pin-card')].map((c) => c.textContent),
+      onScreen: box.width > 100 && box.top >= 0 && box.bottom <= window.innerHeight + 1 && box.right <= window.innerWidth + 1,
+      expanded: document.getElementById('chat-pins').getAttribute('aria-expanded'),
+    };`);
+  check('the pin in the header opens a list of all three, the last pinned first, on screen',
+    panel.open && panel.cards.length === 3 && panel.cards[0].includes(lastPinned.body) && panel.onScreen && panel.expanded === 'true', JSON.stringify(panel));
+
+  await cdp.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true;");
+  await sleep(100);
+  check('Esc closes it', await cdp.evaluate("return document.getElementById('pins-pop').hidden"), '');
+
+  await cdp.evaluate("document.querySelector('#chat-pinned .pinned-more').click(); return true;");
+  await sleep(150);
+  check('so does the button in the strip open it', await cdp.evaluate("return !document.getElementById('pins-pop').hidden && document.querySelectorAll('#pins-list .pin-card').length === 3"), '');
+  await cdp.evaluate("document.querySelectorAll('#pins-list .pin-card')[1].click(); return true;");
+  await sleep(600);
+  const jumped = await cdp.evaluate(`return { closed: document.getElementById('pins-pop').hidden,
+    there: Boolean(document.querySelector('#chat-log .chat-msg[data-id="${history[10].id}"]')) }`);
+  check('choosing a pin closes the list and goes to that message', jumped.closed && jumped.there, JSON.stringify(jumped));
+
+  await openChannel(cdp, 'quiet');
+  o = await older();
+  check('a channel that fits in one page has no button', !o.button && o.rows === 8, JSON.stringify(o));
 
   app.kill();
 }

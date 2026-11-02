@@ -147,6 +147,26 @@ export const MAX_EMOJIS = 200;
 
 /** Messages returned by one history request. */
 const PAGE_SIZE = 50;
+/** The most messages `since` hands back: a long way up a busy channel, and a bounded amount of work. */
+const JUMP_LIMIT = 2000;
+/** Results to a page of a search, the way a person reads them; and the most a request may ask for. */
+export const SEARCH_PAGE = 25;
+const SEARCH_MAX = 50;
+/** How many matches a search counts before it says "that many and more". */
+export const COUNT_CAP = 10_000;
+const escapeLike = (text) => String(text).replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
+/** What `has:` can ask for, and the test each is. */
+const HAS = {
+  // `link` is not here: it is a piece of text, and goes through the trigram index with the others.
+  file: 'm.attachment_hash IS NOT NULL',
+  // Also asking for an attachment, which they all have, so that the index of attachments is the one used.
+  image: "m.attachment_hash IS NOT NULL AND m.media_type = 'image'",
+  video: "m.attachment_hash IS NOT NULL AND m.media_type = 'video'",
+  audio: "m.attachment_hash IS NOT NULL AND m.media_type = 'audio'",
+};
+/** Names people use for the same thing: what Discord calls them, and what is the nearest here. */
+const HAS_ALIAS = { embed: 'link', sound: 'audio' };
+export const HAS_KINDS = ['link', ...Object.keys(HAS), ...Object.keys(HAS_ALIAS)];
 
 /*
  * Every message query brings the message it replies to along with it: who
@@ -240,6 +260,8 @@ export class Chat {
   #maxBytes;
   #maxFileBytes = DEFAULT_FILE_BYTES;
   #q;
+  /** Statements built for searches, by their SQL. See #prepared. */
+  #built = new Map();
 
   constructor(db, { dataDir, maxDiskBytes }) {
     this.#db = db;
@@ -278,13 +300,23 @@ export class Chat {
         WHERE m.channel_id = ? AND m.id < ?
         ORDER BY m.id DESC LIMIT ?
       `),
+      // The first message after a moment, and the first from it: a date as the id it falls at.
+      firstAfter: db.prepare('SELECT id FROM messages WHERE created_at > ? ORDER BY created_at, id LIMIT 1'),
+      firstFrom: db.prepare('SELECT id FROM messages WHERE created_at >= ? ORDER BY created_at, id LIMIT 1'),
+      // From the newest back to a message, to land on one far above the page a channel opens on.
+      historyFrom: db.prepare(`
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
+        WHERE m.channel_id = ? AND m.id >= ?
+        ORDER BY m.id DESC LIMIT ?
+      `),
       pinned: db.prepare(`
         SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
         ${REPLY_JOIN}
         WHERE m.channel_id = ? AND m.pinned = 1
-        ORDER BY m.id DESC
+        ORDER BY COALESCE(m.pinned_at, 0) DESC, m.id DESC
       `),
-      setPinned: db.prepare('UPDATE messages SET pinned = ? WHERE id = ?'),
+      setPinned: db.prepare('UPDATE messages SET pinned = ?, pinned_at = ? WHERE id = ?'),
 
       searchFts: db.prepare(`
         SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages_fts f
@@ -798,6 +830,15 @@ export class Chat {
       .reverse(); // oldest first, which is the order a chat pane renders
   }
 
+  /**
+   * Everything from message `id` to the newest, oldest first, as far as JUMP_LIMIT: what a client needs to put a
+   * message far back on screen with the rest of the channel below it. `complete` says whether `id` was reached.
+   */
+  since(channelId, id) {
+    const rows = this.#q.historyFrom.all(channelId, id, JUMP_LIMIT);
+    return { messages: rows.reverse(), complete: rows.length < JUMP_LIMIT };
+  }
+
   pinned(channelId) {
     return this.#q.pinned.all(channelId);
   }
@@ -805,7 +846,7 @@ export class Chat {
   setPinned(id, pinned) {
     const message = this.#q.messageById.get(id);
     if (!message) return { ok: false, error: 'no_such_message' };
-    this.#q.setPinned.run(pinned ? 1 : 0, id);
+    this.#q.setPinned.run(pinned ? 1 : 0, pinned ? Date.now() : null, id);
     return { ok: true, message: this.#q.messageById.get(id) };
   }
 
@@ -833,6 +874,125 @@ export class Chat {
       mode: 'fts',
       results: this.#q.searchFts.all(ftsPhrase(text), channelId, Math.min(limit, PAGE_SIZE)),
     };
+  }
+
+  /**
+   * Search across channels, with filters -- the shape Discord's search has.
+   *
+   *   channelIds  where to look: the caller has already cut this down to channels they may read
+   *   text        what the message says, or who wrote it, or what kind of file it carries (as search() does)
+   *   from        author user ids      has       link | embed | file | image | video | audio | sound (all of them)
+   *   mentions    nicknames: the message has @nickname in it (a mention is only ever text; see mentionsIn)
+   *   after, before   created_at in ms, exclusive      pinned   true: only pinned; false: only those not
+   *   sort        'new' (the default) or 'old'          offset, limit   a page of the results
+   *
+   * Every value reaches SQL as a parameter. What is built from the options is only ever one of the fixed
+   * fragments in this method.
+   *
+   * What keeps it quick on a long history:
+   *   - anything that is a piece of text (the words, a link, an @name) goes through the trigram index, never a
+   *     scan of the bodies; it is only the one- and two-letter ones that cannot, and they are scanned
+   *   - dates become message id bounds (ids only grow with time), so the range is a range of the primary key and
+   *     not a test on every row
+   *   - the count stops at COUNT_CAP: "10,000+ results" costs a page of work, and the exact number of everything
+   *     that ever mentioned "the" costs a pass over the whole table to say something nobody reads
+   *
+   * @returns {{total: number, capped: boolean, results: object[]}}
+   */
+  searchAll({
+    channelIds, text = '', from = [], has = [], mentions = [], after = null, before = null,
+    pinned = null, sort = 'new', offset = 0, limit = SEARCH_PAGE,
+  }) {
+    const none = { total: 0, capped: false, results: [] };
+    if (!channelIds.length) return none;
+    const where = [`m.channel_id IN (${channelIds.map(() => '?').join(',')})`];
+    const params = [...channelIds];
+    let joinsUsers = false;
+
+    // Dates, as ids: the first message after (or from) the moment, so that the range is on the primary key.
+    if (Number.isFinite(after)) {
+      const first = this.#q.firstAfter.get(after);
+      if (!first) return none;
+      where.push('m.id >= ?');
+      params.push(first.id);
+    }
+    if (Number.isFinite(before)) {
+      const first = this.#q.firstFrom.get(before);
+      if (first) {
+        where.push('m.id < ?');
+        params.push(first.id);
+      }
+    }
+
+    // Pieces of text, each through the trigram index when it is long enough to have trigrams.
+    const phrases = [];
+    const words = String(text ?? '').trim();
+    if (words.length >= 3) {
+      phrases.push(ftsPhrase(words));
+    } else if (words) {
+      const like = `%${escapeLike(words)}%`;
+      where.push("(m.body LIKE ? ESCAPE '\\' OR u.nickname LIKE ? ESCAPE '\\' OR IFNULL(m.media_type, '') LIKE ? ESCAPE '\\')");
+      params.push(like, like, like);
+      joinsUsers = true;
+    }
+    for (const nickname of mentions) {
+      const at = `@${nickname}`;
+      if (at.length >= 3) {
+        phrases.push(`body : ${ftsPhrase(at)}`);
+      } else {
+        where.push("m.body LIKE ? ESCAPE '\\'");
+        params.push(`%${escapeLike(at)}%`);
+      }
+    }
+    const kinds = new Set(has.map((h) => HAS_ALIAS[h] ?? h));
+    if (kinds.delete('link')) phrases.push('body : ("http://" OR "https://")');
+    for (const phrase of phrases) {
+      where.push('m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)');
+      params.push(phrase);
+    }
+
+    if (from.length) {
+      where.push(`m.user_id IN (${from.map(() => '?').join(',')})`);
+      params.push(...from);
+    }
+    for (const kind of kinds) {
+      if (HAS[kind]) where.push(HAS[kind]);
+    }
+    if (pinned === true) where.push('m.pinned = 1');
+    else if (pinned === false) where.push('m.pinned = 0');
+
+    const clause = where.join(' AND ');
+    // A search for files is a walk through the messages that carry one, newest first, and not through every message
+    // of every channel to find them: the planner prefers the channels' index, because it cannot see how few they are.
+    const source = [...kinds].some((kind) => HAS[kind]) ? 'messages m INDEXED BY messages_files' : 'messages m';
+    const order = sort === 'old' ? 'ASC' : 'DESC';
+    const page = Math.min(Math.max(1, Math.trunc(limit) || SEARCH_PAGE), SEARCH_MAX);
+    const skip = Math.min(Math.max(0, Math.trunc(offset) || 0), COUNT_CAP - 1);
+
+    const counted = this.#prepared(
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${source} ${joinsUsers ? 'JOIN users u ON u.id = m.user_id' : ''}
+        WHERE ${clause} LIMIT ${COUNT_CAP + 1})`,
+    ).get(...params).n;
+    const results = this.#prepared(`
+      SELECT m.*, u.nickname${REPLY_COLUMNS} FROM ${source} JOIN users u ON u.id = m.user_id
+      ${REPLY_JOIN}
+      WHERE ${clause}
+      ORDER BY m.id ${order} LIMIT ? OFFSET ?
+    `).all(...params, page, skip);
+    return { total: Math.min(counted, COUNT_CAP), capped: counted > COUNT_CAP, results };
+  }
+
+  /** A statement for SQL that is built from a handful of fixed shapes, kept so that each is compiled once. */
+  #prepared(sql) {
+    let statement = this.#built.get(sql);
+    if (!statement) {
+      // Bounded: the shapes depend on how many channels and people a search names, which is not unbounded in
+      // practice but is not a number to trust either.
+      if (this.#built.size >= 200) this.#built.clear();
+      statement = this.#db.prepare(sql);
+      this.#built.set(sql, statement);
+    }
+    return statement;
   }
 }
 

@@ -11,8 +11,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  Identity, RecoveryKey, aad, b64, nonceOf, openFile, pad, pairKey, publicKey, random,
-  safetyNumber, sealFile, sealWithNonceForTests, unb64, unwrap, wrap,
+  Identity, RecoveryKey, aad, b64, nonceOf, openFile, openLocal, pad, pairKey, publicKey, random,
+  safetyNumber, sealFile, sealLocal, sealWithNonceForTests, unb64, unwrap, wrap,
 } from '../src/renderer/dm-crypto.js';
 
 const hex = (bytes) => Buffer.from(bytes).toString('hex');
@@ -199,5 +199,31 @@ describe('how it behaves', () => {
     assert.equal(one, safetyNumber({ id: 2, key: b.public }, { id: 1, key: a.public }));
     assert.notEqual(one, safetyNumber({ id: 1, key: a.public }, { id: 2, key: c.public }));
     assert.match(one, /^(\d{5} ){5}\d{5}$/);
+  });
+});
+
+describe('what is kept on this computer', () => {
+  it('opens under the same identity key and nowhere else', () => {
+    const [mine, eve] = [Identity.generate(), Identity.generate()];
+    const sealed = sealLocal(mine, 'star/dm/7', 'a secret café plan');
+    assert.equal(openLocal(mine, 'star/dm/7', sealed), 'a secret café plan');
+    assert.equal(openLocal(eve, 'star/dm/7', sealed), null, 'another key');
+    assert.equal(openLocal(mine, 'star/dm/8', sealed), null, 'another thing: bound to what it is for');
+    assert.equal(openLocal(mine, 'star/dm/7', flip(sealed, -1)), null, 'tampered');
+    assert.equal(openLocal(mine, 'star/dm/7', 'not base64 at all'), null);
+  });
+
+  it('is not readable as it is kept, and is different each time', () => {
+    const mine = Identity.generate();
+    const [a, b] = [sealLocal(mine, 'x', 'plain words here'), sealLocal(mine, 'x', 'plain words here')];
+    assert.notEqual(a, b);
+    assert.equal(Buffer.from(unb64(a)).includes('plain words'), false);
+  });
+
+  it('is not the key that private messages are sealed under', () => {
+    const [alice, bob] = [Identity.generate(), Identity.generate()];
+    const pair = pairKey(alice, 1, bob.public, 2, 7);
+    const sealed = sealLocal(alice, aad.message(7, 1), 'x');
+    assert.equal(pair.open(aad.message(7, 1), sealed), null);
   });
 });

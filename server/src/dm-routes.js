@@ -75,6 +75,7 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
       peer_has_no_key: 409,
       blocked: 403,
       no_such_message: 404,
+      too_many_pins: 400,
     }[result.error] ?? 400;
     const messages = {
       stale_key: 'A key changed. Seal it again with the current keys.',
@@ -84,6 +85,7 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
       bad_message: 'That is not a sealed message.',
       bad_key: 'That is not a key.',
       no_such_message: 'No such message.',
+      too_many_pins: 'Fifty messages are pinned already. Unpin one first.',
     };
     return res.status(status).json({
       error: result.error,
@@ -201,9 +203,17 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
 
   app.get('/api/dms/:id/messages', requireLogin, conversation, (req, res) => {
     const before = Number.parseInt(req.query.before ?? '', 10);
-    res.json(forClient(dms.history(req.conversation.id, req.user.id, {
+    const page = dms.history(req.conversation.id, req.user.id, {
       before: Number.isFinite(before) ? before : undefined,
-    })));
+    });
+    // The first page comes with what is pinned, as a channel's does; an older page does not need it again.
+    const pins = Number.isFinite(before) ? [] : dms.pinned(req.conversation.id, req.user.id);
+    const sent = forClient([...page, ...pins]);
+    res.json({
+      messages: sent.messages.slice(0, page.length),
+      ...(Number.isFinite(before) ? {} : { pinned: sent.messages.slice(page.length) }),
+      keys: sent.keys,
+    });
   });
 
   /**
@@ -340,6 +350,23 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
     if (!result.ok) return refuse(res, result);
     const { messages: [message] } = forClient(result.message);
     push(seeing(req.conversation, m), { type: 'dm:updated', message });
+    return res.json({ message });
+  });
+
+  /**
+   * Pin a message of the conversation, or unpin it: either of the two may, and both are told. Blocking stops pinning
+   * as it stops reacting -- it is a way of making something of what the other said -- but never unpinning.
+   */
+  app.post('/api/dm-messages/:id/pin', requireLogin, dmMessage, throttled(reacting), (req, res) => {
+    const c = req.conversation;
+    const pinned = req.body?.pinned !== false;
+    if (pinned && dms.isBlocked(req.user.id, DirectMessages.peerOf(c, req.user.id))) {
+      return refuse(res, { error: 'blocked' });
+    }
+    const result = dms.setPinned(req.dmMessage, req.user.id, pinned);
+    if (!result.ok) return refuse(res, result);
+    const { messages: [message] } = forClient(result.message);
+    push(seeing(c, req.dmMessage), { type: 'dm:updated', message });
     return res.json({ message });
   });
 

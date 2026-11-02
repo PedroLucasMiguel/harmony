@@ -923,7 +923,7 @@ handle('media:upload-chunk', (_e, server, id, offset, bytes) => api.uploadChunk(
 handle('media:upload-finish', (_e, server, id) => api.uploadFinish(server, id));
 handle('media:upload-cancel', (_e, server, id) => api.uploadCancel(server, id));
 
-handle('api:messages', (_e, s, id, before) => api.messages(s, id, before));
+handle('api:messages', (_e, s, id, before, until) => api.messages(s, id, before, until));
 handle('api:mark-read', (_e, s, id, upTo) => api.markRead(s, id, upTo));
 handle('api:unread', (_e, s) => api.unread(s));
 handle('api:dm-request', (_e, s, method, path, body) => api.dmRequest(s, method, path, body));
@@ -935,6 +935,7 @@ handle('api:delete-message', (_e, s, id) => api.deleteMessage(s, id));
 handle('api:edit-message', (_e, s, id, body) => api.editMessage(s, id, body));
 handle('api:set-attachment', (_e, s, id, body) => api.setAttachment(s, id, body));
 handle('api:search', (_e, s, id, q) => api.search(s, id, q));
+handle('api:search-all', (_e, s, params) => api.searchAll(s, params));
 handle('api:delete-account', (_e, s, id) => api.deleteAccount(s, id));
 handle('api:server-info', (_e, s) => api.serverInfo(s));
 handle('api:update-server', (_e, s, body) => api.updateServer(s, body));

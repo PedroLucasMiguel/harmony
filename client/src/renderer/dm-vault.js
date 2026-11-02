@@ -16,7 +16,8 @@
 // is not shown.
 
 import {
-  Identity, RecoveryKey, aad, b64, nonceOf, pad, pairKey, publicKey, random, safetyNumber, unwrap, wrap,
+  Identity, RecoveryKey, aad, b64, nonceOf, openLocal, pad, pairKey, publicKey, random, safetyNumber, sealLocal,
+  unwrap, wrap,
 } from './dm-crypto.js';
 
 /** Why something could not be sealed for the other person. */
@@ -318,6 +319,22 @@ export class Vault {
     return key;
   }
 
+  /**
+   * Seals text for keeping on this computer only, under your own identity key: what a starred message is kept as.
+   * Null while this computer doesn't hold the key (not set up, or locked): nothing is kept in the clear instead.
+   * `key` says which of your keys sealed it, because the account may get another one later.
+   */
+  sealLocal(what, text) {
+    if (!this.#identity) return null;
+    return { key: this.#identity.id, sealed: sealLocal(this.#identity.identity, what, text) };
+  }
+
+  /** What `sealLocal` sealed under your key `keyId`, or null: that key is not here, or it is not what was sealed. */
+  openLocal(keyId, what, sealed) {
+    const identity = this.#identity?.id === keyId ? this.#identity.identity : this.#file.archivedIdentity(keyId);
+    return identity ? openLocal(identity, what, sealed) : null;
+  }
+
   /** Seals something to both your current keys, whoever holds theirs. Everything that leaves goes through `#sealConfirmed`. */
   #seal(conversation, peer, aadText, plain) {
     const mine = this.ready ? this.myKey : null;
@@ -451,6 +468,7 @@ export class Vault {
       reply,
       reactions: this.openReactions(m.conversationId, peer, m.id, m.reactions ?? []),
       createdAt: m.createdAt,
+      pinned: Boolean(m.pinned),
       private: view,
     };
     if (current) {

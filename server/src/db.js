@@ -673,6 +673,62 @@ const MIGRATIONS = [
   (db) => {
     db.exec('ALTER TABLE users ADD COLUMN banner_dim INTEGER');
   },
+  /*
+   * v23: when a message was pinned.
+   *
+   * So that "the last pinned message" is the one pinned most recently and not the newest message among the pins,
+   * which is what the order was before and is not what pinning something old, to find it again, means. NULL on
+   * every message pinned before this: they keep their old order, below anything pinned from now on.
+   */
+  (db) => {
+    db.exec('ALTER TABLE messages ADD COLUMN pinned_at INTEGER');
+  },
+  /*
+   * v24: the indexes a long history asks for.
+   *
+   * What a channel does most (its newest page, its pins, what is unread) was already on an index. What was not:
+   *
+   *   messages_user        everything one person wrote -- `from:` in a search, and the foreign-key check that
+   *                        deleting an account makes against every message
+   *   messages_time        a message's moment, which a search's dates become an id from
+   *   messages_files       only the messages that carry a file, in order, for `has:file` and the kinds of file;
+   *                        2% of a typical history, so a scan of it is small where a scan of all of it is not
+   *   messages_attachment  the file a message points at, for the check that deleting an upload makes (and a
+   *                        partial index, since most messages have none)
+   *   channel_reads_channel  the other half of that table's key: deleting a channel removes its marks
+   *
+   * Then the planner is given statistics, which it has none of on a database that has only ever been written.
+   */
+  (db) => {
+    db.exec(`
+      CREATE INDEX messages_user       ON messages(user_id, id DESC);
+      CREATE INDEX messages_time       ON messages(created_at);
+      CREATE INDEX messages_files      ON messages(id) WHERE attachment_hash IS NOT NULL;
+      CREATE INDEX messages_attachment ON messages(attachment_hash) WHERE attachment_hash IS NOT NULL;
+      CREATE INDEX channel_reads_channel ON channel_reads(channel_id);
+    `);
+    db.exec('PRAGMA analysis_limit = 1000');
+    db.exec('ANALYZE');
+  },
+  /*
+   * v25: pinned private messages.
+   *
+   * A flag on the message, as a channel's pin is, and not something sealed: what is pinned is which message, and the
+   * server already knows which messages there are, when they were sent and when one was edited. What it says stays
+   * sealed. The most a server can do with the flag is pin or unpin a message that is there, which changes what is
+   * shown and nothing that was said.
+   *
+   * pinned_at orders them (the last pinned first, as a channel's are) and pinned_by says who; both are NULL until a
+   * message is pinned. The index is partial because almost nothing is.
+   */
+  (db) => {
+    db.exec(`
+      ALTER TABLE dm_messages ADD COLUMN pinned    INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE dm_messages ADD COLUMN pinned_at INTEGER;
+      ALTER TABLE dm_messages ADD COLUMN pinned_by INTEGER;
+      CREATE INDEX dm_messages_pinned ON dm_messages(conversation_id) WHERE pinned = 1;
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -755,7 +811,25 @@ export function openDatabase({ dataDir, file = 'harmony.db' }) {
   // schema's ON DELETE CASCADE cannot quietly stop working if that changes.
   db.exec('PRAGMA foreign_keys = ON');
 
+  // A write that finds the database busy (the checkpoint, a second connection) waits a moment instead of failing.
+  db.exec('PRAGMA busy_timeout = 5000');
+
+  // Read-heavy, and a server is not short of memory: 64 MB of pages kept (the default is 2 MB), the temporary
+  // tables and sorts a search makes held in memory, and the file mapped so that a read is not a copy. All of it
+  // is only ever a cache, and costs nothing on disk.
+  db.exec('PRAGMA cache_size = -65536');
+  db.exec('PRAGMA temp_store = MEMORY');
+  db.exec('PRAGMA mmap_size = 268435456');
+  // The write-ahead log does not stay as large as its busiest moment.
+  db.exec('PRAGMA journal_size_limit = 67108864');
+
   migrate(db);
+
+  // Statistics for the planner, kept current: only what has changed a lot is looked at again, and only a sample of
+  // it, so this is cheap enough to do at every start. It is what SQLite's own documentation asks long-lived
+  // connections to do.
+  db.exec('PRAGMA analysis_limit = 1000');
+  db.exec('PRAGMA optimize');
   return db;
 }
 

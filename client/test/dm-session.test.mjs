@@ -308,6 +308,36 @@ describe('private conversations between two people', () => {
     assert.ok(!alice.session.thread(convo).some((m) => m.id === id));
   });
 
+  it('a pin is for both of them, the last pinned first, and is there again when it is loaded', async () => {
+    const mine = bob.session.thread(convo).filter((m) => m.userId === people.bob.id).at(-1);
+    const seen = bob.pushes.length;
+    await alice.session.pin(hello, true);
+    await bob.next('dm:updated', { after: seen });
+    assert.deepEqual(bob.session.pinned(convo).map((m) => m.id), [hello]);
+    assert.equal(bob.session.thread(convo).find((m) => m.id === hello).pinned, true);
+
+    const seenByAlice = alice.pushes.length;
+    await bob.session.pin(mine.id, true);
+    await alice.next('dm:updated', { after: seenByAlice });
+    assert.deepEqual(alice.session.pinned(convo).map((m) => m.id), [mine.id, hello], 'the one pinned last first');
+    assert.equal(alice.session.pinned(convo)[0].body, mine.body, 'opened, so it can be shown');
+
+    // An edit of a pinned message leaves it where it was in the order.
+    const before = alice.pushes.length;
+    await alice.session.edit(hello, 'oi, bob! 👋 (de novo)');
+    await bob.next('dm:updated', { after: before - 1 });
+    assert.deepEqual(bob.session.pinned(convo).map((m) => m.id), [mine.id, hello]);
+
+    // Loaded again, as the server has it.
+    await bob.session.load(convo);
+    assert.deepEqual(bob.session.pinned(convo).map((m) => m.id), [mine.id, hello]);
+
+    await alice.session.pin(hello, false);
+    await alice.session.pin(mine.id, false);
+    await new Promise((done) => setTimeout(done, 200));
+    assert.deepEqual(bob.session.pinned(convo), [], 'let go for both');
+  });
+
   it('a conversation deleted for yourself leaves your list and stays for the other', async () => {
     await bob.session.clear(convo);
     assert.ok(!bob.session.conversations.has(convo));
@@ -325,6 +355,30 @@ describe('private conversations between two people', () => {
     await bob.session.setBlocked(people.alice.id, false);
     assert.ok(await alice.session.send(convo, { body: 'voltei' }));
     assert.equal(bobsView, convo);
+  });
+
+  it('a whole conversation can be read for a search, without moving what is shown', async () => {
+    // More than a page: the server sends fifty at a time. (The server lets a person send twenty at once and two a
+    // second after that, which is what this waits on.)
+    const before = bob.session.thread(convo).length;
+    for (let i = 1; i <= 52; i += 1) {
+      for (let tries = 0; tries < 40; tries += 1) {
+        try {
+          if (await alice.session.send(convo, { body: `bulk ${i}` })) break;
+        } catch { /* slowed down: try again */ }
+        await new Promise((done) => setTimeout(done, 150));
+      }
+    }
+    const shown = bob.session.thread(convo).map((m) => m.id);
+    const reads = [];
+    const all = await bob.session.scan(convo, { onPage: (n) => reads.push(n) });
+    assert.ok(all.length >= before + 52, `every message, not a page (${all.length})`);
+    assert.ok(reads.length >= 2 && reads.every((n, i) => i === 0 || n > reads[i - 1]), `read page by page (${reads})`);
+    assert.ok(all.every((m, i) => i === 0 || all[i - 1].id < m.id), 'oldest first');
+    assert.equal(all.filter((m) => /^bulk \d+$/.test(m.body)).length, 52, 'opened, so the words can be searched');
+    assert.deepEqual(bob.session.thread(convo).map((m) => m.id), shown, 'what the conversation shows is as it was');
+    const capped = await bob.session.scan(convo, { limit: 50 });
+    assert.ok(capped.length >= 50 && capped.length < all.length, 'and it stops at a limit, newest first');
   });
 
   it('somebody else cannot read any of it, or even tell it exists', async () => {

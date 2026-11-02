@@ -271,6 +271,7 @@ contextBridge.exposeInMainWorld('harmony', {
     editMessage: invoke('api:edit-message'),
     setAttachment: invoke('api:set-attachment'),
     search: invoke('api:search'),
+    searchAll: invoke('api:search-all'),
     deleteAccount: invoke('api:delete-account'),
     serverInfo: invoke('api:server-info'),
     updateServer: invoke('api:update-server'),

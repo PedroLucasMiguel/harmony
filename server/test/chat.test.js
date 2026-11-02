@@ -197,6 +197,69 @@ describe('messages', () => {
     assert.ok(!history.body.pinned.some((m) => m.id === id));
   });
 
+  it('lets only admins and people with the permission pin or unpin', async () => {
+    const posted = await api(`/api/channels/${textChannelId}/messages`, {
+      method: 'POST', body: { body: 'who may pin me' }, token: memberToken,
+    });
+    const id = posted.body.message.id;
+    const pin = (token, pinned = true) => api(`/api/messages/${id}/pin`, { method: 'POST', body: { pinned }, token });
+    const pinnedNow = async () => (await api(`/api/channels/${textChannelId}/messages`, { token: ownerToken }))
+      .body.pinned.some((m) => m.id === id);
+    const people = (await api('/api/accounts', { token: ownerToken })).body;
+    const memberId = (people.accounts ?? people.users ?? people).find((u) => u.nickname === 'member').id;
+    const makeRole = async (body) => (await api('/api/roles', { method: 'POST', body, token: ownerToken })).body.role;
+    const give = (roleIds) => api(`/api/accounts/${memberId}/roles`, { method: 'POST', body: { roles: roleIds }, token: ownerToken });
+
+    // Nobody in particular: not even for their own message, and not to take a pin down.
+    assert.equal((await pin(memberToken)).status, 403);
+    assert.equal(await pinnedNow(), false);
+    assert.equal((await pin(ownerToken)).status, 200, 'the owner may');
+    assert.equal((await pin(memberToken, false)).status, 403, 'and unpinning is the same act');
+    assert.equal(await pinnedNow(), true);
+    assert.equal((await pin(memberToken, false)).body.error, 'forbidden');
+    assert.equal((await api(`/api/messages/${id}/pin`, { method: 'POST', body: { pinned: true } })).status, 401, 'a login is needed to be told so');
+
+    // A role that is about something else does not do it.
+    const deleter = await makeRole({ name: 'Cleaner', permissions: ['messages.delete'] });
+    await give([deleter.id]);
+    assert.equal((await pin(memberToken, false)).status, 403);
+
+    // A role with the permission does, at once, and losing it takes it away at once.
+    const curator = await makeRole({ name: 'Curator', permissions: ['messages.pin'] });
+    await give([curator.id]);
+    assert.equal((await pin(memberToken, false)).status, 200);
+    assert.equal(await pinnedNow(), false);
+    assert.equal((await pin(memberToken, true)).status, 200);
+    await give([]);
+    assert.equal((await pin(memberToken, false)).status, 403, 'the permission went with the role');
+
+    // A role that says admin has every permission.
+    const boss = await makeRole({ name: 'Boss', admin: true });
+    await give([boss.id]);
+    assert.equal((await pin(memberToken, false)).status, 200);
+
+    await give([]);
+    for (const role of [deleter, curator, boss]) await api(`/api/roles/${role.id}/delete`, { method: 'POST', token: ownerToken });
+  });
+
+  it('lists pins with the one pinned most recently first, not the newest message', async () => {
+    const post = async (body) => (await api(`/api/channels/${textChannelId}/messages`, {
+      method: 'POST', body: { body }, token: memberToken,
+    })).body.message.id;
+    const older = await post('pinned second, written first');
+    const newer = await post('pinned first, written second');
+    const pin = (id) => api(`/api/messages/${id}/pin`, { method: 'POST', body: { pinned: true }, token: ownerToken });
+    await pin(newer);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await pin(older);
+    const history = await api(`/api/channels/${textChannelId}/messages`, { token: ownerToken });
+    const order = history.body.pinned.map((m) => m.id).filter((id) => id === older || id === newer);
+    assert.deepEqual(order, [older, newer], 'the older message, pinned last, comes first');
+    for (const id of [older, newer]) {
+      await api(`/api/messages/${id}/pin`, { method: 'POST', body: { pinned: false }, token: ownerToken });
+    }
+  });
+
   it("lets you delete your own but not someone else's", async () => {
     const mine = await api(`/api/channels/${textChannelId}/messages`, {
       method: 'POST', body: { body: 'my message' }, token: memberToken,
@@ -220,6 +283,118 @@ describe('messages', () => {
       method: 'POST', token: ownerToken,
     });
     assert.equal(byAdmin.status, 200);
+  });
+});
+
+describe('search across the server', () => {
+  const search = (query, token = memberToken) => api(`/api/search?${new URLSearchParams(query)}`, { token });
+  const post = async (channelId, body, token = ownerToken) => (await api(`/api/channels/${channelId}/messages`, {
+    method: 'POST', body: { body }, token,
+  })).body.message;
+  let otherChannelId;
+  let bossId;
+  let memberId;
+  let landmarks;
+
+  before(async () => {
+    otherChannelId = (await api('/api/channels', { method: 'POST', body: { kind: 'text', name: 'elsewhere' }, token: ownerToken })).body.channel.id;
+    const people = (await api('/api/accounts', { token: ownerToken })).body;
+    const list = people.accounts ?? people.users ?? people;
+    bossId = list.find((u) => u.nickname === 'boss').id;
+    memberId = list.find((u) => u.nickname === 'member').id;
+    landmarks = {
+      plain: await post(textChannelId, 'zebra crossing ahead'),
+      link: await post(textChannelId, 'zebra manual https://example.com/zebra', memberToken),
+      mention: await post(otherChannelId, 'zebra news for @member'),
+      secret: await post(lockedChannelId, 'zebra secret in the locked channel'),
+    };
+    await api(`/api/messages/${landmarks.plain.id}/pin`, { method: 'POST', body: { pinned: true }, token: ownerToken });
+  });
+
+  const ids = (res) => res.body.results.map((m) => m.id);
+
+  it('finds words in every channel the person may read, and in none they may not', async () => {
+    const res = await search({ q: 'zebra' });
+    assert.equal(res.status, 200);
+    assert.ok([landmarks.plain.id, landmarks.link.id, landmarks.mention.id].every((id) => ids(res).includes(id)));
+    assert.ok(!ids(res).includes(landmarks.secret.id), 'a channel locked to them is not searched');
+    assert.equal(res.body.total, ids(res).length);
+    assert.equal(res.body.capped, false);
+  });
+
+  it('is newest first, or oldest first when asked', async () => {
+    const news = ids(await search({ q: 'zebra' }));
+    const olds = ids(await search({ q: 'zebra', sort: 'old' }));
+    assert.deepEqual([...news].reverse(), olds);
+  });
+
+  it('narrows by author, by channel, by what the message holds, by a mention and by a pin', async () => {
+    assert.deepEqual(ids(await search({ q: 'zebra', from: String(memberId) })), [landmarks.link.id]);
+    assert.deepEqual(ids(await search({ q: 'zebra', in: String(otherChannelId) })), [landmarks.mention.id]);
+    assert.deepEqual(ids(await search({ has: 'link' })), [landmarks.link.id]);
+    assert.deepEqual(ids(await search({ has: 'embed' })), [landmarks.link.id], 'embed is another name for link');
+    assert.deepEqual(ids(await search({ mentions: String(memberId) })), [landmarks.mention.id]);
+    assert.deepEqual(ids(await search({ pinned: '1', q: 'zebra' })), [landmarks.plain.id]);
+    assert.ok(!ids(await search({ pinned: '0', q: 'zebra' })).includes(landmarks.plain.id));
+    assert.deepEqual(ids(await search({ from: String(bossId), in: String(otherChannelId) })), [landmarks.mention.id]);
+  });
+
+  it('narrows by date', async () => {
+    const at = landmarks.link.createdAt;
+    assert.ok(!ids(await search({ q: 'zebra', after: String(at) })).includes(landmarks.plain.id), 'after: only what came later');
+    assert.ok(ids(await search({ q: 'zebra', after: String(landmarks.plain.createdAt - 1) })).includes(landmarks.plain.id));
+    assert.deepEqual(ids(await search({ q: 'zebra', before: String(1) })), [], 'before the beginning of time: nothing');
+    assert.ok(ids(await search({ q: 'zebra', before: String(Date.now() + 60_000) })).includes(landmarks.link.id));
+  });
+
+  it('pages, and counts all of it', async () => {
+    for (let i = 0; i < 30; i += 1) await post(textChannelId, `paging marker ${i}`);
+    const first = await search({ q: 'paging marker', limit: '10' });
+    const second = await search({ q: 'paging marker', limit: '10', offset: '10' });
+    assert.equal(first.body.total, 30);
+    assert.equal(first.body.results.length, 10);
+    assert.equal(second.body.results.length, 10);
+    assert.ok(ids(first).every((id) => !ids(second).includes(id)), 'the pages do not overlap');
+    assert.equal((await search({ q: 'paging marker' })).body.results.length, 25, 'a page is 25 by default');
+  });
+
+  it('finds one- and two-letter words, which the trigram index cannot', async () => {
+    await post(textChannelId, 'qq');
+    assert.ok((await search({ q: 'qq' })).body.results.some((m) => m.body === 'qq'));
+  });
+
+  it('refuses a search for nothing, and ignores nonsense in the filters', async () => {
+    assert.equal((await search({})).status, 400);
+    assert.equal((await search({ q: '   ' })).status, 400);
+    const odd = await search({ q: 'zebra', from: 'x,,-3,1.5', has: 'bogus,;DROP', sort: 'sideways', offset: '-9', limit: '99999' });
+    assert.equal(odd.status, 200);
+    assert.ok(odd.body.results.length <= 50);
+  });
+
+  it('answers a mention of somebody who is not there with nothing', async () => {
+    const res = await search({ mentions: '999999' });
+    assert.equal(res.body.total, 0);
+  });
+
+  it('needs a login', async () => {
+    assert.equal((await api('/api/search?q=zebra')).status, 401);
+  });
+
+  it('hands a channel back from a message to the newest, to land on one far above the page', async () => {
+    const first = (await api(`/api/channels/${otherChannelId}/messages`, { token: memberToken })).body.messages[0];
+    for (let i = 0; i < 60; i += 1) await post(otherChannelId, `filler ${i}`);
+    const page = await api(`/api/channels/${otherChannelId}/messages`, { token: memberToken });
+    assert.ok(page.body.messages[0].id > first.id, 'the first message is above the opening page');
+    const since = await api(`/api/channels/${otherChannelId}/messages?until=${first.id}`, { token: memberToken });
+    assert.equal(since.body.messages[0].id, first.id);
+    assert.equal(since.body.messages.at(-1).id, page.body.messages.at(-1).id, 'down to the newest');
+    assert.equal(since.body.complete, true);
+    assert.ok(since.body.messages.every((m, i, all) => i === 0 || all[i - 1].id < m.id), 'oldest first');
+  });
+
+  it('does not hand a channel to somebody who may not read it', async () => {
+    const res = await api(`/api/channels/${lockedChannelId}/messages?until=1`, { token: memberToken });
+    assert.equal(res.status, 404);
   });
 });
 

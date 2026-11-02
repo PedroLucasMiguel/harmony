@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; frame-src https://www.youtube-nocookie.com; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
+      content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; frame-src https://www.youtube-nocookie.com; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
     />
     <title>Harmony</title>
     <link rel="stylesheet" href="styles.css" />
@@ -583,19 +583,32 @@
               <div class="chat-drop-box">
                 <span class="chat-drop-icon" data-icon="plus-circle"></span>
                 <strong id="chat-drop-title"></strong>
-                <small data-i18n="chat_drop.one_file_per_message">One file per message. It is attached, ready to send.</small>
+                <small data-i18n="chat_drop.many_files">Files are sent one by one, and your words go with the last. They are attached, ready to send.</small>
               </div>
             </div>
             <header class="voice-head">
               <h2 id="chat-name"></h2>
-              <input
-                id="chat-search"
-                class="search-field"
-                type="search"
-                placeholder="Search messages, people or media"
-                autocomplete="off" data-i18n-placeholder="chat_active.search_messages_people_or"
-              />
-              <button class="ghost small" id="chat-search-clear" hidden data-i18n="chat_search_clear.clear">Clear</button>
+              <!--
+                The search: words and filters as chips, in one box. Offers its filters and what was searched before when
+                it is focused; Enter searches the whole server and the answers go in #search-results. See search-ui.js.
+              -->
+              <div class="search-box" id="search-box">
+                <span class="search-box-icon" data-icon="magnifying-glass" aria-hidden="true"></span>
+                <div class="search-chips" id="search-chips"></div>
+                <input id="chat-search" class="search-input" type="text" autocomplete="off" spellcheck="false"
+                       placeholder="Search" data-i18n-placeholder="search.placeholder"
+                       role="combobox" aria-expanded="false" aria-controls="search-pop" aria-autocomplete="list" />
+                <button type="button" class="search-clear" id="chat-search-clear" hidden data-icon="x"
+                        title="Clear search" aria-label="Clear search" data-i18n-title="search.clear" data-i18n-aria-label="search.clear"></button>
+                <div class="search-pop" id="search-pop" role="listbox" hidden></div>
+              </div>
+              <button type="button" class="ghost small icon-only" id="chat-pins" data-icon="push-pin"
+                      title="Pinned messages" aria-label="Pinned messages" aria-haspopup="true" aria-expanded="false"
+                      data-i18n-title="app.pinned_messages" data-i18n-aria-label="app.pinned_messages"></button>
+              <!-- The messages starred: yours alone, kept on this computer. See stars-ui.js. -->
+              <button type="button" class="ghost small icon-only" id="chat-stars" data-icon="star"
+                      title="Starred messages" aria-label="Starred messages" aria-haspopup="true" aria-expanded="false"
+                      data-i18n-title="stars.title" data-i18n-aria-label="stars.title"></button>
             </header>
 
             <div id="chat-pinned" class="pinned-strip" hidden></div>
@@ -633,18 +646,8 @@
                   <button type="button" class="composer-btn" id="chat-editing-clear"
                           data-icon="x" title="Cancel editing" data-i18n-title="chat_editing.cancel" data-i18n="chat_editing.cancel_button">Cancel editing</button>
                 </div>
-                <!-- What is about to be sent with the message, if anything. -->
-                <div class="composer-file" id="chat-pending" hidden>
-                  <img class="composer-thumb" id="chat-pending-thumb" alt="" hidden />
-                  <span class="composer-filename" id="chat-pending-name"></span>
-                  <button
-                    type="button"
-                    class="composer-btn"
-                    id="chat-pending-clear"
-                    data-icon="x"
-                    title="Don't send this" data-i18n-title="chat_pending.don_t_send_this" data-i18n="chat_pending_clear.remove"
-                  >Remove</button>
-                </div>
+                <!-- What is about to be sent with the message, if anything: a card for each file, with a look at it. -->
+                <div class="composer-pending" id="chat-pending" hidden></div>
 
                 <!-- A file on its way up, with how far it has got. See uploadAttachment. -->
                 <div class="composer-upload" id="chat-upload" hidden>
@@ -710,7 +713,7 @@
                 <!-- Takes the row's place while a voice message is recorded. See createRecorderBar. -->
                 <div class="voice-recorder" id="chat-recorder" hidden></div>
               </div>
-              <input id="chat-file" type="file" hidden />
+              <input id="chat-file" type="file" multiple hidden />
             </form>
             <p class="muted" id="chat-note"></p>
           </div>
@@ -734,6 +737,25 @@
             <span class="muted" id="member-count"></span>
           </div>
           <ul id="member-items"></ul>
+        </aside>
+
+        <!--
+          What a search found, over the member list for as long as it is wanted. Not a column of the grid: it
+          covers whatever is at the right, and the member list is as it was when it is closed.
+        -->
+        <aside class="search-results" id="search-results" hidden aria-label="Search results" data-i18n-aria-label="search.results_label">
+          <header class="sr-head">
+            <h3 id="sr-count" aria-live="polite"></h3>
+            <button type="button" class="ghost small" id="sr-filters" data-icon="sliders-horizontal" data-i18n="search.filters">Filters</button>
+            <div class="sr-sort">
+              <button type="button" class="ghost small" id="sr-sort" data-icon="arrows-down-up" aria-haspopup="menu" data-i18n="search.sort">Sort</button>
+              <div class="search-menu" id="sr-sort-menu" role="menu" hidden></div>
+            </div>
+            <button type="button" class="ghost small icon-only" id="sr-close" data-icon="x"
+                    title="Close search results" aria-label="Close search results" data-i18n-title="search.close" data-i18n-aria-label="search.close"></button>
+          </header>
+          <div class="sr-body" id="sr-body"></div>
+          <footer class="sr-pager" id="sr-pager" hidden></footer>
         </aside>
 
         <!-- Behind an open drawer, on a phone; tapping it closes the drawer. -->
@@ -882,6 +904,26 @@
               <span class="dm-lock" data-icon="lock-simple" title="End-to-end encrypted: only the two of you can read this."
                     data-i18n-title="dm.encrypted"></span>
               <span class="dm-verified" id="dm-verified" hidden data-i18n="dm.verified">Verified</span>
+              <!--
+                Searches this conversation, looked through on this computer (what the server holds of it is sealed).
+                The same box as a channel's: see search-ui.js and the search in dm-ui.js.
+              -->
+              <div class="search-box" id="dm-search-box">
+                <span class="search-box-icon" data-icon="magnifying-glass" aria-hidden="true"></span>
+                <div class="search-chips" id="dm-search-chips"></div>
+                <input id="dm-search" class="search-input" type="text" autocomplete="off" spellcheck="false"
+                       placeholder="Search" data-i18n-placeholder="search.placeholder"
+                       role="combobox" aria-expanded="false" aria-controls="dm-search-pop" aria-autocomplete="list" />
+                <button type="button" class="search-clear" id="dm-search-clear" hidden data-icon="x"
+                        title="Clear search" aria-label="Clear search" data-i18n-title="search.clear" data-i18n-aria-label="search.clear"></button>
+                <div class="search-pop" id="dm-search-pop" role="listbox" hidden></div>
+              </div>
+              <button type="button" class="ghost small icon-only" id="dm-pins" data-icon="push-pin"
+                      title="Pinned messages" aria-label="Pinned messages" aria-haspopup="true" aria-expanded="false"
+                      data-i18n-title="app.pinned_messages" data-i18n-aria-label="app.pinned_messages"></button>
+              <button type="button" class="ghost small icon-only" id="dm-stars" data-icon="star"
+                      title="Starred messages" aria-label="Starred messages" aria-haspopup="true" aria-expanded="false"
+                      data-i18n-title="stars.title" data-i18n-aria-label="stars.title"></button>
               <button class="ghost small icon-only" id="dm-safety" data-icon="shield-check"
                       title="Safety number" aria-label="Safety number" data-i18n-title="dm.safety.menu" data-i18n-aria-label="dm.safety.menu"></button>
               <button class="ghost small icon-only" id="dm-menu-button" data-icon="dots-three-outline-vertical"
@@ -890,14 +932,28 @@
                       title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
             </header>
             <div id="dm-banner" class="dm-banner" hidden></div>
+            <!-- The message pinned last; all of them are behind the pin in the header. See pins-ui.js. -->
+            <div id="dm-pinned" class="pinned-strip" hidden></div>
             <button class="ghost small dm-more" id="dm-more" hidden data-i18n="dm.load_older">Load older messages</button>
-            <div id="dm-log" class="chat-log"></div>
+            <!-- The box the log scrolls in, so the button can sit beside its scroll bar and stay put. -->
+            <div class="chat-log-wrap">
+              <div id="dm-log" class="chat-log"></div>
+              <button type="button" id="dm-to-bottom" class="chat-to-bottom" data-icon="arrow-down" hidden
+                      title="Jump to the newest messages" data-i18n-title="app.jump_to_the_newest"
+                      aria-label="Jump to the newest messages" data-i18n-aria-label="app.jump_to_the_newest"></button>
+            </div>
             <form id="dm-form" class="chat-form">
               <div class="composer">
                 <div class="composer-reply" id="dm-reply" hidden>
                   <span class="composer-reply-text"><span data-i18n="chat_reply.replying_to">Replying to</span> <strong id="dm-reply-name"></strong></span>
                   <button type="button" class="composer-btn" id="dm-reply-clear"
                           data-icon="x" title="Cancel the reply" data-i18n-title="chat_reply.cancel_the_reply" data-i18n="chat_reply_clear.cancel_reply">Cancel reply</button>
+                </div>
+                <!-- Your own message being rewritten in the box below, as in a channel. See setEditing in dm-ui.js. -->
+                <div class="composer-reply composer-editing" id="dm-editing" hidden>
+                  <span class="composer-reply-text"><strong data-i18n="chat_editing.editing">Editing message</strong> <span data-i18n="chat_editing.hint">Esc to cancel · Enter to save</span></span>
+                  <button type="button" class="composer-btn" id="dm-editing-clear"
+                          data-icon="x" title="Cancel editing" data-i18n-title="chat_editing.cancel" data-i18n="chat_editing.cancel_button">Cancel editing</button>
                 </div>
                 <div class="composer-file" id="dm-pending" hidden>
                   <span class="composer-filename" id="dm-pending-name"></span>
@@ -921,6 +977,21 @@
               <input id="dm-file" type="file" hidden />
             </form>
             <p class="muted" id="dm-note"></p>
+            <!-- What a search of this conversation found, over its right side while it is wanted. -->
+            <aside class="search-results" id="dm-search-results" hidden aria-label="Search results" data-i18n-aria-label="search.results_label">
+              <header class="sr-head">
+                <h3 id="dm-sr-count" aria-live="polite"></h3>
+                <button type="button" class="ghost small" id="dm-sr-filters" data-icon="sliders-horizontal" data-i18n="search.filters">Filters</button>
+                <div class="sr-sort">
+                  <button type="button" class="ghost small" id="dm-sr-sort" data-icon="arrows-down-up" aria-haspopup="menu" data-i18n="search.sort">Sort</button>
+                  <div class="search-menu" id="dm-sr-sort-menu" role="menu" hidden></div>
+                </div>
+                <button type="button" class="ghost small icon-only" id="dm-sr-close" data-icon="x"
+                        title="Close search results" aria-label="Close search results" data-i18n-title="search.close" data-i18n-aria-label="search.close"></button>
+              </header>
+              <div class="sr-body" id="dm-sr-body"></div>
+              <footer class="sr-pager" id="dm-sr-pager" hidden></footer>
+            </aside>
           </div>
         </div>
       </div>
@@ -1453,6 +1524,68 @@
       nowhere else does. Then "recent", which is what anybody actually
       clicks, then the generated sections.
     -->
+    <!-- Every pinned message of the open channel, from the pin in its header. See openPins. -->
+    <div class="pins-pop" id="pins-pop" hidden role="dialog" aria-labelledby="pins-title">
+      <header class="pins-head">
+        <span data-icon="push-pin" aria-hidden="true"></span>
+        <h3 id="pins-title" data-i18n="app.pinned_messages">Pinned messages</h3>
+        <button type="button" class="ghost small icon-only pins-close" data-icon="x" title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+      </header>
+      <div class="pins-list" id="pins-list"></div>
+    </div>
+
+    <!-- Every pinned message of the open private conversation, from the pin in its header. See pins-ui.js. -->
+    <div class="pins-pop" id="dm-pins-pop" hidden role="dialog" aria-labelledby="dm-pins-title">
+      <header class="pins-head">
+        <span data-icon="push-pin" aria-hidden="true"></span>
+        <h3 id="dm-pins-title" data-i18n="app.pinned_messages">Pinned messages</h3>
+        <button type="button" class="ghost small icon-only pins-close" data-icon="x" title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+      </header>
+      <div class="pins-list" id="dm-pins-list"></div>
+    </div>
+
+    <!-- Every message starred on this server, from the star in a channel's header. See stars-ui.js. -->
+    <div class="pins-pop stars-pop" id="stars-pop" hidden role="dialog" aria-labelledby="stars-title">
+      <header class="pins-head">
+        <span data-icon="star" aria-hidden="true"></span>
+        <h3 id="stars-title" data-i18n="stars.title">Starred messages</h3>
+        <button type="button" class="ghost small icon-only pins-close" data-icon="x" title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+      </header>
+      <div class="stars-search">
+        <div class="search-box">
+          <span class="search-box-icon" data-icon="magnifying-glass" aria-hidden="true"></span>
+          <input id="stars-search" class="search-input" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Search starred messages" aria-label="Search starred messages"
+                 data-i18n-placeholder="stars.search" data-i18n-aria-label="stars.search" />
+          <button type="button" class="search-clear" id="stars-clear" hidden data-icon="x"
+                  title="Clear the search" aria-label="Clear the search" data-i18n-title="stars.clear" data-i18n-aria-label="stars.clear"></button>
+        </div>
+        <small class="stars-count muted" id="stars-count" hidden></small>
+      </div>
+      <div class="pins-list" id="stars-list"></div>
+    </div>
+
+    <!-- Every private message starred, from the star in a conversation's header. -->
+    <div class="pins-pop stars-pop" id="dm-stars-pop" hidden role="dialog" aria-labelledby="dm-stars-title">
+      <header class="pins-head">
+        <span data-icon="star" aria-hidden="true"></span>
+        <h3 id="dm-stars-title" data-i18n="stars.title">Starred messages</h3>
+        <button type="button" class="ghost small icon-only pins-close" data-icon="x" title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+      </header>
+      <div class="stars-search">
+        <div class="search-box">
+          <span class="search-box-icon" data-icon="magnifying-glass" aria-hidden="true"></span>
+          <input id="dm-stars-search" class="search-input" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Search starred messages" aria-label="Search starred messages"
+                 data-i18n-placeholder="stars.search" data-i18n-aria-label="stars.search" />
+          <button type="button" class="search-clear" id="dm-stars-clear" hidden data-icon="x"
+                  title="Clear the search" aria-label="Clear the search" data-i18n-title="stars.clear" data-i18n-aria-label="stars.clear"></button>
+        </div>
+        <small class="stars-count muted" id="dm-stars-count" hidden></small>
+      </div>
+      <div class="pins-list" id="dm-stars-list"></div>
+    </div>
+
     <div class="emoji-pop" id="emoji-pop" hidden>
       <div class="emoji-head">
         <input
@@ -1845,6 +1978,17 @@
                       server reads the page, so the site never sees you.</small>
                   </span>
                   <input type="checkbox" class="switch" role="switch" id="link-previews" checked />
+                </label>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-toggle">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.dm_links.title">Link previews in private messages</span>
+                    <small data-i18n="settings.dm_links.note">The same card, under a link in a private message. To make it
+                      the server reads the page, so it is told the address of the link. What the message says stays sealed.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="dm-link-previews" checked />
                 </label>
               </div>
             </section>

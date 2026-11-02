@@ -33,6 +33,7 @@ const NONCE = 24;
 const TAG = 16;
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder('utf-8', { fatal: true });
 
 /** Bytes from the system's generator. Without one there is no safe way on, so it throws. */
 export function random(n) {
@@ -341,6 +342,34 @@ export function sealFile(plain) {
 
 export function openFile(key, sealed) {
   return openWith(key, FILE_AAD, sealed);
+}
+
+// What stays on this computer.
+
+/**
+ * A key of your own for what is kept here and goes nowhere: HKDF-SHA256 of your identity key, bound to what it is
+ * for. Nobody but whoever holds the identity key can make it, so what is sealed under it opens only where private
+ * messages do.
+ */
+function localKey(identity) {
+  return hkdf(sha256, identity.secret, encoder.encode('harmony-local-v1'), encoder.encode('starred messages'), 32);
+}
+
+/** Seals text to your identity key, for keeping on this computer; `what` says what it is and where it belongs. */
+export function sealLocal(identity, what, text) {
+  return b64(sealWith(localKey(identity), encoder.encode(`harmony-local-v1/${what}`), encoder.encode(text)));
+}
+
+/** The text `sealLocal` sealed, or null: another key, another `what`, or not what it was. */
+export function openLocal(identity, what, sealed) {
+  const bytes = unb64(sealed);
+  const plain = bytes && openWith(localKey(identity), encoder.encode(`harmony-local-v1/${what}`), bytes);
+  if (!plain) return null;
+  try {
+    return decoder.decode(plain);
+  } catch {
+    return null;
+  }
 }
 
 // Verification.

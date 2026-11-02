@@ -423,6 +423,43 @@ describe('conversations and messages', () => {
     assert.deepEqual(out.body.reactions.map((x) => x.userId), [ids.alice]);
   });
 
+  it('pins a message for both of them, the last pinned first, and lets it go', async () => {
+    const first = (await send('alice', 'bob', convo)).body.message;
+    const second = (await send('bob', 'alice', convo)).body.message;
+    const pin = (who, id, pinned = true) => api(`/api/dm-messages/${id}/pin`, { method: 'POST', token: tokens[who], body: { pinned } });
+
+    // Either of them may, and it need not be their own message.
+    const byBob = await pin('bob', first.id);
+    assert.equal(byBob.status, 200);
+    assert.equal(byBob.body.message.pinned, true);
+    await new Promise((done) => setTimeout(done, 5));
+    assert.equal((await pin('alice', second.id)).status, 200);
+
+    // Both see the same, the one pinned last first, however old the message is.
+    for (const who of ['alice', 'bob']) {
+      const page = await api(`/api/dms/${convo}/messages`, { token: tokens[who] });
+      const ours = page.body.pinned.map((m) => m.id).filter((id) => id === first.id || id === second.id);
+      assert.deepEqual(ours, [second.id, first.id], `${who}: the last pinned comes first`);
+      assert.ok(page.body.pinned.every((m) => m.pinned && m.sealed), 'sealed, and marked pinned');
+      assert.ok(page.body.messages.find((m) => m.id === first.id).pinned, 'and the page says so too');
+      // What is needed to open them comes with them.
+      const keyIds = new Set(page.body.keys.map((k) => k.id));
+      assert.ok(page.body.pinned.every((m) => keyIds.has(m.senderKey) && keyIds.has(m.recipientKey)));
+    }
+    // An older page is a page of messages, not the pins again.
+    const older = await api(`/api/dms/${convo}/messages?before=${first.id}`, { token: tokens.alice });
+    assert.equal(older.body.pinned, undefined);
+
+    assert.equal((await pin('alice', first.id, false)).body.message.pinned, false);
+    const after = await api(`/api/dms/${convo}/messages`, { token: tokens.bob });
+    assert.ok(!after.body.pinned.some((m) => m.id === first.id), 'unpinned for both');
+    assert.ok(after.body.pinned.some((m) => m.id === second.id));
+    // Pinning what is pinned, or unpinning what is not, is not an error.
+    assert.equal((await pin('alice', second.id)).status, 200);
+    assert.equal((await pin('alice', first.id, false)).status, 200);
+    await pin('alice', second.id, false);
+  });
+
   it('is invisible to a third person on every route', async () => {
     const { body: { messages: [m] } } = await api(`/api/dms/${convo}/messages`, { token: tokens.alice });
     for (const who of ['eve', 'boss']) {
@@ -438,6 +475,7 @@ describe('conversations and messages', () => {
         api(`/api/dm-messages/${m.id}/edit`, { method: 'POST', token: t, body: { sealed: sealed() } }),
         api(`/api/dm-messages/${m.id}/delete`, { method: 'POST', token: t }),
         api(`/api/dm-messages/${m.id}/react`, { method: 'POST', token: t, body: { sealed: null } }),
+        api(`/api/dm-messages/${m.id}/pin`, { method: 'POST', token: t, body: { pinned: true } }),
       ];
       for (const r of await Promise.all(tries)) assert.equal(r.status, 404, `${who}: ${JSON.stringify(r.body)}`);
     }
@@ -535,6 +573,17 @@ describe('blocking', () => {
 
     await api('/api/dms/blocks', { method: 'POST', token: tokens.alice, body: { userId: ids.eve, blocked: false } });
     assert.equal((await send('eve', 'alice', convo)).status, 201);
+  });
+
+  it('stops pinning while it holds, but never unpinning', async () => {
+    const m = (await send('eve', 'alice', convo)).body.message;
+    const pin = (who, pinned) => api(`/api/dm-messages/${m.id}/pin`, { method: 'POST', token: tokens[who], body: { pinned } });
+    assert.equal((await pin('alice', true)).status, 200);
+    await api('/api/dms/blocks', { method: 'POST', token: tokens.alice, body: { userId: ids.eve } });
+    const refused = await pin('eve', false).then(async (r) => ({ unpin: r.status, pin: (await pin('eve', true)).status }));
+    assert.equal(refused.unpin, 200, 'a pin can always be taken down');
+    assert.equal(refused.pin, 403, 'and cannot be put up');
+    await api('/api/dms/blocks', { method: 'POST', token: tokens.alice, body: { userId: ids.eve, blocked: false } });
   });
 
 });

@@ -73,6 +73,12 @@ export class DmSession {
 
   /** Conversation id -> {messages: opened[], more: boolean, loaded: boolean}. */
   #threads = new Map();
+  /**
+   * What is pinned in each conversation, the ids of its messages with the last pinned first: conversation id -> [id].
+   * Their texts are in #raw. Not a part of #threads, because a message pinned long ago is not in the page the
+   * conversation opens on.
+   */
+  #pins = new Map();
 
   /** Who this account has blocked. */
   blocked = new Set();
@@ -324,6 +330,16 @@ export class DmSession {
     return this.#threads.get(conversationId)?.messages ?? [];
   }
 
+  /** What is pinned in a conversation, the last pinned first, opened. Empty until `load`. */
+  pinned(conversationId) {
+    const c = this.conversations.get(conversationId);
+    if (!c) return [];
+    return (this.#pins.get(conversationId) ?? [])
+      .map((id) => this.#raw.get(id))
+      .filter(Boolean)
+      .map((raw) => this.#open(raw, c.peer));
+  }
+
   hasMore(conversationId) {
     return this.#threads.get(conversationId)?.more ?? false;
   }
@@ -339,6 +355,11 @@ export class DmSession {
     for (const old of this.#threads.get(conversationId)?.messages ?? []) this.#raw.delete(old.id);
     for (const m of raws) this.#raw.set(m.id, m);
     this.#threads.set(conversationId, { messages: raws.map((m) => this.#open(m, c.peer)), more: raws.length >= 50, loaded: true });
+    // What is pinned, as the server has it now, with the keys that open it.
+    const pins = res.body.pinned ?? [];
+    await this.#know(pins, res.body.keys);
+    for (const m of pins) this.#raw.set(m.id, m);
+    this.#pins.set(conversationId, pins.map((m) => m.id));
     this.#held();
     this.#changed();
     return this.thread(conversationId);
@@ -358,6 +379,38 @@ export class DmSession {
     this.#held();
     this.#changed();
     return t.messages;
+  }
+
+  /**
+   * Every message of a conversation, oldest first and opened, read from the server a page at a time -- for looking
+   * through it, which is the only way to: what the server holds of a private message is sealed, so it cannot be
+   * searched there, only here once opened.
+   *
+   * It is not `load`: what the conversation shows (its thread, where it is scrolled to, what it says it has more of)
+   * is left as it is, so that reading the whole history behind a search does not move the page.
+   *
+   * @param {number} conversationId
+   * @param {{onPage?: (read: number) => void, limit?: number}} [options]  onPage: told how many messages have been read
+   *   so far; limit: where to stop, newest first (a very long history is searched as far back as this)
+   */
+  async scan(conversationId, { onPage, limit = 20_000 } = {}) {
+    const c = this.conversations.get(conversationId);
+    if (!c) throw new DmError('no_such_conversation', 'No such conversation.');
+    let opened = [];
+    let before = null;
+    for (;;) {
+      const res = await this.#req('GET', `/api/dms/${conversationId}/messages${before === null ? '' : `?before=${before}`}`);
+      if (res.status !== 200) throw DmSession.#refused(res);
+      const raws = res.body.messages ?? [];
+      if (!raws.length) break;
+      await this.#know(raws, res.body.keys);
+      for (const m of raws) this.#raw.set(m.id, m);
+      opened = [...raws.map((m) => this.#open(m, c.peer)), ...opened];
+      onPage?.(opened.length);
+      before = raws[0].id;
+      if (raws.length < 50 || opened.length >= limit) break;
+    }
+    return opened;
   }
 
   /** Opens again everything held, after a key said something new (a change, an acceptance). */
@@ -518,6 +571,16 @@ export class DmSession {
     c.unread = 0;
     this.#changed();
     await this.#req('POST', `/api/dms/${conversationId}/read`, { upTo: newest });
+  }
+
+  /**
+   * Pin a message of the conversation, or unpin it. Either of the two may; both are told. What is pinned is only
+   * which message: the server is not told what it says (see the v25 migration).
+   */
+  async pin(messageId, on = true) {
+    const res = await this.#req('POST', `/api/dm-messages/${messageId}/pin`, { pinned: Boolean(on) });
+    if (res.status !== 200) throw DmSession.#refused(res);
+    await this.#update(res.body.message);
   }
 
   /** Deletes the conversation for you alone; the other person keeps every word. */
@@ -685,6 +748,10 @@ export class DmSession {
     const t = this.#threads.get(c.id);
     if (t) t.messages = t.messages.map((m) => (m.id === raw.id ? message : m));
     if (c.last?.id === raw.id) c.last = message;
+    // Pinned or unpinned: the last pinned goes first; an edit of what is pinned leaves it where it was.
+    const pinned = this.#pins.get(c.id) ?? [];
+    if (raw.pinned && !pinned.includes(raw.id)) this.#pins.set(c.id, [raw.id, ...pinned]);
+    else if (!raw.pinned && pinned.includes(raw.id)) this.#pins.set(c.id, pinned.filter((id) => id !== raw.id));
     this.#held();
     this.#changed();
   }
@@ -703,6 +770,9 @@ export class DmSession {
 
   #drop(messageId) {
     this.#raw.delete(messageId);
+    for (const [id, pinned] of this.#pins) {
+      if (pinned.includes(messageId)) this.#pins.set(id, pinned.filter((x) => x !== messageId));
+    }
     for (const [id, t] of this.#threads) {
       const had = t.messages.some((m) => m.id === messageId);
       t.messages = t.messages.filter((m) => m.id !== messageId);
@@ -714,6 +784,8 @@ export class DmSession {
 
   #forget(conversationId) {
     for (const m of this.#threads.get(conversationId)?.messages ?? []) this.#raw.delete(m.id);
+    for (const id of this.#pins.get(conversationId) ?? []) this.#raw.delete(id);
+    this.#pins.delete(conversationId);
     this.#threads.delete(conversationId);
     this.conversations.delete(conversationId);
     this.#held();

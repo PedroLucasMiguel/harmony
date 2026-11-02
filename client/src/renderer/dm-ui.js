@@ -20,9 +20,25 @@ import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
 import { parkMedia, takeMedia, dropParked, keepable } from './media-keep.js';
 import { KeyState } from './dm-vault.js';
 import { serverKeyOf } from './server-key.js';
+import { createSearchUi } from './search-ui.js';
+import { attachmentThumb, createPins, messageCard, toolButton } from './pins-ui.js';
+import { StarError } from './stars-store.js';
+import { createStarsUi } from './stars-ui.js';
+import { keepEnd } from './chat-follow.js';
+import { expiring } from './expiring.js';
+import { firstLink, linkEmbed } from './link-embed.js';
 
 /** How close together two messages from the same person stay one block. */
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
+
+/** How near the end of the log still counts as being at it. */
+const BOTTOM_PX = 40;
+/** How much of what was already read is left above the line when a conversation opens at its news. */
+const NEWS_CONTEXT_PX = 90;
+/** Pages of older messages read to get to one a search found: a long way, and not for ever. */
+const JUMP_MAX_PAGES = 200;
+/** How long the log stays at its end while what is in it (a picture, a link's card) arrives and grows. */
+const HOLD_MS = 4000;
 
 /** The message from `session` for a `code` the page can say in its own words. */
 function words(t, error) {
@@ -45,8 +61,8 @@ function words(t, error) {
  */
 export function createDmUi(deps) {
   const {
-    state, harmony, t,
-    openEmojiPicker, closeEmojiPicker, ask, askConfirm, formatBytes, playCue, applyStage,
+    state, harmony, t, stars,
+    openEmojiPicker, closeEmojiPicker, askConfirm, formatBytes, playCue, applyStage,
     closeChat, showError,
   } = deps;
 
@@ -67,6 +83,7 @@ export function createDmUi(deps) {
     close: $('dm-close'),
     banner: $('dm-banner'),
     log: $('dm-log'),
+    toBottom: $('dm-to-bottom'),
     drop: $('dm-drop'),
     dropTitle: $('dm-drop-title'),
     more: $('dm-more'),
@@ -74,6 +91,8 @@ export function createDmUi(deps) {
     reply: $('dm-reply'),
     replyName: $('dm-reply-name'),
     replyClear: $('dm-reply-clear'),
+    editing: $('dm-editing'),
+    editingClear: $('dm-editing-clear'),
     pending: $('dm-pending'),
     pendingName: $('dm-pending-name'),
     pendingClear: $('dm-pending-clear'),
@@ -107,6 +126,13 @@ export function createDmUi(deps) {
 
   /** With nothing to send the microphone is where the send button is. */
   function syncRecord() {
+    if (editing) {
+      // Saving, not sending or recording; with nothing written it waits, unless a file stays behind.
+      el.send.hidden = false;
+      el.record.hidden = true;
+      el.send.disabled = !el.input.value.trim() && !editing.private?.file;
+      return;
+    }
     const empty = !el.input.value.trim() && !pendingFile;
     el.send.hidden = empty;
     el.record.hidden = !empty;
@@ -128,10 +154,34 @@ export function createDmUi(deps) {
   let session = null;
   let currentId = null;
   let replyTo = null;
+  /** One of your own messages being rewritten in the box, or null. See setEditing. */
+  let editing = null;
+  /** What was half-typed when the edit began, put back when it ends. */
+  let editDraft = '';
   let pendingFile = null;
   let menu = null;
   let keysDialog = null;
   let busy = false;
+  /**
+   * Where the news in the open conversation began: the id of the last message that had been read when it was opened,
+   * or null if there was nothing new. The line is drawn after it and stays until the conversation is left, as in a
+   * channel.
+   */
+  let newAfter = null;
+  /** Until when what is sent is scrolled to (Infinity while it is on its way): see submit. */
+  let sendingUntil = 0;
+  /** Whether the page of private messages has been put away since the conversation was last opened. */
+  let away = false;
+  const dmsView = $('view-dms');
+  if (dmsView) {
+    new MutationObserver(() => { if (!dmsView.hasAttribute('data-active')) away = true; })
+      .observe(dmsView, { attributes: true, attributeFilter: ['data-active'] });
+  }
+
+  // A box that grows under the log (the message box, the keyboard) does not leave it behind the end.
+  keepEnd(el.log);
+  // What is said under the box is said for a while, and goes.
+  expiring(el.note, () => { el.note.textContent = ''; });
 
   const me = () => (scope ?? home)?.meId ?? state.auth.user?.id;
 
@@ -257,7 +307,12 @@ export function createDmUi(deps) {
   /** Closes the conversation on the stage, if there is one. */
   function closeConversation() {
     if (currentId === null) return;
+    setEditing(null);
     currentId = null;
+    newAfter = null;
+    searchUi.reset();
+    pins.clear();
+    starsUi.close();
     replyTo = null;
     pendingFile = null;
     voiceBar.cancel();
@@ -448,8 +503,21 @@ export function createDmUi(deps) {
     // The stage holds one thing: leaving the channel's chat, and the call's tiles with it.
     closeChat();
     // A voice message is recorded for the conversation it was started in.
-    if (currentId !== id) voiceBar.cancel();
+    const switching = currentId !== id;
+    // Coming back to the conversation that was open, from somewhere else (a channel, the other server), is entering
+    // it again too: what came meanwhile is the news, as it is when a channel is opened again.
+    const entering = switching || away;
+    away = false;
+    if (switching) voiceBar.cancel();
+    if (switching) setEditing(null);
     currentId = id;
+    if (entering) {
+      // Taken now: reading the conversation moves the mark.
+      const row = session.conversations.get(id);
+      newAfter = row?.unread > 0 ? row.lastReadId : null;
+    }
+    // What was searched is of the conversation that was left.
+    if (switching) searchUi.reset();
     replyTo = null;
     setPending(null);
     // The popover closes behind a choice; a list that is docked stays.
@@ -467,7 +535,7 @@ export function createDmUi(deps) {
       return;
     }
     if (currentId !== id) return;
-    renderConversation({ scrollToBottom: true });
+    renderConversation({ scrollToBottom: true, toNews: entering && newAfter !== null });
     await session.markRead(id);
     el.input.focus();
   }
@@ -500,6 +568,8 @@ export function createDmUi(deps) {
   }
 
   function setReply(message) {
+    // Answering and rewriting are two ways of using the same box.
+    if (message && editing) setEditing(null);
     replyTo = message ?? null;
     el.reply.hidden = !message;
     if (!message) return;
@@ -507,7 +577,67 @@ export function createDmUi(deps) {
     el.input.focus();
   }
 
-  function renderConversation({ scrollToBottom = false } = {}) {
+  /*
+   * Rewriting one of your own messages, in the box -- as a channel does it.
+   *
+   * The box takes the message's words and the bar above it says it is an edit, so that Enter is plainly "save" and
+   * not "send". Whatever was half-typed is put back when it ends. Only your own messages can be reached.
+   */
+  function setEditing(message) {
+    if (!message && !editing) return;
+    if (message) {
+      if (!editing) editDraft = el.input.value;
+      setReply(null);
+    }
+    editing = message ?? null;
+    el.editing.hidden = !message;
+    el.form.toggleAttribute('data-editing', Boolean(message));
+    el.send.title = message ? t('app.save') : t('chat_form.send');
+    el.input.value = message ? message.body : editDraft;
+    if (!message) editDraft = '';
+    for (const row of el.log.children) {
+      row.toggleAttribute('data-editing', Boolean(message) && Number(row.dataset.id) === message.id);
+    }
+    el.input.style.height = 'auto';
+    el.input.style.height = `${Math.min(el.input.scrollHeight, 160)}px`;
+    syncRecord();
+    if (!message) return;
+    el.input.focus();
+    const end = el.input.value.length;
+    el.input.setSelectionRange(end, end);
+    // The message being edited may be far up the log.
+    el.log.querySelector('.chat-msg[data-editing]')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Whether a message can be rewritten: yours, and a message and not a call or something that could not be opened. */
+  const editable = (m) => m.userId === me() && !m.private?.unreadable && !m.private?.call;
+
+  /** The message Up would edit: your latest in this conversation, as far as it is loaded. */
+  function lastOwnMessage() {
+    return [...session.thread(currentId)].reverse().find(editable) ?? null;
+  }
+
+  async function saveEdit() {
+    const message = editing;
+    if (!message || busy || !session?.ready) return;
+    const body = el.input.value.trim();
+    // Words can go only if a file stays behind: the same rule as a channel's.
+    if (!body && !message.private?.file) return;
+    if (body === message.body) {
+      setEditing(null);
+      return;
+    }
+    busy = true;
+    el.send.disabled = true;
+    const ok = await attempt(() => session.edit(message.id, body));
+    busy = false;
+    el.send.disabled = false;
+    // Stay in the edit when it failed: the words are still in the box.
+    if (ok && editing?.id === message.id) setEditing(null);
+    else syncRecord();
+  }
+
+  function renderConversation({ scrollToBottom = false, toNews = false } = {}) {
     const c = session?.conversations.get(currentId);
     if (!c) {
       // Deleted for you, from here or from another window.
@@ -525,15 +655,42 @@ export function createDmUi(deps) {
     el.verified.hidden = !verified;
     el.safety.toggleAttribute('data-verified', Boolean(verified));
     renderBanner(c);
+    pins.draw();
 
     const log = el.log;
     const wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     const messages = session.thread(currentId);
+    // Rewritten or deleted from somewhere else while it is open here.
+    if (editing) {
+      const live = messages.find((m) => m.id === editing.id);
+      if (live) editing = live;
+      else setEditing(null);
+    }
     parkMedia(log);
-    log.replaceChildren(...messages.map((m, i) => messageRow(m, messages[i - 1])));
+    // The line goes before the first message newer than what was read, and the message under it starts a block of
+    // its own.
+    let dividerDrawn = false;
+    const rows = [];
+    messages.forEach((m, i, all) => {
+      if (newAfter !== null && !dividerDrawn && m.id > newAfter) {
+        dividerDrawn = true;
+        rows.push(newMessagesDivider(), messageRow(m, undefined));
+        return;
+      }
+      rows.push(messageRow(m, all[i - 1]));
+    });
+    log.replaceChildren(...rows);
     dropParked();
     el.more.hidden = !session.hasMore(currentId);
-    if (scrollToBottom || wasAtBottom) log.scrollTop = log.scrollHeight;
+    const line = toNews ? log.querySelector('.new-divider') : null;
+    if (line) {
+      // Opening it with news: the last of what was read, then the line.
+      log.scrollTop += line.getBoundingClientRect().top - log.getBoundingClientRect().top - NEWS_CONTEXT_PX;
+    } else if (scrollToBottom || wasAtBottom || Date.now() < sendingUntil) {
+      log.scrollTop = log.scrollHeight;
+      holdBottom();
+    }
+    paintToBottom();
 
     const blocked = session.blocked.has(c.peer);
     const noKey = !session.vault.peerHasKey(c.peer);
@@ -574,22 +731,19 @@ export function createDmUi(deps) {
 
   // ---------------------------------------------------------------- one message
 
-  /** One message row: the same parts and classes as a channel's, minus pins and admin powers. */
-  function messageRow(message, previous) {
+  /**
+   * What a message says and carries, as the `.text` of a row: its words, the mark that it was edited, its file or
+   * picture -- or, for one that cannot be read, or is a call, the line that says so. One place, because the
+   * conversation and the results of a search show a message and must show the same one.
+   *
+   * @returns {{text: HTMLElement, emojiOnly: boolean}}  emojiOnly: nothing but emoji, drawn larger
+   */
+  function messageContent(message) {
     const mine = message.userId === me();
-    const row = document.createElement('div');
-    row.className = 'chat-msg';
-    row.dataset.id = String(message.id);
-
-    const grouped = Boolean(previous)
-      && previous.userId === message.userId
-      && !message.reply
-      && message.createdAt - previous.createdAt < GROUP_WINDOW_MS;
-    if (grouped) row.setAttribute('data-grouped', '');
-
     const text = document.createElement('span');
     text.className = 'text';
     const marks = message.private;
+    let emojiOnly = false;
     if (marks.unreadable) {
       text.classList.add('dm-unreadable');
       text.dataset.icon = 'lock-simple';
@@ -598,7 +752,7 @@ export function createDmUi(deps) {
       text.classList.add('dm-call');
       text.append(document.createTextNode(callLine(marks.call, mine)));
     } else {
-      if (renderBody(text, message.body)) row.setAttribute('data-emoji-only', '');
+      emojiOnly = Boolean(renderBody(text, message.body));
       if (message.editedAt) {
         const edited = document.createElement('span');
         edited.className = 'edited-mark';
@@ -607,6 +761,23 @@ export function createDmUi(deps) {
         text.append(edited);
       }
       if (marks.file) text.append(attachmentNode(message));
+      // The card for the first link, as in a channel -- asked of the server that holds this conversation, which is
+      // then told the address of the link (see the setting).
+      const home_ = scope ?? home;
+      if (home_ && state.settings?.linkPreviews !== false && state.settings?.dmLinkPreviews !== false) {
+        const address = firstLink(message.body);
+        const card = address && linkEmbed({
+          server: home_.server,
+          // Not a bare number: a channel's messages have ids on this server too.
+          messageId: `dm-${message.id}`,
+          url: address,
+          load: (url) => harmony.api.linkPreview(home_.server, url),
+          mediaUrl: (hash) => harmony.mediaUrl(hash, home_.server),
+          link: deps.linkNode,
+          t,
+        });
+        if (card) text.append(card);
+      }
       if (marks.unconfirmed) {
         const warn = document.createElement('span');
         warn.className = 'dm-unconfirmed';
@@ -614,6 +785,31 @@ export function createDmUi(deps) {
         text.append(warn);
       }
     }
+    return { text, emojiOnly };
+  }
+
+  /** One message row: the same parts and classes as a channel's, minus pins and admin powers. */
+  function messageRow(message, previous) {
+    const mine = message.userId === me();
+    const row = document.createElement('div');
+    row.className = 'chat-msg';
+    row.dataset.id = String(message.id);
+    if (message.pinned) row.setAttribute('data-pinned', '');
+    if (isStarred(message)) row.setAttribute('data-starred', '');
+    if (editing?.id === message.id) row.setAttribute('data-editing', '');
+
+    const grouped = Boolean(previous)
+      && previous.userId === message.userId
+      // A pin marks a message out: swallowing the one under it into the same block hides which one was pinned.
+      && !previous.pinned
+      && !message.pinned
+      && !message.reply
+      && message.createdAt - previous.createdAt < GROUP_WINDOW_MS;
+    if (grouped) row.setAttribute('data-grouped', '');
+
+    const { text, emojiOnly } = messageContent(message);
+    if (emojiOnly) row.setAttribute('data-emoji-only', '');
+    const marks = message.private;
 
     const time = document.createElement('span');
     time.className = 'when';
@@ -642,8 +838,16 @@ export function createDmUi(deps) {
       react.classList.add('react-btn');
       react.title = t('app.add_a_reaction');
       tools.append(react);
+      const starred = isStarred(message);
+      const star = tool('star', starred ? t('stars.unstar') : t('stars.star'), () => toggleStar(message));
+      star.classList.add('star-tool');
+      if (starred) star.setAttribute('data-on', '');
+      tools.append(star);
+      const pin = tool('push-pin', message.pinned ? t('app.unpin') : t('app.pin'), () => attempt(() => session.pin(message.id, !message.pinned)));
+      if (message.pinned) pin.setAttribute('data-on', '');
+      tools.append(pin);
       if (message.attachmentHash && marks.file) tools.append(tool('download-simple', t('app.download'), () => saveFile(message)));
-      if (mine) tools.append(tool('pencil-simple', t('app.edit_2'), () => editMessage(message)));
+      if (mine) tools.append(tool('pencil-simple', t('app.edit_2'), () => setEditing(message)));
     }
     if (mine && !marks.call) tools.append(tool('trash', t('app.delete_2'), () => removeMessage(message), true));
 
@@ -859,18 +1063,6 @@ export function createDmUi(deps) {
 
   const toggleReaction = (id, emoji) => attempt(() => session.toggleReaction(id, emoji));
 
-  async function editMessage(message) {
-    const answer = await ask({
-      title: t('app.edit_message'),
-      okLabel: t('app.save'),
-      fields: [{
-        name: 'body', label: t('app.message'), value: message.body, multiline: true, maxlength: MAX_BODY, required: !message.private.file,
-      }],
-    });
-    if (answer === null || answer.body === message.body) return;
-    await attempt(() => session.edit(message.id, answer.body));
-  }
-
   async function removeMessage(message) {
     if (!await askConfirm(t('app.delete_this_message'), { okLabel: t('app.delete_2') })) return;
     await attempt(() => session.remove(message.id));
@@ -887,12 +1079,16 @@ export function createDmUi(deps) {
   }
 
   async function submit() {
+    if (editing) return saveEdit();
     if (busy || !session?.ready || currentId === null) return;
     const body = el.input.value.trim();
     if (!body && !pendingFile) return;
     busy = true;
     el.send.disabled = true;
+    // Sending takes you to what you sent, wherever you were reading: until it is drawn, the log follows.
+    sendingUntil = Infinity;
     const ok = await attempt(() => session.send(currentId, { body, file: pendingFile, reply: replyTo }));
+    sendingUntil = Date.now() + 2000;
     busy = false;
     el.send.disabled = false;
     if (!ok) return;
@@ -901,7 +1097,10 @@ export function createDmUi(deps) {
     setPending(null);
     setReply(null);
     syncRecord();
+    releaseHold();
     el.log.scrollTop = el.log.scrollHeight;
+    holdBottom();
+    paintToBottom();
     await session.markRead(currentId);
   }
 
@@ -1101,7 +1300,7 @@ export function createDmUi(deps) {
     if (!mine) return false;
     mine.session.handle(msg).then(async ({ incoming, conversation }) => {
       if (!incoming) return;
-      if (mine === home && conversation.id === currentId && document.hasFocus() && el.active.offsetParent !== null) {
+      if (mine === home && conversation.id === currentId && isLookingAtIt()) {
         await mine.session.markRead(currentId);
         return;
       }
@@ -1121,6 +1320,27 @@ export function createDmUi(deps) {
       refreshAll();
     }
   }
+
+  /**
+   * Whether the open conversation is being looked at right now: the window has the focus and the pane is on screen.
+   * Not offsetParent for that, which is null for anything positioned fixed (the pane is, on a phone) and would
+   * have kept every message unread there.
+   */
+  function isLookingAtIt() {
+    return currentId !== null && document.hasFocus() && !el.active.hidden && el.active.getClientRects().length > 0;
+  }
+
+  /*
+   * A message that came while the window was elsewhere is read when it comes back. It was only ever read as it
+   * arrived, so one that came while the window was not focused stayed counted until you sent something or opened
+   * another conversation and returned.
+   */
+  function readWhatIsOpen() {
+    if (!session?.ready || !isLookingAtIt()) return;
+    session.markRead(currentId).catch(() => {});
+  }
+  window.addEventListener('focus', readWhatIsOpen);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) readWhatIsOpen(); });
 
   /** Every server's list, asked for again. */
   function refreshAll() {
@@ -1156,6 +1376,21 @@ export function createDmUi(deps) {
       event.preventDefault();
       submit();
     }
+    // Esc lets go of an edit, as in a channel.
+    if (event.key === 'Escape' && editing && !event.defaultPrevented) {
+      setEditing(null);
+      return;
+    }
+    // Up, in an empty box, rewrites your last message -- only when nothing else is in progress, so it can never
+    // cost anybody a draft, a reply or a file that was on its way.
+    if (event.key === 'ArrowUp' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+      && !event.isComposing && !el.input.value && !editing && !replyTo && !pendingFile && session?.ready) {
+      const last = lastOwnMessage();
+      if (last) {
+        event.preventDefault();
+        setEditing(last);
+      }
+    }
   });
   el.input.addEventListener('input', () => {
     el.input.style.height = 'auto';
@@ -1188,6 +1423,10 @@ export function createDmUi(deps) {
   });
   el.pendingClear.addEventListener('click', () => setPending(null));
   el.replyClear.addEventListener('click', () => setReply(null));
+  el.editingClear.addEventListener('click', () => {
+    setEditing(null);
+    el.input.focus();
+  });
   el.emoji.addEventListener('click', () => openEmojiPicker(el.emoji, (value) => {
     closeEmojiPicker();
     const start = el.input.selectionStart ?? el.input.value.length;
@@ -1219,6 +1458,379 @@ export function createDmUi(deps) {
     pickFile(file);
     el.input.focus();
   }
+
+  // ------------------------------------------------- the line, the button, and finding things
+
+  /** Where the new messages begin, as in a channel's log. */
+  function newMessagesDivider() {
+    const line = document.createElement('div');
+    line.className = 'new-divider';
+    line.setAttribute('role', 'separator');
+    const label = document.createElement('span');
+    label.textContent = t('chat.new_messages');
+    line.append(label);
+    return line;
+  }
+
+  /*
+   * Staying at the newest message while the page settles, as a channel's log does.
+   *
+   * Going to the bottom once, when the rows are drawn, lands somewhere short of it for as long as anything below is
+   * still growing: a picture arrives, the card for a link fills in, and the message that holds it gets taller. So for
+   * a few seconds after landing at the bottom, any row changing size puts it back there. The reader's own scrolling
+   * ends that at once, so somebody who has begun to read up is never taken down again.
+   */
+  let hold = null;
+  function releaseHold() {
+    if (!hold) return;
+    const { observer, timer, stop } = hold;
+    hold = null;
+    observer.disconnect();
+    clearTimeout(timer);
+    for (const name of ['wheel', 'touchstart', 'pointerdown', 'keydown']) el.log.removeEventListener(name, stop, true);
+  }
+  function holdBottom() {
+    releaseHold();
+    const log = el.log;
+    const observer = new ResizeObserver(() => {
+      log.scrollTop = log.scrollHeight;
+      paintToBottom();
+    });
+    for (const row of log.children) observer.observe(row);
+    const stop = () => releaseHold();
+    for (const name of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+      log.addEventListener(name, stop, { capture: true, passive: true });
+    }
+    hold = { observer, stop, timer: setTimeout(releaseHold, HOLD_MS) };
+  }
+
+  /** The button beside the scroll bar: there while there is more below than a screen's worth of nothing. */
+  function paintToBottom() {
+    const log = el.log;
+    const away = log.scrollHeight - log.scrollTop - log.clientHeight > BOTTOM_PX * 3;
+    el.toBottom.hidden = !away || !log.clientHeight;
+  }
+  el.log.addEventListener('scroll', paintToBottom, { passive: true });
+  el.toBottom.addEventListener('click', () => {
+    releaseHold();
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    el.log.scrollTo({ top: el.log.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
+  });
+
+  /**
+   * Looks through the conversation for a search. What the server holds of it is sealed, so it is done here: every
+   * message is read from the server and opened (see DmSession.scan), and the filters are applied to what was said.
+   * The request is the one a channel's search sends, and only the parts a conversation has are looked at.
+   */
+  async function searchConversation(request, progress) {
+    const found = session;
+    const id = currentId;
+    if (id === null || !found?.ready) return { total: 0, capped: false, results: [] };
+    const everything = await found.scan(id, { onPage: progress });
+
+    const words = String(request.q ?? '').trim().toLowerCase();
+    const from = new Set(String(request.from ?? '').split(',').filter(Boolean).map(Number));
+    const has = String(request.has ?? '').split(',').filter(Boolean);
+    const hasLink = (m) => /https?:\/\//i.test(m.body);
+    const tests = {
+      link: hasLink,
+      embed: hasLink,
+      file: (m) => Boolean(m.attachmentHash && m.private.file),
+      image: (m) => Boolean(m.private.file) && m.mediaType === 'image',
+      video: (m) => Boolean(m.private.file) && m.mediaType === 'video',
+      audio: (m) => Boolean(m.private.file) && m.mediaType === 'audio',
+      sound: (m) => Boolean(m.private.file) && m.mediaType === 'audio',
+    };
+    const matching = everything.filter((m) => {
+      // What could not be opened, and the lines about calls, have no words to look in.
+      if (m.private.unreadable || m.private.call) return false;
+      if (words && !`${m.body} ${m.attachmentName ?? ''}`.toLowerCase().includes(words)) return false;
+      if (from.size && !from.has(m.userId)) return false;
+      if (has.some((kind) => !(tests[kind]?.(m) ?? true))) return false;
+      if (Number.isFinite(request.after) && !(m.createdAt > request.after)) return false;
+      if (Number.isFinite(request.before) && !(m.createdAt < request.before)) return false;
+      return true;
+    });
+    if (request.sort !== 'old') matching.reverse();
+    const offset = Math.max(0, Number(request.offset) || 0);
+    const limit = Math.max(1, Number(request.limit) || 25);
+    return { total: matching.length, capped: false, results: matching.slice(offset, offset + limit) };
+  }
+
+  /**
+   * Goes to a message of the open conversation, reading older pages until it is there. The conversation opens on
+   * its newest fifty, and what a search found may be a long way above.
+   */
+  async function jumpToMessage(message) {
+    // Going somewhere other than the end: staying at it would put the log back there.
+    releaseHold();
+    const find = () => el.log.querySelector(`.chat-msg[data-id="${message.id}"]`);
+    let row = find();
+    for (let pages = 0; !row && session?.hasMore(currentId) && pages < JUMP_MAX_PAGES; pages += 1) {
+      try {
+        await session.loadOlder(currentId);
+      } catch {
+        break;
+      }
+      row = find();
+    }
+    if (!row) {
+      el.note.textContent = t('app.that_message_is_no_longer');
+      return;
+    }
+    el.note.textContent = '';
+    // Drawing the log again re-arms it (renderConversation does, at the end): once more, just before the scroll.
+    releaseHold();
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // A flash rather than a lasting highlight: it answers "which one" and then stops competing with the message.
+    row.setAttribute('data-jumped', '');
+    setTimeout(() => row.removeAttribute('data-jumped'), 1600);
+  }
+
+  /** The pictures of pinned files, opened once and kept: the strip is drawn again at every change. */
+  const pinPictures = new Map();
+
+  /** What is pinned in the open conversation: the strip under the header, and the panel from the pin in it. */
+  const pins = createPins({
+    ids: { button: 'dm-pins', pop: 'dm-pins-pop', list: 'dm-pins-list', strip: 'dm-pinned' },
+    t,
+    displayOf,
+    faceOf,
+    avatarEl,
+    nameFont,
+    whoOf: (m) => peerName(m.userId),
+    messageContent,
+    items: () => (currentId === null ? [] : session?.pinned(currentId) ?? []),
+    // A pinned file shows what it is in the strip: its icon, and its picture once it is opened here (it is sealed).
+    preview: (m) => {
+      if (!m.private.file) return null;
+      const thumb = attachmentThumb(m.attachmentName, m.mediaType);
+      if (m.mediaType === 'image' && m.attachmentBytes <= 8 * 1024 * 1024) {
+        const key = `${home?.key}:${m.id}`;
+        if (pinPictures.has(key)) {
+          thumb.showPicture(pinPictures.get(key));
+        } else {
+          session.file(m).then((opened) => {
+            if (!opened) return;
+            pinPictures.set(key, URL.createObjectURL(opened.blob));
+            pins.draw();
+          }).catch(() => {});
+        }
+      }
+      return thumb;
+    },
+    jump: jumpToMessage,
+    unpin: (m) => session.pin(m.id, false),
+    onError: (err) => { el.note.textContent = words(t, err); },
+  });
+
+  // ---------------------------------------------------------------- starred messages
+
+  /*
+   * A star is the person's own and kept on this computer (see stars-store.js). What a private message says is not
+   * written to disk in the clear anywhere else, so a starred one is kept SEALED under the account's own key and is
+   * read back only where the keys are: on a computer that has not unlocked private messages it is a locked card.
+   */
+  const starScopeOf = (h) => `${h.key}#${h.meId}`;
+  const starWhat = (id) => `star/dm/${id}`;
+  const isStarred = (message) => Boolean(home) && stars.has(starScopeOf(home), 'dm', message.id);
+
+  function toggleStar(message) {
+    if (!home || !session) return;
+    const keep = starScopeOf(home);
+    try {
+      if (stars.has(keep, 'dm', message.id)) {
+        stars.remove(keep, 'dm', message.id);
+      } else {
+        // What a card needs to be drawn; not the file itself, which stays where it is.
+        const snapshot = JSON.stringify({
+          id: message.id,
+          conversationId: message.conversationId,
+          userId: message.userId,
+          body: message.body,
+          createdAt: message.createdAt,
+          editedAt: message.editedAt ?? null,
+          attachmentName: message.private.file ? message.attachmentName : null,
+          attachmentBytes: message.private.file ? message.attachmentBytes : null,
+        });
+        const sealed = session.vault.sealLocal(starWhat(message.id), snapshot);
+        if (!sealed) {
+          el.note.textContent = t('stars.dm_locked');
+          return;
+        }
+        stars.add(keep, {
+          kind: 'dm', id: message.id, conversationId: message.conversationId, peer: conversationOpen()?.peer ?? null,
+          key: sealed.key, sealed: sealed.sealed,
+        });
+      }
+      el.note.textContent = '';
+    } catch (err) {
+      el.note.textContent = err instanceof StarError && err.code === 'too_many' ? t('stars.too_many') : words(t, err);
+    }
+  }
+
+  /** A starred message read back, as the card draws it: null where it can't be opened (keys locked, or lost). */
+  function openStar(h, entry) {
+    const text = h.session.vault.openLocal(entry.key, starWhat(entry.id), entry.sealed);
+    if (text === null) return null;
+    try {
+      const kept = JSON.parse(text);
+      return {
+        ...kept,
+        reply: null,
+        reactions: [],
+        pinned: false,
+        private: { file: null, call: null, unreadable: false, outOfPlace: false, unconfirmed: false },
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** From a card: to the conversation it was in, on its server, and to the message. */
+  async function goToStar(h, entry) {
+    starsUi.close();
+    if (!h.session.ready) {
+      el.note.textContent = t('stars.dm_unreadable');
+      return;
+    }
+    if (!h.session.conversations.has(entry.conversationId)) {
+      el.note.textContent = t('stars.dm_gone');
+      return;
+    }
+    await openConversation(entry.conversationId, h);
+    await jumpToMessage({ id: entry.id });
+  }
+
+  /** Every private message starred, on every server: a card each, the one starred last first. */
+  function starItems() {
+    const several = homes.size > 1;
+    const out = [];
+    for (const h of homes.values()) {
+      const keep = starScopeOf(h);
+      for (const entry of stars.list(keep, 'dm')) {
+        scope = h;
+        try {
+          const message = openStar(h, entry);
+          const peer = entry.peer != null ? peerName(entry.peer) : '';
+          const where = several ? `${peer} · ${serverLabel(h.server)}` : peer;
+          const author = message ? peerName(message.userId) : peer;
+          out.push({
+            savedAt: entry.savedAt,
+            key: `${h.key}:${entry.id}`,
+            searchText: [author, message?.body, message?.attachmentName, peer].filter(Boolean).join(' '),
+            card: () => {
+              scope = h;
+              try {
+                const who = document.createElement('strong');
+                who.textContent = author;
+                nameFont(who, message?.userId ?? entry.peer);
+                const unstar = toolButton('x', t('stars.unstar'), () => stars.remove(keep, 'dm', entry.id));
+                if (!message) {
+                  const locked = document.createElement('span');
+                  locked.className = 'text dm-unreadable';
+                  locked.dataset.icon = 'lock-simple';
+                  locked.textContent = t('stars.dm_unreadable');
+                  return messageCard({
+                    t,
+                    avatar: avatarEl(faceOf(entry.peer, ''), 'msg-avatar'),
+                    who,
+                    createdAt: entry.savedAt,
+                    where,
+                    content: { text: locked, emojiOnly: false },
+                    go: () => { el.note.textContent = t('stars.dm_unreadable'); },
+                    actions: [unstar],
+                  });
+                }
+                const content = messageContent(message);
+                if (message.attachmentName) {
+                  const file = document.createElement('div');
+                  file.className = 'dm-star-file muted';
+                  file.dataset.icon = 'paperclip';
+                  file.textContent = t('stars.attachment', { name: message.attachmentName });
+                  content.text.append(file);
+                }
+                return messageCard({
+                  t,
+                  avatar: avatarEl(faceOf(message.userId, ''), 'msg-avatar'),
+                  who,
+                  createdAt: message.createdAt,
+                  where,
+                  content,
+                  go: () => goToStar(h, entry),
+                  actions: [unstar],
+                });
+              } finally {
+                scope = null;
+              }
+            },
+          });
+        } finally {
+          scope = null;
+        }
+      }
+    }
+    return out.sort((a, b) => b.savedAt - a.savedAt);
+  }
+
+  const starsUi = createStarsUi({
+    ids: { button: 'dm-stars', pop: 'dm-stars-pop', list: 'dm-stars-list', search: 'dm-stars-search', clear: 'dm-stars-clear', count: 'dm-stars-count' },
+    t,
+    items: starItems,
+  });
+  // Starred or let go from anywhere -- the log, the panel -- both are drawn from the list.
+  stars.onChange(() => {
+    starsUi.draw();
+    if (!home) return;
+    const keep = starScopeOf(home);
+    for (const row of el.log.querySelectorAll('.chat-msg[data-id]')) {
+      const on = stars.has(keep, 'dm', Number(row.dataset.id));
+      if (on === row.hasAttribute('data-starred')) continue;
+      row.toggleAttribute('data-starred', on);
+      const tool = row.querySelector('.star-tool');
+      if (!tool) continue;
+      tool.toggleAttribute('data-on', on);
+      tool.textContent = on ? t('stars.unstar') : t('stars.star');
+      tool.title = tool.textContent;
+    }
+  });
+
+  const phone = window.matchMedia('(max-width: 720px), (pointer: coarse) and (max-height: 500px)');
+  const conversationOpen = () => session?.conversations.get(currentId) ?? null;
+
+  /** The box in the conversation's header: the same as a channel's, with the parts a conversation has. */
+  const searchUi = createSearchUi({
+    ids: {
+      box: 'dm-search-box', input: 'dm-search', chips: 'dm-search-chips', clear: 'dm-search-clear', pop: 'dm-search-pop',
+      panel: 'dm-search-results', count: 'dm-sr-count', filters: 'dm-sr-filters', sort: 'dm-sr-sort', close: 'dm-sr-close',
+      body: 'dm-sr-body', pager: 'dm-sr-pager', sortMenu: 'dm-sr-sort-menu',
+    },
+    // Who wrote it, what it holds and when: no channels to be in, nobody else to mention, nothing pinned.
+    kinds: ['from', 'has', 'before', 'during', 'after'],
+    hasKinds: ['link', 'file', 'image', 'video', 'sound'],
+    state,
+    harmony,
+    t,
+    displayOf,
+    faceOf,
+    avatarEl,
+    nameFont,
+    // The two of them.
+    people: () => {
+      const peer = conversationOpen()?.peer;
+      return [...new Set([me(), peer].filter((id) => id != null))].map((id) => ({ id, nickname: peerName(id), label: peerName(id) }));
+    },
+    search: searchConversation,
+    messageContent,
+    historyKey: () => `${home?.key ?? ''}#dm`,
+    placeholder: () => {
+      const open = conversationOpen();
+      return open ? t('search.placeholder_in', { name: peerName(open.peer) }) : t('search.placeholder');
+    },
+    host: () => el.active,
+    jump: jumpToMessage,
+    isNarrow: () => phone.matches,
+  });
 
   /** What a message says, as it was written, for copying. */
   const bodyOf = (id) => session?.messageById(Number(id))?.body ?? null;

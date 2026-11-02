@@ -28,6 +28,7 @@
 [data-icon='download-simple'] { --icon: url('icons/download-simple.svg'); }
 [data-icon='pencil-simple'] { --icon: url('icons/pencil-simple.svg'); }
 [data-icon='push-pin'] { --icon: url('icons/push-pin.svg'); }
+[data-icon='star'] { --icon: url('icons/star.svg'); }
 [data-icon='trash'] { --icon: url('icons/trash.svg'); }
 [data-icon='arrow-bend-up-left'] { --icon: url('icons/arrow-bend-up-left.svg'); }
 [data-icon='eye'] { --icon: url('icons/eye.svg'); }
@@ -74,3 +75,11 @@
 [data-icon='file-csv'] { --icon: url('icons/file-csv.svg'); }
 [data-icon='caret-down'] { --icon: url('icons/caret-down.svg'); }
 [data-icon='caret-up'] { --icon: url('icons/caret-up.svg'); }
+[data-icon='magnifying-glass'] { --icon: url('icons/magnifying-glass.svg'); }
+[data-icon='user'] { --icon: url('icons/user.svg'); }
+[data-icon='at'] { --icon: url('icons/at.svg'); }
+[data-icon='paperclip'] { --icon: url('icons/paperclip.svg'); }
+[data-icon='sliders-horizontal'] { --icon: url('icons/sliders-horizontal.svg'); }
+[data-icon='arrows-down-up'] { --icon: url('icons/arrows-down-up.svg'); }
+[data-icon='clock-counter-clockwise'] { --icon: url('icons/clock-counter-clockwise.svg'); }
+[data-icon='link'] { --icon: url('icons/link.svg'); }

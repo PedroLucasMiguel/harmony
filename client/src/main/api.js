@@ -154,7 +154,7 @@ async function requestJson(serverUrl, pathname, {
 const DM_PATH = new RegExp(
   '^/api/(keys(/wrap|/lookup)?|inbox'
   + '|dms(/blocks|/\\d+(/(messages|read|clear))?)?'
-  + '|dm-messages/\\d+/(edit|edits|delete|react))(\\?[A-Za-z0-9=&,._-]*)?$',
+  + '|dm-messages/\\d+/(edit|edits|delete|react|pin))(\\?[A-Za-z0-9=&,._-]*)?$',
 );
 
 /**
@@ -647,8 +647,9 @@ module.exports = {
     method: 'POST', body: upTo === undefined ? {} : { upTo: Number(upTo) },
   }),
   unread: (s) => requestJson(s, '/api/unread'),
-  messages: (s, id, before) =>
-    requestJson(s, `/api/channels/${id}/messages${before ? `?before=${before}` : ''}`),
+  // `before`: the page above a message; `until`: everything from a message down to the newest (see the server's since()).
+  messages: (s, id, before, until) =>
+    requestJson(s, `/api/channels/${id}/messages${before ? `?before=${Number(before)}` : until ? `?until=${Number(until)}` : ''}`),
   postMessage: (s, id, body) =>
     requestJson(s, `/api/channels/${id}/messages`, { method: 'POST', body }),
   pinMessage: (s, id, pinned) =>
@@ -678,4 +679,7 @@ module.exports = {
     requestJson(s, '/api/soundpad/reorder', { method: 'POST', body: { ids } }),
   search: (s, id, q) =>
     requestJson(s, `/api/channels/${id}/search?q=${encodeURIComponent(q)}`),
+  // The server's search, with filters: see GET /api/search. `params` is a flat object of strings and numbers.
+  searchAll: (s, params) =>
+    requestJson(s, `/api/search?${new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, String(v)]))}`),
 };

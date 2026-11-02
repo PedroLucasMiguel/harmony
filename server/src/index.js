@@ -38,7 +38,7 @@ import {
   publicMessage, publicClip, publicEmoji, mediaTypeOf, mentionsIn,
   MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MAX_JOIN_SOUND_BYTES,
   MAX_JOIN_SOUND_SECONDS, MAX_EMOJI_BYTES, MAX_EMOJIS,
-  MAX_FILE_LIMIT, DEFAULT_FILE_BYTES, SEALED_TYPE,
+  MAX_FILE_LIMIT, DEFAULT_FILE_BYTES, SEALED_TYPE, SEARCH_PAGE, HAS_KINDS,
 } from './chat.js';
 import { UploadSessions } from './upload-sessions.js';
 import { LinkPreviews } from './link-preview.js';
@@ -1433,7 +1433,8 @@ function mentionLookups() {
 function forClient(messages) {
   const list = [].concat(messages).filter(Boolean);
   const byId = chat.reactionsFor(list.map((m) => m.id));
-  const { idOf, roleOf } = mentionLookups();
+  // The lookups read every account and every role. A page with no @ in it has nobody to look up, and most do not.
+  const { idOf, roleOf } = list.some((m) => m.body?.includes('@')) ? mentionLookups() : { idOf: () => null, roleOf: () => null };
   return list.map(
     (m) => publicMessage(m, byId.get(m.id) ?? [], mentionsIn(m.body, idOf, roleOf)),
   );
@@ -1509,6 +1510,13 @@ app.get('/api/channels/:id/messages', requireLogin, (req, res) => {
   const channel = readableChannel(req, id);
   if (!channel) return res.status(404).json({ error: 'no_such_channel' });
 
+  // `until`: everything from that message to the newest, for landing on one far above the opening page.
+  const until = Number.parseInt(req.query.until ?? '', 10);
+  if (Number.isFinite(until)) {
+    const { messages, complete } = chat.since(id, until);
+    return res.json({ messages: forClient(messages), pinned: forClient(chat.pinned(id)), complete });
+  }
+
   const before = Number.parseInt(req.query.before ?? '', 10);
   return res.json({
     messages: forClient(
@@ -1573,7 +1581,18 @@ app.get('/api/messages/:id/notified', requireLogin, (req, res) => {
   return res.json({ everyone: named.everyone, roleIds: named.roleIds, userIds: named.userIds, notified: users });
 });
 
+/**
+ * Pin a message, or let it go. Not everybody's to do: a pin is the server saying "this one matters", which is for the
+ * people who look after it -- admins (owner, super admin, a role that says admin) and whoever holds a role with the
+ * `messages.pin` permission. Pinning and unpinning are the same act and have the same rule, and one's own message
+ * is no exception.
+ *
+ * Asked before anything is looked up, so a refusal says nothing about what exists.
+ */
 app.post('/api/messages/:id/pin', requireLogin, (req, res) => {
+  if (!may(req, 'messages.pin')) {
+    return res.status(403).json({ error: 'forbidden', message: 'Only admins and people allowed to pin can pin or unpin messages.' });
+  }
   const id = Number.parseInt(req.params.id, 10);
   const target = chat.get(id);
   if (target && !readableChannel(req, target.channel_id)) {
@@ -1731,6 +1750,63 @@ app.get('/api/channels/:id/search', requireLogin, (req, res) => {
 
   const { mode, results } = chat.search(id, req.query.q);
   return res.json({ mode, results: forClient(results) });
+});
+
+/**
+ * Search the server's text channels, the way Discord's search box does: words, and filters.
+ *
+ *   q          what the message says, who wrote it or what kind of file it carries
+ *   from       user ids, comma separated            in         channel ids
+ *   has        link, embed, file, image, video, audio or sound, comma separated (all must hold)
+ *   mentions   user ids (the message has their @name in it)
+ *   before, after   ms since 1970                   pinned     1 for only pinned, 0 for only those that are not
+ *   sort       new (default) or old                 offset, limit   a page, 25 by default
+ *
+ * Only channels the caller may read are looked in, whatever `in` says. Answers with the count of everything that
+ * matched, for the pager, and one page of it.
+ */
+app.get('/api/search', requireLogin, (req, res) => {
+  const list = (value) => String(value ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+  const numbers = (value) => list(value).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const number = (value) => (value === undefined || value === '' ? null : Number(value));
+
+  const text = String(req.query.q ?? '').slice(0, 200);
+  const from = numbers(req.query.from);
+  const inChannels = numbers(req.query.in);
+  const has = list(req.query.has).filter((kind) => HAS_KINDS.includes(kind));
+  const mentionIds = numbers(req.query.mentions);
+  const after = number(req.query.after);
+  const before = number(req.query.before);
+  // 1/true: only pinned messages; 0/false: only the ones that are not; anything else: both.
+  const pinWanted = String(req.query.pinned ?? '');
+  const pinned = ['1', 'true'].includes(pinWanted) ? true : ['0', 'false'].includes(pinWanted) ? false : null;
+  if (!text.trim() && !from.length && !inChannels.length && !has.length && !mentionIds.length
+    && !Number.isFinite(after) && !Number.isFinite(before) && pinned === null) {
+    return res.status(400).json({ error: 'empty_search' });
+  }
+
+  const mentions = mentionIds.map((id) => accounts.byId(id)?.nickname).filter(Boolean);
+  const readable = channels.list()
+    .filter((c) => c.kind === 'text' && readableChannel(req, c.id))
+    .map((c) => c.id)
+    .filter((id) => !inChannels.length || inChannels.includes(id));
+  // Asked for a mention of somebody who is not there: nothing can match, which is not the same as no filter.
+  if (mentionIds.length && !mentions.length) return res.json({ total: 0, capped: false, results: [] });
+
+  const { total, capped, results } = chat.searchAll({
+    channelIds: readable,
+    text,
+    from,
+    has,
+    mentions,
+    after,
+    before,
+    pinned,
+    sort: req.query.sort === 'old' ? 'old' : 'new',
+    offset: Number(req.query.offset) || 0,
+    limit: Number(req.query.limit) || SEARCH_PAGE,
+  });
+  return res.json({ total, capped, results: forClient(results) });
 });
 
 /**

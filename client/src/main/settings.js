@@ -226,6 +226,23 @@ const DEFAULTS = {
    */
   streamVolumes: {},
   /*
+   * What was searched for, for each server: { [serverKey]: [{ text, chips: [{ key, value, label }] }] }, newest first,
+   * ten at most. Only on this computer; it is what the search box offers again.
+   */
+  searchHistory: {},
+  /*
+   * The messages starred, for you only: { [`${serverKey}#${userId}`]: [{ kind, id, savedAt, ... }] }. Only on this
+   * computer, and a starred message is a copy, so it stays when the message is deleted. A private message is kept
+   * sealed under the account's own key, never as readable text. See stars-store.js.
+   */
+  stars: {},
+  /*
+   * A card under a link in a private message, as in a channel. On by default, and separate from the channels' because
+   * what it costs is different: to make the card the server reads the page, and so is told the address -- which is
+   * all it is told, the message itself stays sealed.
+   */
+  dmLinkPreviews: true,
+  /*
    * Global hotkeys, as Electron accelerators ("Ctrl+Shift+M"). Empty is
    * unbound. Soundpad clips are kept per SERVER, because a clip id is only
    * meaningful on the server that issued it: { [serverUrl]: { [clipId]: accel } }.

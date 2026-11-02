@@ -801,13 +801,77 @@ p {
   #app-shell {
     --rail-width: 52px;
   }
-  .rail-item {
-    width: 40px;
-    height: 40px;
+  /*
+   * The rail lies down: private messages, the servers and "+" are a strip of buttons across the top, not a column down
+   * the left that takes a tenth of the width from every page. Hidden while something is being typed: the keyboard
+   * leaves so little height that a row of buttons is the first thing to give.
+   */
+  #app-shell {
+    flex-direction: column;
+  }
+  #views {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
   }
   #server-rail {
-    gap: 6px;
-    padding: 8px 0;
+    width: auto;
+    height: 46px;
+    flex-direction: row;
+    gap: 8px;
+    padding: 0 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  #app-shell:has(textarea:focus) #server-rail {
+    display: none;
+  }
+  .rail-item {
+    width: 34px;
+    height: 34px;
+  }
+  .rail-item .server-badge {
+    font-size: 15px;
+  }
+  /* The marks that stood at the left edge stand at the bottom one: a bar for the open server, a dot for news. */
+  .rail-item::before,
+  .rail-item[data-unread]::before,
+  .rail-item[aria-current='true']::before {
+    left: 50%;
+    top: auto;
+    bottom: -6px;
+    width: 0;
+    height: 4px;
+    border-radius: 4px 4px 0 0;
+    transform: translateX(-50%);
+    transition: width 0.15s;
+  }
+  .rail-item[data-unread]::before {
+    width: 8px;
+  }
+  .rail-item[aria-current='true']::before {
+    width: 22px;
+  }
+  .rail-separator {
+    width: 2px;
+    height: 24px;
+  }
+  .rail-badge {
+    min-width: 16px;
+    height: 16px;
+    font-size: 10px;
+    box-shadow: 0 0 0 2px var(--bg);
+  }
+
+  /*
+   * The message box grows with what is typed, but to four lines and no more on a phone: with the keyboard up there
+   * is little screen left, and a box of eight lines is most of it. Past that the box scrolls.
+   */
+  /* Under the id: the box's own rule comes later in this file. */
+  #app-shell .composer textarea {
+    max-height: 6.5rem;
   }
 }
 
@@ -983,6 +1047,10 @@ select:focus {
   border-color: var(--danger);
 }
 
+/* An error line that can be put away by pressing it. */
+#channels-error {
+  cursor: pointer;
+}
 .error {
   color: var(--danger);
   font-size: 13px;
@@ -3348,20 +3416,34 @@ button.danger {
   color: var(--accent);
 }
 .pinned-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
   border: 1px solid rgb(var(--tint-rgb) / 0.12);
   border-radius: 6px;
   padding: 0.25rem;
   margin-bottom: 0.5rem;
   font-size: 0.85rem;
-  max-height: 6rem;
-  overflow-y: auto;
   flex: 0 0 auto;
+}
+.pinned-strip[hidden] {
+  display: none;
+}
+/* The strip holds one pin; the rest are in the list behind the button after it. */
+.pinned-strip .pinned-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.pinned-more {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 /* A button, not a line of text: the whole point of a pin is that you can
    get back to it. */
 .pinned-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.4rem;
   width: 100%;
   padding: 0.25rem 0.4rem;
@@ -3383,12 +3465,733 @@ button.danger {
 .pinned-line:hover {
   background: rgb(var(--tint-rgb) / 0.08);
 }
+.pin-thumb {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 5px;
+  background: rgb(var(--tint-rgb) / 0.1);
+  overflow: hidden;
+}
+.pin-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pin-thumb [data-icon]::before {
+  width: 1.1rem;
+  height: 1.1rem;
+}
 .pinned-line > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.8;
+}
+
+/*
+ * Every pin of a channel, from the pin in its header: a panel under it, a card to a message.
+ */
+.pins-pop {
+  position: fixed;
+  z-index: 60;
+  width: min(420px, calc(100vw - 1rem));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.pins-pop[hidden] {
+  display: none;
+}
+.pins-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.pins-head [data-icon] {
+  width: 1.1rem;
+  height: 1.1rem;
+  opacity: 0.7;
+}
+.pins-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.pins-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+.pin-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid rgb(var(--tint-rgb) / 0.12);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pin-card:hover {
+  background: rgb(var(--tint-rgb) / 0.06);
+}
+.pin-card .msg-avatar {
+  flex: 0 0 auto;
+}
+.pin-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pin-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.pin-when {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+/* Where a starred message was written -- its channel, or the conversation -- after the time. */
+.pin-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+/*
+ * The message inside a card is drawn by the channel's own rules (it is a .chat-msg, which is what they hang on), but
+ * is not a row: no columns, no hover, no padding, no tools of its own.
+ */
+.pin-body.chat-msg {
+  display: block;
+  padding: 0;
+  gap: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  min-width: 0;
+}
+.pin-body.chat-msg:hover {
+  background: none;
+}
+/* The card is a way to find the message, and not the place to read a film: pictures and players are kept small. */
+.pin-body.chat-msg img:not(.avatar-img):not(.emoji),
+.pin-body.chat-msg video {
+  max-height: 240px;
+}
+.pin-tools {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  display: none;
+  gap: 0.25rem;
+  z-index: 2;
+}
+.pin-card:hover .pin-tools,
+.pin-card:focus-within .pin-tools,
+.search-card:hover .pin-tools,
+.search-card:focus-within .pin-tools {
+  display: flex;
+}
+.pin-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.9rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.pin-tool:hover {
+  background: rgb(var(--tint-rgb) / 0.14);
+}
+.pin-tool-icon {
+  width: 1.9rem;
+  padding: 0;
+}
+.pins-empty {
+  margin: 0.5rem;
+  text-align: center;
+}
+
+/*
+ * Search: the box in the channel's header, what it offers, what it found.
+ *
+ * The box is a field with chips in it (from: ana, has: link) and a plain input after them. The dropdown hangs from
+ * it; the results are a panel laid over the member list (not a column of the grid, which is why the member list
+ * is as it was when it goes).
+ */
+.search-box {
+  position: relative;
+  flex: 1 1 14rem;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.2rem 1.6rem 0.2rem 1.7rem;
+  min-height: 2rem;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 0.85rem;
+  cursor: text;
+}
+.search-box[data-has-chips] {
+  border-radius: 12px;
+}
+.search-box:focus-within {
+  border-color: var(--accent);
+}
+.search-box-icon {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.search-chips {
+  display: contents;
+}
+/* input[type='text'] is styled app-wide (a border, a fill, a ring when focused); in here the box is the field. */
+.search-box input.search-input,
+.search-box input.search-input:focus {
+  /* em, not rem: this app's rem is big, and the chip and the typing have to share a narrow box. */
+  flex: 1 1 2.5em;
+  min-width: 3em;
+  width: auto;
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  outline: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0.15rem 0;
+  margin: 0;
+}
+.search-clear {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.search-clear:hover {
+  opacity: 1;
+  background: rgb(var(--tint-rgb) / 0.1);
+}
+.search-clear[hidden] {
+  display: none;
+}
+.search-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 100%;
+  padding: 0.1rem 0.2rem 0.1rem 0.5rem;
+  border-radius: 6px;
+  background: rgb(var(--tint-rgb) / 0.12);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.search-chip b {
+  opacity: 0.7;
+  font-weight: 600;
+}
+.search-chip.static {
+  padding-right: 0.5rem;
+}
+.search-chip-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font-size: 0.7rem;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.search-chip-remove:hover {
+  opacity: 1;
+  background: rgb(var(--tint-rgb) / 0.15);
+}
+
+.search-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: min(440px, calc(100vw - 1rem));
+  max-height: min(70vh, 540px);
+  overflow-y: auto;
+  padding: 0.3rem;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  cursor: default;
+}
+.search-pop[hidden] {
+  display: none;
+}
+.search-pop-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.6rem 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  opacity: 0.8;
+}
+.search-pop-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+}
+.search-pop-action:hover {
+  opacity: 1;
+  background: rgb(var(--tint-rgb) / 0.1);
+}
+.search-pop-empty {
+  padding: 0.7rem 0.8rem;
+  opacity: 0.65;
+}
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.search-row:hover,
+.search-row[data-active] {
+  background: rgb(var(--tint-rgb) / 0.09);
+}
+.search-row-icon {
+  flex: 0 0 auto;
+  font-size: 1.15rem;
+  opacity: 0.65;
+}
+.search-row-text {
+  min-width: 0;
+}
+.search-row-title {
+  font-size: 0.92rem;
+}
+.search-row-hint {
+  font-size: 0.78rem;
+  opacity: 0.65;
+}
+.search-row-hint b {
+  font-weight: 700;
+}
+.search-avatar {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.search-history-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.search-history-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channels-layout {
+  position: relative;
+}
+.search-results {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 30;
+  width: min(430px, 48%);
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.search-results[hidden] {
+  display: none;
+}
+.sr-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+.sr-head h3 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.95rem;
+}
+.sr-sort {
+  position: relative;
+}
+.search-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 10rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.search-menu[hidden] {
+  display: none;
+}
+.search-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+  cursor: pointer;
+}
+.search-menu-item:hover {
+  background: rgb(var(--tint-rgb) / 0.1);
+}
+.search-menu-item[aria-checked='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+.sr-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.search-results[data-loading] .sr-body {
+  opacity: 0.55;
+}
+.search-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0.4rem 0 0.1rem;
+  font-size: 0.9rem;
+}
+.search-group:first-child {
+  margin-top: 0;
+}
+.search-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid rgb(var(--tint-rgb) / 0.12);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.search-card:hover {
+  background: rgb(var(--tint-rgb) / 0.06);
+}
+.search-card[data-current] {
+  border-color: var(--accent);
+}
+.search-card .msg-avatar {
+  flex: 0 0 auto;
+}
+.search-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: auto;
+  padding: 1rem;
+  text-align: center;
+  opacity: 0.75;
+}
+.sr-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+.sr-pager[hidden] {
+  display: none;
+}
+.search-page {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.search-page:hover:not(:disabled) {
+  background: rgb(var(--tint-rgb) / 0.1);
+}
+.search-page[aria-current='page'] {
+  background: var(--accent);
+  color: #fff;
+}
+.search-page:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.search-page-gap {
+  opacity: 0.5;
+}
+
+/* "More filters": every filter in one place. */
+.search-filters {
+  width: min(480px, 92vw);
+  max-height: 88vh;
+  padding: 0;
+  overflow: hidden;
+}
+.search-filters[open] {
+  display: flex;
+  flex-direction: column;
+}
+.search-filters-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 88vh;
+}
+.search-filters-title {
+  margin: 0;
+  padding: 1rem 1.2rem 0.4rem;
+}
+.search-filters-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.4rem 1.2rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.search-field-group h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.search-field-group p {
+  margin: 0.1rem 0 0.4rem;
+  font-size: 0.82rem;
+}
+.search-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.4rem;
+}
+.search-select,
+.search-date-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+}
+.search-kind {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.search-kind[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 0.18);
+}
+.search-dates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.search-date-row {
+  display: grid;
+  grid-template-columns: 7rem 1fr auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+.search-add-date {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  width: 100%;
+  padding: 0.55rem;
+  border: 0;
+  border-radius: 8px;
+  background: rgb(var(--tint-rgb) / 0.08);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.search-filters-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1.2rem;
+  border-top: 1px solid var(--border);
+}
+.search-filters-clear {
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.search-filters-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* In a conversation's header the box takes what the name leaves, up to a width that is still a search box. */
+#view-dms .dm-head .search-box {
+  flex: 0 1 17rem;
+  margin-left: auto;
+}
+#view-dms .dm-head h2 {
+  flex: 0 1 auto;
+}
+/* The conversation's panel is laid over its right side, which is where the conversation's own box is. */
+#dm-active .search-results {
+  right: 0.75rem;
+  bottom: 0.75rem;
+}
+
+/* On a phone the panel is the whole screen, and the dropdown the width of it. */
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
+  .search-results {
+    position: fixed;
+    top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    right: 0;
+    bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    left: 0;
+    z-index: 40;
+    width: auto;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .search-pop {
+    position: fixed;
+    left: 0.5rem;
+    right: 0.5rem;
+    width: auto;
+  }
+  /* The box has a row of its own under the name: there is no room beside it. */
+  #view-dms .dm-head {
+    flex-wrap: wrap;
+    height: auto;
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+  }
+  #view-dms .dm-head .search-box {
+    flex: 1 1 100%;
+    order: 10;
+    margin-left: 0;
+  }
 }
 
 /* Where a jump landed. Long enough to find with your eyes, short enough
@@ -3924,6 +4727,85 @@ button.danger {
   height: 1rem;
 }
 
+/*
+ * The files waiting to be sent, above the box: a card for each, with a look at the file itself -- the picture, a
+ * video's first frame, or the icon of its kind -- so that what is shared is what was meant. In a row that wraps and,
+ * past a few rows, scrolls: ten files must not push the box off the screen.
+ */
+.composer-pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.15rem 0.1rem 0.4rem;
+  max-height: 13rem;
+  overflow-y: auto;
+}
+.composer-pending[hidden] {
+  display: none;
+}
+.pending-card {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 7.5rem;
+  border-radius: 8px;
+  background: rgb(var(--tint-rgb) / 0.07);
+  overflow: hidden;
+  font-size: 0.78rem;
+}
+.pending-preview {
+  display: grid;
+  place-items: center;
+  height: 5.5rem;
+  background: rgb(0 0 0 / 0.25);
+  overflow: hidden;
+}
+.pending-preview img,
+.pending-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pending-preview [data-icon]::before {
+  width: 2.6rem;
+  height: 2.6rem;
+  opacity: 0.85;
+}
+.pending-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0.25rem 0.45rem 0.35rem;
+}
+.pending-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pending-size {
+  opacity: 0.6;
+  font-size: 0.72rem;
+}
+/* On the picture's corner, over whatever it is: so it is dark and round, and found on a white one too. */
+.composer-btn.pending-remove {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  min-width: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+}
+.composer-btn.pending-remove[data-icon]::before {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
 /* ---------- markdown in a message ---------- */
 
 /*
@@ -4076,12 +4958,6 @@ button.danger {
    field; the app provides its own where it needs one. */
 .search-field::-webkit-search-cancel-button {
   display: none;
-}
-
-#chat-search {
-  margin-left: auto;
-  max-width: 18rem;
-  flex: 1 1 12rem;
 }
 
 /* ---------- the soundboard ---------- */
@@ -7973,7 +8849,8 @@ input[data-saved] {
 #dm-safety[data-verified] {
   color: var(--live);
 }
-.dm-more {
+.dm-more,
+.chat-older {
   align-self: center;
   margin: 0.3rem 0;
 }
@@ -9037,4 +9914,187 @@ input[type='color'] {
   border-left: 2px solid rgb(var(--tint-rgb) / 0.12);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+}
+
+/*
+ * The header's controls on one line: the name, the search box and the buttons are centred on each other. The header
+ * is a row aligned on the text's baseline, which sits a box with a border (the search) and a button with an icon
+ * (pin, star) at different heights from one another.
+ */
+#chat-active .voice-head,
+#view-dms .dm-head {
+  align-items: center;
+}
+#chat-active .voice-head h2 {
+  margin: 0;
+}
+/* A line under the channel's name, search and buttons, between them and the chat. */
+#chat-active .voice-head {
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * Starred messages: the star on a row, the star's panel, and what is in it. A star is a message the person keeps
+ * for themselves (see stars-store.js), so it is drawn lightly: a small gold star at the row's corner, no bar.
+ */
+.chat-msg[data-starred]::before {
+  content: '';
+  position: absolute;
+  top: 0.3rem;
+  right: 0.5rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  background: #f2b84b;
+  -webkit-mask: url('icons/star.svg') center / contain no-repeat;
+  mask: url('icons/star.svg') center / contain no-repeat;
+  pointer-events: none;
+}
+.msg-tool.star-tool[data-on] {
+  color: #f2b84b;
+}
+.stars-pop .pins-head [data-icon='star'] {
+  color: #f2b84b;
+  opacity: 1;
+}
+.stars-search {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem 0.6rem 0;
+}
+.stars-search .search-box {
+  flex: none;
+  width: 100%;
+}
+.stars-count {
+  padding: 0 0.2rem;
+  font-size: 0.75rem;
+}
+.stars-more {
+  align-self: center;
+}
+.dm-star-file {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+  font-size: 0.85em;
+}
+.dm-star-file::before {
+  width: 1em;
+  height: 1em;
+}
+
+/*
+ * Search and starred messages on a phone.
+ *
+ * The box is a small pill in the header's row, so while it is being typed in it takes the row (the name and the
+ * buttons make way) and gets a back arrow where the magnifier was. The dropdown is a list as wide as the screen under
+ * it -- placed by search-ui, which knows where the box is -- with rows a finger can hit. The answers fill the screen
+ * and say what was asked, at the top, to go back to it. The star's and the pins' panels are whole screens too, with a
+ * close button, where on a desktop they are cards that a press outside puts away.
+ */
+.search-back,
+.search-query,
+.pins-close {
+  display: none;
+}
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
+  #chat-active .voice-head:has(.search-box:focus-within) > h2,
+  #chat-active .voice-head:has(.search-box:focus-within) > .icon-only {
+    display: none;
+  }
+  #chat-active .voice-head .search-box:focus-within {
+    flex: 1 1 100%;
+  }
+  .search-box {
+    min-height: 2.6rem;
+  }
+  .search-box:has(> .search-back):focus-within .search-box-icon {
+    display: none;
+  }
+  .search-box:focus-within > .search-back {
+    display: inline-flex;
+  }
+  /* Room for the arrow, which is wider than the magnifier it stands in for. */
+  .search-box:has(> .search-back):focus-within {
+    padding-left: 2.6rem;
+  }
+  .search-back {
+    position: absolute;
+    left: 0.25rem;
+    top: 50%;
+    transform: translateY(-50%);
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: inherit;
+  }
+  .search-pop {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: none;
+    padding: 0.4rem 0.5rem calc(0.4rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+    border-width: 1px 0 0;
+    border-radius: 0;
+    box-shadow: none;
+    z-index: 70;
+  }
+  .search-row {
+    min-height: 3rem;
+  }
+  .search-query {
+    display: block;
+    width: 100%;
+    flex: none;
+    box-sizing: border-box;
+    padding: 0.65rem 0.9rem;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: rgb(var(--tint-rgb) / 0.05);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .search-query::before {
+    margin-right: 0.5rem;
+    opacity: 0.6;
+  }
+  #dm-active .search-results {
+    right: 0;
+    bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  }
+
+  .pins-pop {
+    top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) !important;
+    right: 0 !important;
+    bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    left: 0;
+    width: auto;
+    max-height: none !important;
+    border: 0;
+    border-radius: 0;
+    z-index: 70;
+  }
+  .pins-close {
+    display: inline-flex;
+    margin-left: auto;
+  }
+  .stars-search .search-box {
+    min-height: 2.75rem;
+  }
 }

@@ -257,7 +257,7 @@ const uploadSession = {
 const DM_PATH = new RegExp(
   '^/api/(keys(/wrap|/lookup)?|inbox'
   + '|dms(/blocks|/\\d+(/(messages|read|clear))?)?'
-  + '|dm-messages/\\d+/(edit|edits|delete|react))(\\?[A-Za-z0-9=&,._-]*)?$',
+  + '|dm-messages/\\d+/(edit|edits|delete|react|pin))(\\?[A-Za-z0-9=&,._-]*)?$',
 );
 
 async function dmRequest(serverUrl, method, pathname, body) {
@@ -425,8 +425,8 @@ export const api = {
     method: 'POST', body: upTo === undefined ? {} : { upTo: Number(upTo) },
   }),
   unread: (s) => requestJson(s, '/api/unread'),
-  messages: (s, id, before) =>
-    requestJson(s, `/api/channels/${id}/messages${before ? `?before=${before}` : ''}`),
+  messages: (s, id, before, until) =>
+    requestJson(s, `/api/channels/${id}/messages${before ? `?before=${Number(before)}` : until ? `?until=${Number(until)}` : ''}`),
   postMessage: (s, id, body) => requestJson(s, `/api/channels/${id}/messages`, { method: 'POST', body }),
   pinMessage: (s, id, pinned) => requestJson(s, `/api/messages/${id}/pin`, { method: 'POST', body: { pinned } }),
   deleteMessage: (s, id) => requestJson(s, `/api/messages/${id}/delete`, { method: 'POST' }),
@@ -444,6 +444,7 @@ export const api = {
   deleteClip: (s, id) => requestJson(s, `/api/soundpad/${id}/delete`, { method: 'POST' }),
   reorderClips: (s, ids) => requestJson(s, '/api/soundpad/reorder', { method: 'POST', body: { ids } }),
   search: (s, id, q) => requestJson(s, `/api/channels/${id}/search?q=${encodeURIComponent(q)}`),
+  searchAll: (s, params) => requestJson(s, `/api/search?${new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, String(v)]))}`),
 
   // Not on the desktop's list: these are what the main process does for it.
   mediaKey: (s) => requestJson(s, '/api/media-key'),

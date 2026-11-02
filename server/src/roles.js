@@ -34,6 +34,7 @@ export const PERMISSIONS = [
   'users.kick',
   'users.ban',
   'messages.delete',
+  'messages.pin',
   'roles.hierarchy',
   'badges.create',
   'badges.edit',

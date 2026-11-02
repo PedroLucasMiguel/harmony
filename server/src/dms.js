@@ -23,6 +23,8 @@ const MAX_VERSIONS = 25;
 
 /** Messages per page, as channels page them. */
 const PAGE_SIZE = 50;
+/** How many messages one conversation may have pinned, as many as a channel's. */
+export const MAX_PINS = 50;
 
 /**
  * The longest sealed text accepted, in base64url characters.
@@ -126,6 +128,12 @@ export class DirectMessages {
         + 'WHERE id = ?',
       ),
       deleteMessage: db.prepare('DELETE FROM dm_messages WHERE id = ?'),
+      setPinned: db.prepare('UPDATE dm_messages SET pinned = ?, pinned_at = ?, pinned_by = ? WHERE id = ?'),
+      pinned: db.prepare(`
+        SELECT * FROM dm_messages WHERE conversation_id = ? AND id > ? AND pinned = 1
+        ORDER BY COALESCE(pinned_at, 0) DESC, id DESC
+      `),
+      pinnedCount: db.prepare('SELECT COUNT(*) AS n FROM dm_messages WHERE conversation_id = ? AND pinned = 1'),
       keepVersion: db.prepare(`
         INSERT INTO dm_message_edits (message_id, sender_key, recipient_key, sealed, written_at)
         VALUES (?, ?, ?, ?, ?)
@@ -418,6 +426,25 @@ export class DirectMessages {
     });
   }
 
+  /**
+   * Pin a message, or let it go. Either of the two may, and only a message that says something: not the line about
+   * a call.
+   */
+  setPinned(message, userId, pinned) {
+    if (message.kind !== 'text') return { ok: false, error: 'no_such_message' };
+    if (pinned && !message.pinned && this.#q.pinnedCount.get(message.conversation_id).n >= MAX_PINS) {
+      return { ok: false, error: 'too_many_pins' };
+    }
+    if (Boolean(message.pinned) === Boolean(pinned)) return { ok: true, message };
+    this.#q.setPinned.run(pinned ? 1 : 0, pinned ? Date.now() : null, pinned ? userId : null, message.id);
+    return { ok: true, message: this.#q.message.get(message.id) };
+  }
+
+  /** What is pinned in a conversation, the last pinned first, as far as `userId` can still see. */
+  pinned(conversationId, userId) {
+    return this.#q.pinned.all(conversationId, this.clearedId(conversationId, userId));
+  }
+
   /** A message's earlier versions, sealed, oldest first; the current one is the message itself. */
   versions(message) {
     return this.#q.versions.all(message.id).map((v) => ({
@@ -580,5 +607,6 @@ export const publicDmMessage = (m, reactions = []) => {
     reactions,
     createdAt: m.created_at,
     editedAt: m.edited_at ?? null,
+    pinned: Boolean(m.pinned),
   };
 };

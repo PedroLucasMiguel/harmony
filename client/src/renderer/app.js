@@ -17,7 +17,7 @@ import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
 import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
-import { fileCard, textCard, previewsAsText, readHead } from './attachment-card.js';
+import { fileCard, iconFor, textCard, previewsAsText, readHead } from './attachment-card.js';
 import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
 import { firstLink, linkEmbed } from './link-embed.js';
 import { elapsedText } from './elapsed.js';
@@ -32,6 +32,12 @@ import {
   canAdminister, contextOf, nameLookOf, roleByHandle, roleHandle, roleIcon, rolesOf, roleLook, sortRoles,
 } from './roles.js';
 import { createServerAdmin } from './server-admin.js';
+import { createSearchUi } from './search-ui.js';
+import { attachmentThumb, createPins, messageCard, toolButton } from './pins-ui.js';
+import { StarError, channelSnapshot, createStarStore } from './stars-store.js';
+import { createStarsUi } from './stars-ui.js';
+import { keepEnd } from './chat-follow.js';
+import { expiring } from './expiring.js';
 import { createProfileCard } from './profile-card.js';
 import { createDebugLog } from './debug-log.js';
 import { NAME_COLOR_SPEED, NAME_COLOR_STOPS, paintName, startingPoint } from './name-color.js';
@@ -328,9 +334,6 @@ const el = {
   chatDrop: $('chat-drop'),
   chatDropTitle: $('chat-drop-title'),
   chatName: $('chat-name'),
-  chatSearch: $('chat-search'),
-  chatSearchClear: $('chat-search-clear'),
-  chatPinned: $('chat-pinned'),
   chatLog: $('chat-log'),
   chatToBottom: $('chat-to-bottom'),
   chatForm: $('chat-form'),
@@ -357,15 +360,12 @@ const el = {
   chatReplyClear: $('chat-reply-clear'),
   chatEditing: $('chat-editing'),
   chatEditingClear: $('chat-editing-clear'),
-  chatPendingThumb: $('chat-pending-thumb'),
-  chatPendingName: $('chat-pending-name'),
   chatUpload: $('chat-upload'),
   chatUploadName: $('chat-upload-name'),
   chatUploadAmount: $('chat-upload-amount'),
   chatUploadBar: $('chat-upload-bar'),
   chatUploadFill: $('chat-upload-fill'),
   chatUploadCancel: $('chat-upload-cancel'),
-  chatPendingClear: $('chat-pending-clear'),
   soundpad: $('soundpad'),
   chatEmoji: $('chat-emoji'),
   mentionPop: $('mention-pop'),
@@ -373,6 +373,7 @@ const el = {
   mentionSound: $('mention-sound'),
   fixBlackVideo: $('fix-black-video'),
   linkPreviews: $('link-previews'),
+  dmLinkPreviews: $('dm-link-previews'),
   debugLog: $('debug-log'),
   debugLogFile: $('debug-log-file'),
   debugLogError: $('debug-log-error'),
@@ -692,13 +693,15 @@ const state = {
   /** Android's screen share, published natively: { channelId } while on. */
   nativeShare: null,
   chat: {
-    channelId: null, messages: [], pinned: [], searching: false, pendingFile: null, replyTo: null,
+    channelId: null, messages: [], pinned: [], pendingFiles: [], replyTo: null,
     /** One of your own messages being rewritten in the composer, or null. See setEditing. */
     editing: null,
     /** Where each channel was scrolled to when it was left, for this session. See rememberChatScroll. */
     scrolls: new Map(),
     /** Whether the log is showing a channel's history, which is the only thing worth remembering a position in. */
     showsHistory: false,
+    /** Whether there are messages older than the first one held: a full page last time means there may be. */
+    hasMore: false,
     /**
      * Where the new messages began when the open channel was entered: the id of the
      * last one that had been read, or null if there was nothing new. The divider
@@ -2738,6 +2741,12 @@ function showChannelsError(message) {
   el.channelsError.textContent = message;
   el.channelsError.hidden = !message;
 }
+// What went wrong is said for a while and then taken back; a click takes it back at once.
+expiring(el.channelsError, () => showChannelsError(''));
+el.channelsError.title = t('app.dismiss');
+el.channelsError.addEventListener('click', () => showChannelsError(''));
+// The line under the message box says what was done (saved, downloading, a refusal) in the same way.
+expiring(el.chatNote, () => { el.chatNote.textContent = ''; });
 
 /** A role as a person reads it: 'owner', 'admin' or 'member', in their language. */
 const roleLabel = (role) => (['owner', 'admin', 'member'].includes(role) ? t(`roles.${role}`) : String(role ?? ''));
@@ -4691,9 +4700,16 @@ function adoptBadges(list) {
 }
 
 /** What the signed-in account can now do, reflected in the controls that depend on it. */
+/** Whether the person could pin the last time the controls were drawn: a change in it redraws the chat. */
+let couldPin = null;
+
 function applyRolePowers() {
   if (!state.auth.user) return;
   el.channelAdd.hidden = !can('channels.create');
+  // A role given or taken away reaches the pin on every message and the list of pins, at once.
+  const mayPin = can('messages.pin');
+  if (couldPin !== null && couldPin !== mayPin && state.chat.channelId !== null) renderChat();
+  couldPin = mayPin;
   el.channelsRole.textContent = ownRoleText(state.auth.user);
   // Your own name in the corner follows the look of your role, which may have
   // changed without you being touched.
@@ -8419,16 +8435,16 @@ async function openTextChannel(channel) {
   setReply(null);
   // What was being rewritten is in the channel being left.
   setEditing(null);
+  channelPins?.close();
   // Whatever was waiting to be sent was waiting to be sent HERE. Carrying
   // it into the next channel is how a screenshot ends up in the wrong one.
   setPendingFile(null);
   applyComposer();
   // Opening it is reading it. The mark means "since I have been looking".
   state.mentioned.delete(channel.id);
-  state.chat.searching = false;
   el.chatName.textContent = `#${channel.name}`;
-  el.chatSearch.value = '';
-  el.chatSearchClear.hidden = true;
+  // What was searched for is not given up by going to another channel: the search is of the whole server.
+  searchUi?.refreshPlaceholder();
   el.chatNote.textContent = '';
   el.voiceIdle.hidden = true;
   applyStage();
@@ -8449,10 +8465,12 @@ async function openTextChannel(channel) {
     const toNews = entering && state.chat.newAfter !== null;
     const wantsPlace = !toNews && saved && !saved.atBottom;
     let history = messages;
-    if (toNews) history = await pageBackTo(server, channel.id, messages, state.chat.newAfter);
-    else if (wantsPlace) history = await pageBackTo(server, channel.id, messages, saved.anchorId);
+    let more = messages.length >= CHAT_PAGE;
+    if (toNews) ({ list: history, more } = await pageBackTo(server, channel.id, messages, state.chat.newAfter));
+    else if (wantsPlace) ({ list: history, more } = await pageBackTo(server, channel.id, messages, saved.anchorId));
     if (state.server !== server || state.chat.channelId !== channel.id) return;
     state.chat.messages = history;
+    state.chat.hasMore = more;
     state.chat.pinned = pinned;
     state.chat.showsHistory = true;
     renderChat({ scrollToBottom: true, restore: wantsPlace ? saved : null, toNews });
@@ -8471,13 +8489,65 @@ async function openTextChannel(channel) {
  * channel would otherwise send one for every message.
  */
 let readTimer = null;
+/** The search box and its results; made once the functions it leans on exist. See createSearchUi. */
+let searchUi = null;
+/** What is pinned in the open channel: the strip and the panel. See createPins. */
+let channelPins = null;
+/** The messages starred on this server, from the star in the header. See createStarsUi. */
+let channelStars = null;
+
+/**
+ * The messages this person has starred, on this computer and for them alone: not the conversation's, so not the
+ * server's. The list is part of the settings, read from `state.settings` and put back there before anything waits.
+ */
+const stars = createStarStore({
+  read: () => state.settings?.stars,
+  write: async (next) => {
+    state.settings = { ...state.settings, stars: next };
+    try {
+      await harmony.settings.set({ stars: next });
+    } catch (err) {
+      showChannelsError(err.message);
+    }
+  },
+});
+/** Whose stars these are: this account, on this server. */
+const starScope = () => (state.server && state.auth.user ? `${serverKey(state.server)}#${state.auth.user.id}` : null);
+const isStarred = (message) => {
+  const scope = starScope();
+  return Boolean(scope) && stars.has(scope, 'channel', message.id);
+};
+
+/** The star on a message and on its row, as they are now. */
+function paintStar(row, on) {
+  row.toggleAttribute('data-starred', on);
+  const tool = row.querySelector('.star-tool');
+  if (!tool) return;
+  tool.toggleAttribute('data-on', on);
+  tool.textContent = on ? t('stars.unstar') : t('stars.star');
+  tool.title = tool.textContent;
+}
+
+function toggleStar(message) {
+  const scope = starScope();
+  if (!scope) return;
+  try {
+    const done = isStarred(message)
+      ? stars.remove(scope, 'channel', message.id)
+      : stars.add(scope, { kind: 'channel', id: message.id, channelId: message.channelId, message: channelSnapshot(message) });
+    el.chatNote.textContent = '';
+    return done;
+  } catch (err) {
+    el.chatNote.textContent = err instanceof StarError && err.code === 'too_many' ? t('stars.too_many') : err.message;
+  }
+}
 function markOpenChannelRead() {
   clearTimeout(readTimer);
   readTimer = setTimeout(() => {
     const id = state.chat.channelId;
     const newest = state.chat.messages.at(-1)?.id;
     // Not looked at: a channel open behind a minimised window has not been read.
-    if (!state.auth.user || !id || !newest || state.chat.searching || document.hidden) return;
+    if (!state.auth.user || !id || !newest || document.hidden) return;
     harmony.api.markRead(state.server, id, newest)
       .then((entry) => {
         noteRead(entry);
@@ -8543,6 +8613,7 @@ function rememberChatScroll() {
  */
 async function pageBackTo(server, channelId, messages, anchorId) {
   let list = messages;
+  let more = messages.length >= CHAT_PAGE;
   for (let page = 0; page < JUMP_MAX_PAGES && list.length && list[0].id > anchorId; page += 1) {
     let older;
     try {
@@ -8550,11 +8621,12 @@ async function pageBackTo(server, channelId, messages, anchorId) {
     } catch {
       break;
     }
+    more = (older?.length ?? 0) >= CHAT_PAGE;
     if (!older?.length) break;
     list = [...older, ...list];
     if (state.server !== server || state.chat.channelId !== channelId) break;
   }
-  return list;
+  return { list, more };
 }
 
 /**
@@ -8567,13 +8639,16 @@ async function pageBackTo(server, channelId, messages, anchorId) {
  * one's conversation.
  */
 function resetChat() {
+  channelPins?.close();
+  channelStars?.close();
+  searchUi?.reset();
   state.chat.scrolls.clear();
   state.chat.showsHistory = false;
+  state.chat.hasMore = false;
   state.chat.channelId = null;
   state.chat.newAfter = null;
   state.chat.messages = [];
   state.chat.pinned = [];
-  state.chat.searching = false;
   setReply(null);
   setPendingFile(null);
   state.mentioned.clear();
@@ -8582,6 +8657,8 @@ function resetChat() {
 }
 
 function closeChat() {
+  channelPins?.close();
+  channelStars?.close();
   rememberChatScroll();
   state.chat.showsHistory = false;
   state.chat.channelId = null;
@@ -9513,13 +9590,13 @@ async function saveAttachment(message, button = null) {
 /**
  * What goes with the next message, and the chip that says so.
  *
- * One function rather than three places setting state.chat.pendingFile,
+ * One function rather than three places setting state.chat.pendingFiles,
  * because the preview URL has to be revoked when it stops being used. An
  * object URL that nothing revokes holds the whole blob in memory for the
  * life of the window, and pasting screenshots into a chat box is exactly
  * the habit that produces a hundred of them.
  */
-let pendingPreview = null;
+let pendingPreviews = [];
 
 /**
  * Whether there is anything to send.
@@ -9532,7 +9609,7 @@ function applyComposer() {
   const editing = state.chat.editing;
   el.chatSend.disabled = editing
     ? !el.chatInput.value.trim() && !editing.attachmentHash
-    : !el.chatInput.value.trim() && !state.chat.pendingFile;
+    : !el.chatInput.value.trim() && !state.chat.pendingFiles.length;
   // With nothing to send the microphone is where the send button is, as in a
   // phone's chat: same size, same place, so nothing around it moves.
   const record = el.chatSend.disabled && !editing;
@@ -9547,7 +9624,8 @@ const chatVoice = createRecorderBar({
   t,
   deviceId: () => state.settings.voiceInputId ?? '',
   onSend: (file) => {
-    setPendingFile(file);
+    // With whatever else was waiting to go: the voice message is the last of them.
+    setPendingFiles([...state.chat.pendingFiles, file]);
     sendMessage();
   },
   onError: (message) => { el.chatNote.textContent = message; },
@@ -9557,33 +9635,108 @@ el.chatRecord.addEventListener('click', () => {
   chatVoice.start();
 });
 
-function setPendingFile(file) {
-  state.chat.pendingFile = file ?? null;
+/** The most files that go in one go: each is a message, and a hundred of them is a flood, not a share. */
+const MAX_PENDING_FILES = 10;
 
-  if (pendingPreview) {
-    URL.revokeObjectURL(pendingPreview);
-    pendingPreview = null;
-  }
+/** What a file is, for what to show of it before it is sent: by its type, or by its name where it has none. */
+function pendingKind(file) {
+  const type = String(file.type ?? '').split('/')[0];
+  if (['image', 'video', 'audio'].includes(type)) return type;
+  const icon = iconFor(file.name);
+  if (icon === 'file-image') return 'image';
+  if (icon === 'file-video') return 'video';
+  if (icon === 'file-audio') return 'audio';
+  return 'file';
+}
 
-  el.chatPending.hidden = !file;
-  applyComposer();
-  if (!file) {
-    el.chatPendingThumb.hidden = true;
-    el.chatPendingThumb.removeAttribute('src');
-    el.chatPendingName.textContent = '';
-    return;
-  }
+/** One file waiting to be sent: what it looks like (the picture, the first frame, or its kind of file), its name and size. */
+function pendingCard(file, index) {
+  const kind = pendingKind(file);
+  const card = document.createElement('div');
+  card.className = 'pending-card';
+  card.dataset.kind = kind;
+  card.dataset.index = String(index);
 
-  el.chatPendingName.textContent = `${file.name} \u00B7 ${formatBytes(file.size)}`;
-  el.chatPendingName.title = file.name;
-  if (file.type.startsWith('image/')) {
-    pendingPreview = URL.createObjectURL(file);
-    el.chatPendingThumb.src = pendingPreview;
-    el.chatPendingThumb.hidden = false;
+  const preview = document.createElement('div');
+  preview.className = 'pending-preview';
+  const showIcon = () => {
+    preview.replaceChildren();
+    const icon = document.createElement('span');
+    icon.dataset.icon = iconFor(file.name, kind);
+    icon.setAttribute('aria-hidden', 'true');
+    preview.append(icon);
+  };
+  if (kind === 'image' || kind === 'video') {
+    const url = URL.createObjectURL(file);
+    pendingPreviews.push(url);
+    const media = document.createElement(kind === 'image' ? 'img' : 'video');
+    if (kind === 'video') {
+      media.muted = true;
+      media.preload = 'metadata';
+      media.playsInline = true;
+      // A moment in, not the very first frame, which is so often black.
+      media.src = `${url}#t=0.1`;
+    } else {
+      media.alt = file.name;
+      media.src = url;
+    }
+    // A type this window cannot draw (a HEIC picture, say) is what the file's own icon says it is.
+    media.addEventListener('error', showIcon, { once: true });
+    preview.append(media);
   } else {
-    el.chatPendingThumb.hidden = true;
-    el.chatPendingThumb.removeAttribute('src');
+    showIcon();
   }
+
+  const meta = document.createElement('div');
+  meta.className = 'pending-meta';
+  const name = document.createElement('span');
+  name.className = 'pending-name';
+  name.textContent = file.name;
+  name.title = file.name;
+  const size = document.createElement('span');
+  size.className = 'pending-size';
+  size.textContent = formatBytes(file.size);
+  meta.append(name, size);
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'composer-btn pending-remove';
+  remove.dataset.icon = 'x';
+  remove.title = t('chat_pending.don_t_send_this');
+  remove.setAttribute('aria-label', t('chat_pending.don_t_send_this'));
+  remove.addEventListener('click', () => {
+    setPendingFiles(state.chat.pendingFiles.filter((_, i) => i !== index));
+    el.chatInput.focus();
+  });
+
+  card.append(preview, meta, remove);
+  return card;
+}
+
+/**
+ * The files that go with the next message, and the cards that show them.
+ *
+ * Every card shows its file as it is going to arrive -- the picture itself, a video's first frame, the icon of its
+ * kind -- BEFORE it is sent, so that what is about to be shared is what was meant. Several can wait, and are sent one
+ * message each, in this order; the words in the box go with the last. See sendMessage.
+ */
+function setPendingFiles(files) {
+  state.chat.pendingFiles = files ?? [];
+  for (const url of pendingPreviews) URL.revokeObjectURL(url);
+  pendingPreviews = [];
+  el.chatPending.hidden = !state.chat.pendingFiles.length;
+  el.chatPending.replaceChildren(...state.chat.pendingFiles.map(pendingCard));
+  applyComposer();
+}
+
+const setPendingFile = (file) => setPendingFiles(file ? [file] : []);
+
+/** More files for the next message: those that fit the server, up to the most that go together. */
+function addPendingFiles(files) {
+  const fitting = files.filter(fitsUploadLimit);
+  const room = MAX_PENDING_FILES - state.chat.pendingFiles.length;
+  if (fitting.length > room) el.chatNote.textContent = t('app.too_many_files', { max: MAX_PENDING_FILES });
+  if (fitting.length) setPendingFiles([...state.chat.pendingFiles, ...fitting.slice(0, Math.max(0, room))]);
 }
 
 /** The strip of reactions under a message. Drawn only when there are some. */
@@ -10477,7 +10630,6 @@ function setEditing(message) {
 
 /** The message Up would edit: your latest in this channel, as far as it is loaded. */
 function lastOwnMessage() {
-  if (state.chat.searching) return null;
   const me = state.auth.user?.id;
   return [...state.chat.messages].reverse().find((m) => m.userId === me) ?? null;
 }
@@ -10513,6 +10665,49 @@ async function saveEdit() {
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 /**
+ * What a message says and carries, as the `.text` of a row: its words (with the markdown renderBody understands), the
+ * mark that it was edited, the file or picture it holds, and the card for the first link in it.
+ *
+ * One place, because the channel's rows, the list of pinned messages and the search results all show a message and
+ * must show the same one: a pin that dropped its picture, or a result that showed a link as plain text, is a message
+ * that looks different depending on where you found it.
+ *
+ * @returns {{text: HTMLElement, emojiOnly: boolean}}  emojiOnly: nothing but emoji, drawn larger
+ */
+function messageContent(message) {
+  const text = document.createElement('span');
+  text.className = 'text';
+  // Text nodes and images only -- see renderBody. A chat message is the most
+  // obvious place in the app for someone to try injecting markup.
+  const emojiOnly = Boolean(renderBody(text, message.body));
+  if (message.editedAt) {
+    // Inside .text, after the words, so it wraps with them rather than
+    // sitting in a column of its own that every unedited row pays for.
+    const edited = document.createElement('span');
+    edited.className = 'edited-mark';
+    edited.textContent = ' (edited)';
+    edited.title = new Date(message.editedAt).toLocaleString();
+    text.append(edited);
+  }
+  if (message.attachmentHash) text.append(attachmentNode(message));
+  // The card for the first link in the words, as Discord and WhatsApp show one.
+  if (state.settings?.linkPreviews !== false) {
+    const address = firstLink(message.body);
+    const card = address && linkEmbed({
+      server: state.server,
+      messageId: message.id,
+      url: address,
+      load: (url) => harmony.api.linkPreview(state.server, url),
+      mediaUrl: (hash) => harmony.mediaUrl(hash),
+      link: linkNode,
+      t,
+    });
+    if (card) text.append(card);
+  }
+  return { text, emojiOnly };
+}
+
+/**
  * One message row.
  *
  * Three parts: the picture in a column of its own, the name and the time on
@@ -10536,6 +10731,7 @@ function messageRow(message, previous) {
   row.className = 'chat-msg';
   row.dataset.id = String(message.id);
   if (message.pinned) row.setAttribute('data-pinned', '');
+  if (isStarred(message)) row.setAttribute('data-starred', '');
   if (state.chat.editing?.id === message.id) row.setAttribute('data-editing', '');
 
   const grouped = Boolean(previous)
@@ -10551,40 +10747,12 @@ function messageRow(message, previous) {
     && message.createdAt - previous.createdAt < GROUP_WINDOW_MS;
   if (grouped) row.setAttribute('data-grouped', '');
 
-  const text = document.createElement('span');
-  text.className = 'text';
-  // Text nodes and images only -- see renderBody. A chat message is the most
-  // obvious place in the app for someone to try injecting markup.
-  if (renderBody(text, message.body)) row.setAttribute('data-emoji-only', '');
-  if (message.editedAt) {
-    // Inside .text, after the words, so it wraps with them rather than
-    // sitting in a column of its own that every unedited row pays for.
-    const edited = document.createElement('span');
-    edited.className = 'edited-mark';
-    edited.textContent = ' (edited)';
-    edited.title = new Date(message.editedAt).toLocaleString();
-    text.append(edited);
-  }
+  const { text, emojiOnly } = messageContent(message);
+  if (emojiOnly) row.setAttribute('data-emoji-only', '');
   // Lit when it is addressed to you -- by name, by @everyone or by a role you hold -- and it
   // makes no difference who wrote it. Only answering your own message is not news to you.
   if (mentionsMe(message) && (message.userId !== state.auth.user?.id || mentionsMeByName(message))) {
     row.setAttribute('data-mentions-me', '');
-  }
-
-  if (message.attachmentHash) text.append(attachmentNode(message));
-  // The card for the first link in the words, as Discord and WhatsApp show one.
-  if (state.settings?.linkPreviews !== false) {
-    const address = firstLink(message.body);
-    const card = address && linkEmbed({
-      server: state.server,
-      messageId: message.id,
-      url: address,
-      load: (url) => harmony.api.linkPreview(state.server, url),
-      mediaUrl: (hash) => harmony.mediaUrl(hash),
-      link: linkNode,
-      t,
-    });
-    if (card) text.append(card);
   }
 
   const when = document.createElement('span');
@@ -10642,7 +10810,18 @@ function messageRow(message, previous) {
     }
   });
 
-  tools.append(reply, react, pin);
+  // The star is nobody's but this person's, so it is always there; see stars-store.js.
+  const star = document.createElement('button');
+  star.className = 'msg-tool star-tool';
+  star.dataset.icon = 'star';
+  star.textContent = isStarred(message) ? t('stars.unstar') : t('stars.star');
+  star.title = star.textContent;
+  if (isStarred(message)) star.setAttribute('data-on', '');
+  star.addEventListener('click', () => toggleStar(message));
+
+  tools.append(reply, react, star);
+  // Only for those the server would let: admins, and roles that hold the permission.
+  if (can('messages.pin')) tools.append(pin);
   if (message.attachmentHash) {
     const download = document.createElement('button');
     download.className = 'msg-tool';
@@ -10758,7 +10937,7 @@ function renderChat({ scrollToBottom = false, restore = null, toNews = false } =
 
   // The line goes before the first message newer than what was read, and the
   // message under it starts a block of its own.
-  const after = state.chat.showsHistory && !state.chat.searching ? state.chat.newAfter : null;
+  const after = state.chat.showsHistory ? state.chat.newAfter : null;
   let dividerDrawn = false;
   const rows = [];
   state.chat.messages.forEach((m, i, all) => {
@@ -10772,8 +10951,12 @@ function renderChat({ scrollToBottom = false, restore = null, toNews = false } =
     }
     rows.push(messageRow(m, all[i - 1]));
   });
+  // At the top of the history, and only while there is more to load.
+  if (state.chat.hasMore && state.chat.showsHistory && rows.length) rows.unshift(olderMessagesButton());
   log.replaceChildren(...rows);
   dropParked();
+  // The one pinned last under the header, and the panel of all of them if it is open: before anything that returns.
+  channelPins?.draw();
 
   // Entering a channel with news: the last of what was read, then the line.
   if (toNews) {
@@ -10785,28 +10968,6 @@ function renderChat({ scrollToBottom = false, restore = null, toNews = false } =
     }
   }
 
-  if (state.chat.pinned.length) {
-    el.chatPinned.hidden = false;
-    el.chatPinned.replaceChildren(
-      ...state.chat.pinned.map((m) => {
-        const line = document.createElement('button');
-        line.type = 'button';
-        line.className = 'pinned-line';
-        line.title = t('app.jump_to_this_message');
-
-        const who = document.createElement('strong');
-        who.textContent = displayOf(m.userId, m.nickname);
-        const what = document.createElement('span');
-        what.textContent = m.body || t('app.attachment_2');
-
-        line.append(who, what);
-        line.addEventListener('click', () => jumpToMessage(m.id));
-        return line;
-      }),
-    );
-  } else {
-    el.chatPinned.hidden = true;
-  }
 
   // Back where it was left: the first message at or after the one that was at
   // the top of the view (the same one, unless it has been deleted), put the
@@ -10879,6 +11040,22 @@ function paintChatToBottom() {
 }
 
 el.chatLog.addEventListener('scroll', paintChatToBottom, { passive: true });
+// A box that grows under the log (the message box, the keyboard) does not leave it behind the end.
+keepEnd(el.chatLog);
+
+/**
+ * Sending a message takes you to it, wherever you were reading: what you just said is what you want to see, and
+ * "it was not at the end" is not a reason to leave it out of sight. Until the message has come back and been drawn
+ * (`sendingUntil`), anything of yours that arrives is scrolled to.
+ */
+let sendingUntil = 0;
+function followSend() {
+  sendingUntil = Infinity;
+  releaseChatBottom();
+  el.chatLog.scrollTop = el.chatLog.scrollHeight;
+  holdChatBottom();
+  paintChatToBottom();
+}
 el.chatToBottom.addEventListener('click', () => {
   releaseChatBottom();
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -10901,9 +11078,76 @@ el.chatToBottom.addEventListener('click', () => {
  */
 const JUMP_MAX_PAGES = 20;
 
+/** How many messages the server sends a page of: a page this size means there may be an older one. */
+const CHAT_PAGE = 50;
+
+/** The button at the top of a channel's messages, while there are older ones to load. */
+function olderMessagesButton() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'ghost small chat-older';
+  button.textContent = t('app.load_older_messages');
+  button.addEventListener('click', () => loadOlderMessages(button));
+  return button;
+}
+
+let loadingOlder = false;
+
+/** One more page of older messages, put above the rest without moving what is being read. */
+async function loadOlderMessages(button) {
+  const server = state.server;
+  const channelId = state.chat.channelId;
+  const oldest = state.chat.messages[0]?.id;
+  if (loadingOlder || !oldest) return;
+  loadingOlder = true;
+  button.disabled = true;
+  try {
+    const { messages: older } = await harmony.api.messages(server, channelId, oldest);
+    if (state.server !== server || state.chat.channelId !== channelId) return;
+    state.chat.hasMore = (older?.length ?? 0) >= CHAT_PAGE;
+    if (!older?.length) {
+      renderChat();
+      return;
+    }
+    // The message at the top of the view stays exactly where it is: what was being read does not jump.
+    const log = el.chatLog;
+    const anchor = log.querySelector('.chat-msg');
+    const offset = anchor ? anchor.getBoundingClientRect().top - log.getBoundingClientRect().top : 0;
+    state.chat.messages = [...older, ...state.chat.messages];
+    renderChat({ restore: anchor ? { atBottom: false, anchorId: Number(anchor.dataset.id), offset } : null });
+  } catch (err) {
+    el.chatNote.textContent = err.message;
+    button.disabled = false;
+  } finally {
+    loadingOlder = false;
+  }
+}
+
 async function jumpToMessage(id) {
+  // Going somewhere other than the bottom: the few seconds of staying at it (see holdChatBottom) would put the log
+  // back there as soon as the message was in place, which a click outside the log does not end as a reader's wheel does.
+  releaseChatBottom();
   const find = () => el.chatLog.querySelector(`.chat-msg[data-id="${id}"]`);
   let row = find();
+
+  // Far up: everything from there to the newest in one request, and not a page at a time. An older server does not
+  // know to do that, and answers with its newest page, which does not hold the message: then it is paged for.
+  if (!row) {
+    const server = state.server;
+    const channelId = state.chat.channelId;
+    try {
+      const { messages: since } = await harmony.api.messages(server, channelId, null, id);
+      if (state.server === server && state.chat.channelId === channelId && since?.some((m) => m.id === id)) {
+        state.chat.messages = since;
+        // Whatever is above the first of them is older than anything held, and can be asked for.
+        state.chat.hasMore = true;
+        renderChat();
+        row = find();
+      }
+    } catch {
+      // Paged for, below.
+    }
+  }
 
   for (let page = 0; !row && page < JUMP_MAX_PAGES; page += 1) {
     const oldest = state.chat.messages[0]?.id;
@@ -10917,6 +11161,7 @@ async function jumpToMessage(id) {
       el.chatNote.textContent = err.message;
       return;
     }
+    state.chat.hasMore = (older?.length ?? 0) >= CHAT_PAGE;
     if (!older?.length) break;
     state.chat.messages = [...older, ...state.chat.messages];
     // Without scrollToBottom: the whole point is to land somewhere that is
@@ -10932,6 +11177,9 @@ async function jumpToMessage(id) {
   }
 
   el.chatNote.textContent = '';
+  // Drawing the log again re-arms the stay-at-the-bottom (renderChat does, when it was at the bottom), and that
+  // would take it straight back down: once more, after the last drawing and before the scroll.
+  releaseChatBottom();
   row.scrollIntoView({ block: 'center', behavior: 'smooth' });
   // A flash rather than a lasting highlight: it answers "which one" and
   // then stops competing with the message for attention.
@@ -10942,9 +11190,9 @@ async function jumpToMessage(id) {
 async function sendMessage() {
   if (state.chat.editing) return saveEdit();
   const body = el.chatInput.value.trim();
-  const file = state.chat.pendingFile;
-  if (!body && !file) return;
-  if (file && activeUpload) {
+  const files = [...state.chat.pendingFiles];
+  if (!body && !files.length) return;
+  if (files.length && activeUpload) {
     el.chatNote.textContent = t('app.wait_for_the_file_already');
     return;
   }
@@ -10956,65 +11204,157 @@ async function sendMessage() {
   // that has just left it.
   growChatInput();
   applyComposer();
+  followSend();
   // The list it was tracking has an empty box now, and nothing it could
   // offer would go anywhere.
   closeMentions();
-  setPendingFile(null);
+  setPendingFiles([]);
   el.chatNote.textContent = '';
 
+  /*
+   * Files go one by one, in the order they were put in, each as a message of its own; the words go with the last, so
+   * that they come after everything they are about. What it answers goes with the first. With no file there is one
+   * message, the words.
+   */
+  const queue = files.length ? files : [null];
+  let done = 0;
   try {
-    let attachmentHash = null;
-    let attachmentName = null;
-    if (file) {
-      const upload = await uploadAttachment(file);
-      attachmentHash = upload.hash;
-      attachmentName = file.name;
+    for (const file of queue) {
+      let attachmentHash = null;
+      let attachmentName = null;
+      if (file) {
+        const upload = await uploadAttachment(file);
+        attachmentHash = upload.hash;
+        attachmentName = file.name;
+      }
+      const last = done === queue.length - 1;
+      await harmony.api.postMessage(state.server, state.chat.channelId, {
+        body: last ? body : '', attachmentHash, attachmentName,
+        ...(replying && done === 0 ? { replyTo: replying.id } : {}),
+      });
+      done += 1;
     }
-    await harmony.api.postMessage(state.server, state.chat.channelId, {
-      body, attachmentHash, attachmentName,
-      ...(replying ? { replyTo: replying.id } : {}),
-    });
-    // The server echoes it back over the socket, so nothing is appended here.
+    // The server echoes each back over the socket, so nothing is appended here.
   } catch (err) {
     el.chatNote.textContent = err.message;
-    // A failed file comes back too, ready to send again; a cancelled one
-    // was meant to go.
-    if (file && err.code !== 'cancelled' && !state.chat.pendingFile) setPendingFile(file);
-    el.chatInput.value = body; // give them their text back
-    setReply(replying); // and what it was answering
+    // What did not go comes back, ready to send again: the file that failed (a cancelled one was meant to stop) and
+    // those after it, the words if they have not gone, what it answered if nothing has.
+    const left = files.slice(done + (err.code === 'cancelled' ? 1 : 0));
+    if (left.length && !state.chat.pendingFiles.length) setPendingFiles(left);
+    if (done < queue.length) el.chatInput.value = body; // give them their text back
+    if (done === 0) setReply(replying); // and what it was answering
+    growChatInput();
     applyComposer();
+  } finally {
+    // The echo is normally here before the call returns; a moment more for one that is not.
+    sendingUntil = Date.now() + 2000;
   }
 }
 
-async function runSearch() {
-  const query = el.chatSearch.value.trim();
-  if (!query) {
-    state.chat.searching = false;
-    el.chatSearchClear.hidden = true;
-    return openTextChannel(state.channels.list.find((c) => c.id === state.chat.channelId));
+/** A search result was chosen: its channel, and the message in it. */
+async function jumpToResult(channelId, messageId) {
+  const channel = (state.channels.list ?? []).find((c) => c.id === channelId && c.kind === 'text');
+  if (!channel) {
+    el.chatNote.textContent = t('stars.channel_gone');
+    return;
   }
-
-  try {
-    const { mode, results } = await harmony.api.search(state.server, state.chat.channelId, query);
-    // The history is about to be replaced by results: keep the place in it,
-    // so clearing the search comes back to where the search was started from.
-    rememberChatScroll();
-    state.chat.showsHistory = false;
-    state.chat.searching = true;
-    state.chat.messages = results.slice().reverse();
-    el.chatSearchClear.hidden = false;
-    renderChat({ scrollToBottom: true });
-    el.chatNote.textContent = results.length
-      // Worth saying: a 1-2 character query silently cannot use the trigram
-      // index, so it falls back to a plain substring scan. Showing which ran
-      // makes "why did that find nothing" answerable.
-      ? t('chat.results', { count: results.length, mode })
-      : t('app.no_matches', { mode });
-  } catch (err) {
-    el.chatNote.textContent = err.message;
-  }
-  return undefined;
+  if (state.chat.channelId !== channelId || !state.chat.showsHistory) await openTextChannel(channel);
+  await jumpToMessage(messageId);
 }
+
+channelPins = createPins({
+  ids: { button: 'chat-pins', pop: 'pins-pop', list: 'pins-list', strip: 'chat-pinned' },
+  t,
+  displayOf,
+  faceOf,
+  avatarEl,
+  nameFont,
+  messageContent,
+  items: () => state.chat.pinned,
+  // A pinned file shows what it is in the strip: its picture, or the icon of its kind.
+  preview: (m) => attachmentThumb(m.attachmentName, m.mediaType, m.attachmentHash ? harmony.mediaUrl(m.attachmentHash) : null),
+  // The same rule the server enforces: a button that is there always works.
+  canUnpin: () => can('messages.pin'),
+  jump: (m) => jumpToMessage(m.id),
+  unpin: (m) => harmony.api.pinMessage(state.server, m.id, false),
+  onError: (err) => { el.chatNote.textContent = err.message; },
+});
+
+/** The star's panel: every message starred on this server, newest star first. */
+channelStars = createStarsUi({
+  ids: { button: 'chat-stars', pop: 'stars-pop', list: 'stars-list', search: 'stars-search', clear: 'stars-clear', count: 'stars-count' },
+  t,
+  items: () => {
+    const scope = starScope();
+    if (!scope) return [];
+    return stars.list(scope, 'channel').map((entry) => {
+      const { message } = entry;
+      const channelName = (state.channels.list ?? []).find((c) => c.id === entry.channelId)?.name;
+      const author = displayOf(message.userId, message.nickname);
+      return {
+        key: entry.id,
+        searchText: [author, message.body, message.attachmentName, channelName].filter(Boolean).join(' '),
+        card: () => {
+          const who = document.createElement('strong');
+          who.textContent = author;
+          nameFont(who, message.userId);
+          return messageCard({
+            t,
+            avatar: avatarEl(faceOf(message.userId, message.nickname), 'msg-avatar'),
+            who,
+            createdAt: message.createdAt,
+            where: channelName ? `#${channelName}` : null,
+            content: messageContent(message),
+            go: () => {
+              channelStars.close();
+              jumpToResult(entry.channelId, entry.id);
+            },
+            actions: [toolButton('x', t('stars.unstar'), () => stars.remove(scope, 'channel', entry.id))],
+          });
+        },
+      };
+    });
+  },
+});
+// Starred or let go from anywhere -- the log, the panel -- both are drawn from the list.
+stars.onChange(() => {
+  channelStars.draw();
+  const scope = starScope();
+  if (!scope) return;
+  for (const row of el.chatLog.querySelectorAll('.chat-msg[data-id]')) {
+    const id = Number(row.dataset.id);
+    const on = stars.has(scope, 'channel', id);
+    if (on !== row.hasAttribute('data-starred')) paintStar(row, on);
+  }
+});
+
+searchUi = createSearchUi({
+  ids: {
+    box: 'search-box', input: 'chat-search', chips: 'search-chips', clear: 'chat-search-clear', pop: 'search-pop',
+    panel: 'search-results', count: 'sr-count', filters: 'sr-filters', sort: 'sr-sort', close: 'sr-close',
+    body: 'sr-body', pager: 'sr-pager', sortMenu: 'sr-sort-menu',
+  },
+  state,
+  harmony,
+  t,
+  displayOf,
+  faceOf,
+  avatarEl,
+  nameFont,
+  messageContent,
+  people: () => [...state.users.values()].map((u) => ({ id: u.id, nickname: u.nickname, label: displayOf(u.id, u.nickname) })),
+  channels: () => (state.channels.list ?? []).filter((c) => c.kind === 'text'),
+  // The server holds the channels' words, so it is the server that looks through them.
+  search: (request) => harmony.api.searchAll(state.server, request),
+  groupOf: (m) => ({ key: m.channelId, label: (state.channels.list ?? []).find((c) => c.id === m.channelId)?.name ?? String(m.channelId) }),
+  historyKey: () => serverKey(state.server),
+  placeholder: () => {
+    const name = el.serverName.textContent.trim();
+    return name ? t('search.placeholder_in', { name }) : t('search.placeholder');
+  },
+  jump: (m) => jumpToResult(m.channelId, m.id),
+  isNarrow: () => narrowScreen.matches,
+});
 
 // ---------------------------------------------------------------------------
 // Soundpad
@@ -12248,9 +12588,9 @@ function onRealtimeEvent(msg) {
       // Before the channel filter, on purpose: a mention in a channel you
       // are not looking at is the only one worth making a noise about.
       notifyMention(msg.message);
-      if (msg.message.channelId === state.chat.channelId && !state.chat.searching) {
+      if (msg.message.channelId === state.chat.channelId) {
         state.chat.messages.push(msg.message);
-        renderChat();
+        renderChat({ scrollToBottom: msg.message.userId === state.auth.user?.id && Date.now() < sendingUntil });
         markOpenChannelRead();
       }
       break;
@@ -14627,6 +14967,7 @@ el.continue.addEventListener('click', startSession);
 // --- channels and voice ---------------------------------------------------
 
 dmUi = createDmUi({
+  stars,
   state,
   harmony,
   t,
@@ -14636,6 +14977,7 @@ dmUi = createDmUi({
   nameFont,
   renderBody,
   appendEmoji,
+  linkNode,
   openEmojiPicker,
   closeEmojiPicker,
   ask,
@@ -15321,6 +15663,7 @@ el.voiceConfig.addEventListener('click', () => {
   el.voiceSounds.checked = state.settings?.voiceSounds !== false;
   el.mentionSound.checked = state.settings?.mentionSound !== false;
   el.linkPreviews.checked = state.settings?.linkPreviews !== false;
+  el.dmLinkPreviews.checked = state.settings?.dmLinkPreviews !== false;
   el.customJoinSounds.checked = state.settings?.customJoinSounds !== false;
   el.pauseHiddenCameras.checked = state.settings?.pauseHiddenCameras !== false;
   el.autoWatchStreams.checked = state.settings?.autoWatchStreams !== false;
@@ -15604,7 +15947,7 @@ el.chatInput.addEventListener('keydown', (event) => {
    */
   if (event.key === 'ArrowUp' && !event.shiftKey && !event.ctrlKey && !event.metaKey
     && !event.altKey && !event.isComposing && !el.chatInput.value
-    && !state.chat.editing && !state.chat.replyTo && !state.chat.pendingFile) {
+    && !state.chat.editing && !state.chat.replyTo && !state.chat.pendingFiles.length) {
     const last = lastOwnMessage();
     if (last) {
       event.preventDefault();
@@ -15635,6 +15978,11 @@ el.linkPreviews.addEventListener('change', async () => {
   state.settings = await harmony.settings.get();
   // The cards come and go on what is already on screen.
   if (state.chat.channelId !== null) renderChat();
+  dmUi?.render();
+});
+el.dmLinkPreviews.addEventListener('change', async () => {
+  state.settings = await harmony.settings.set({ dmLinkPreviews: el.dmLinkPreviews.checked });
+  dmUi?.render();
 });
 
 el.mentionSound.addEventListener('change', async () => {
@@ -15736,10 +16084,9 @@ document.addEventListener('keydown', (event) => {
 el.chatAttach.addEventListener('click', () => el.chatFile.click());
 
 el.chatFile.addEventListener('change', () => {
-  const file = el.chatFile.files?.[0] ?? null;
-  // No note: the chip inside the box says what is attached, and it says it
-  // where the thing will actually be sent from.
-  if (file && fitsUploadLimit(file)) setPendingFile(file);
+  // No note: the cards inside the box say what is attached, and they say it
+  // where the things will actually be sent from.
+  addPendingFiles([...(el.chatFile.files ?? [])]);
   // Reset, so picking the same file twice in a row still fires 'change'.
   el.chatFile.value = '';
 });
@@ -15838,12 +16185,7 @@ document.addEventListener('drop', (event) => {
     dmUi.dropFiles(files);
     return;
   }
-  const [file] = files;
-  if (!fitsUploadLimit(file)) return;
-  setPendingFile(file);
-  el.chatNote.textContent = files.length > 1
-    ? t('app.one_file_per_message_is', { name: file.name })
-    : '';
+  addPendingFiles(files);
   el.chatInput.focus();
 });
 
@@ -15899,11 +16241,6 @@ document.addEventListener('contextmenu', (event) => {
   openRowMenu(t('app.message'), items, event);
 });
 
-el.chatPendingClear.addEventListener('click', () => {
-  setPendingFile(null);
-  el.chatInput.focus();
-});
-
 /*
  * Paste a file straight into the box -- a screenshot, or a file copied in the
  * file manager.
@@ -15922,34 +16259,19 @@ el.chatPendingClear.addEventListener('click', () => {
 el.chatInput.addEventListener('paste', (event) => {
   // Any file: one copied in the file manager arrives here too, with its own
   // name and whatever type it is. Text on the clipboard is left alone.
-  const file = [...(event.clipboardData?.files ?? [])][0];
-  if (!file) return;
+  const files = [...(event.clipboardData?.files ?? [])];
+  if (!files.length) return;
 
   event.preventDefault();
-  if (!fitsUploadLimit(file)) return;
-  // Only the nameless picture a screenshot or "copy image" produces is renamed;
-  // a file that has a name keeps it.
-  const generic = file.type.startsWith('image/') && (!file.name || /^image\.[a-z0-9]+$/i.test(file.name));
-  if (!generic) {
-    setPendingFile(file);
-    return;
-  }
-  const extension = file.type.split('/')[1]?.split('+')[0] ?? 'png';
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
-  setPendingFile(new File([file], `pasted-${stamp}.${extension}`, { type: file.type }));
-});
-
-let searchTimer = null;
-el.chatSearch.addEventListener('input', () => {
-  // Debounced: every keystroke is a round trip and a full-text query
-  // otherwise, and the answer for a half-typed word is never useful.
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => runSearch(), 250);
-});
-
-el.chatSearchClear.addEventListener('click', () => {
-  el.chatSearch.value = '';
-  runSearch();
+  addPendingFiles(files.map((file, i) => {
+    // Only the nameless picture a screenshot or "copy image" produces is renamed;
+    // a file that has a name keeps it.
+    const generic = file.type.startsWith('image/') && (!file.name || /^image\.[a-z0-9]+$/i.test(file.name));
+    if (!generic) return file;
+    const extension = file.type.split('/')[1]?.split('+')[0] ?? 'png';
+    return new File([file], `pasted-${stamp}${files.length > 1 ? `-${i + 1}` : ''}.${extension}`, { type: file.type });
+  }));
 });
 
 /*

@@ -27,7 +27,7 @@ const ICONS = [
   'hash', 'speaker-high', 'speaker-x', 'plus', 'users', 'user-circle', 'globe', 'sign-out', 'monitor', 'list',
   // the composer and messages
   'plus-circle', 'smiley', 'paper-plane-right', 'x', 'download-simple',
-  'pencil-simple', 'push-pin', 'trash', 'arrow-bend-up-left',
+  'pencil-simple', 'push-pin', 'star', 'trash', 'arrow-bend-up-left',
   // tiles and players
   'eye', 'eye-slash', 'squares-four', 'corners-out', 'arrows-out', 'arrows-in', 'scissors',
   'play', 'pause',
@@ -50,6 +50,8 @@ const ICONS = [
   'file', 'file-text', 'file-zip', 'file-pdf', 'file-audio', 'file-video', 'file-image', 'file-code',
   'file-doc', 'file-xls', 'file-ppt', 'file-csv',
   'caret-down', 'caret-up',
+  // search
+  'magnifying-glass', 'user', 'at', 'paperclip', 'sliders-horizontal', 'arrows-down-up', 'clock-counter-clockwise', 'link',
 ];
 
 // By path: the package's exports map hides package.json.
