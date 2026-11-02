@@ -15,6 +15,7 @@ import { WebSocketServer } from 'ws';
 
 import { publicChannel, publicGroup, VOICE_HARD_CAP } from './channels.js';
 import { publicUser } from './accounts.js';
+import { Throttle } from './throttle.js';
 import { publicBadge } from './badges.js';
 import { channelViewFor, publicRole } from './roles.js';
 
@@ -27,6 +28,8 @@ export class Realtime {
   /** @type {Map<import('ws').WebSocket, {user: object, alive: boolean}>} */
   #clients = new Map();
   #timer = null;
+  /** Music Buddy's controls, per person: pressing them is cheap to do and not cheap to serve (a track is fetched). */
+  #musicThrottle = new Throttle({ burst: 60, perSecond: 5 });
 
   /**
    * @param {object} deps
@@ -244,6 +247,10 @@ export class Realtime {
       'voice:refresh': this.#voiceRefresh,
       'soundpad:play': this.#soundpadPlay,
       'soundpad:stop': this.#soundpadStop,
+      'music:add': this.#musicAdd,
+      'music:control': this.#musicControl,
+      'music:sync': this.#musicSync,
+      'music:clock': this.#musicClock,
       'admin:force-mute': this.#adminForceMute,
       'admin:move': this.#adminMove,
     };
@@ -282,6 +289,8 @@ export class Realtime {
       mid: joined.mid,
       ...this.#deps.issueTokens(channelId, user.id, joined.mid),
       roster: this.#deps.voice.roster(channelId),
+      // Where the music is, so somebody who joins in the middle of a song is in the middle of it too.
+      music: this.#deps.music?.snapshot(channelId) ?? null,
     };
   }
 
@@ -375,6 +384,60 @@ export class Realtime {
       this.toUser(member.userId, { type: 'soundpad:stop', channelId, by: user.nickname });
     }
     return { type: 'voice:ok' };
+  }
+
+  // ------------------------------------------------------------- music
+
+  /**
+   * Everything a Music Buddy request has to clear before it is served: the feature is on, the person is in that voice
+   * channel (the music is that channel's), they hold the permission (read again for every message, like all of them),
+   * and they are not pressing faster than it can be served.
+   * @returns {{channelId: number}|{error: object}}
+   */
+  #musicGate(user, msg, { needsPermission = true } = {}) {
+    const fail = (error) => ({ error: { type: 'voice:error', error } });
+    if (!this.#deps.music || !this.#deps.musicEnabled?.()) return fail('music_off');
+    const channelId = Number(msg.channelId);
+    if (!this.#deps.voice.find(channelId, user.id)) return fail('not_in_channel');
+    if (needsPermission && !this.#deps.roles.context(user).can('music.control')) return fail('forbidden');
+    if (!this.#musicThrottle.take(user.id).allowed) return fail('slow_down');
+    return { channelId };
+  }
+
+  #musicAdd(user, msg) {
+    const gate = this.#musicGate(user, msg);
+    if (gate.error) return gate.error;
+    const result = this.#deps.music.add(gate.channelId, user, msg.items, { next: msg.next === true });
+    return result.ok ? { type: 'voice:ok', added: result.added } : { type: 'voice:error', error: result.error };
+  }
+
+  #musicControl(user, msg) {
+    const gate = this.#musicGate(user, msg);
+    if (gate.error) return gate.error;
+    const result = this.#deps.music.control(gate.channelId, String(msg.action), msg);
+    return result.ok ? { type: 'voice:ok' } : { type: 'voice:error', error: result.error };
+  }
+
+  /** What is playing, asked for by anybody in the channel: no permission, it is only to listen. */
+  #musicSync(user, msg) {
+    const gate = this.#musicGate(user, msg, { needsPermission: false });
+    if (gate.error) return gate.error;
+    return { type: 'music:sync', channelId: gate.channelId, music: this.#deps.music.snapshot(gate.channelId) };
+  }
+
+  /**
+   * The server's clock, and nothing else. A listener asks, times the round trip, and so knows how long a push takes to
+   * arrive: which is what puts it at the same place in the track as the one who pressed Play.
+   */
+  #musicClock(user, msg) {
+    const gate = this.#musicGate(user, msg, { needsPermission: false });
+    if (gate.error) return gate.error;
+    return { type: 'music:clock', serverNow: this.#deps.music.now() };
+  }
+
+  /** To everyone in a voice channel, and nobody else: what is playing is for the people hearing it. */
+  toChannel(channelId, payload) {
+    for (const member of this.#deps.voice.roster(channelId)) this.toUser(member.userId, payload);
   }
 
   // ------------------------------------------------------------- admin
@@ -511,10 +574,13 @@ export class Realtime {
    */
   #broadcastRoster(channelId) {
     const channel = this.#deps.channels.get(channelId);
+    const roster = this.#deps.voice.roster(channelId);
+    // The last person leaving ends the music, and lets go of its files.
+    this.#deps.music?.onRoster(channelId, roster);
     const payload = {
       type: 'voice:roster',
       channelId,
-      roster: this.#deps.voice.roster(channelId),
+      roster,
       // null once the last person has left: the timer stops.
       occupiedFor: this.#deps.voice.occupiedFor(channelId),
     };

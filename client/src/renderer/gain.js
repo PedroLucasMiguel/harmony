@@ -1049,6 +1049,38 @@ export async function playSample(url, { gain = 1 } = {}) {
   return source;
 }
 
+/**
+ * Music Buddy's <audio> element, into what you hear.
+ *
+ * One element for the whole call, whose source changes from track to track, so this is made once: an element can be
+ * turned into an audio source only one time. It ends where every sound ends, in output(), so the master volume and the
+ * speaker you chose apply to it with nothing more said, and it has a gain of its own (the music's volume, which is
+ * not the soundpad's or anybody's voice). Like a soundpad clip it is NEVER put into the outgoing mix.
+ *
+ * @param {HTMLAudioElement} audio
+ * @returns {{set: (gain: number) => void, dispose: () => void}}
+ */
+export function playMusicElement(audio) {
+  const c = context();
+  const source = c.createMediaElementSource(audio);
+  const node = c.createGain();
+  node.gain.value = 1;
+  source.connect(node);
+  node.connect(output());
+  return {
+    set(gain) {
+      // Eased, as every volume here is: a step in the gain is a click.
+      node.gain.setTargetAtTime(Math.max(0, Math.min(MAX_GAIN, Number(gain) || 0)), c.currentTime, 0.015);
+    },
+    dispose() {
+      try {
+        source.disconnect();
+        node.disconnect();
+      } catch { /* already torn down */ }
+    },
+  };
+}
+
 /** Samples being fetched and decoded right now, so a second ask for one waits for the first instead of repeating it. */
 const loading = new Map();
 

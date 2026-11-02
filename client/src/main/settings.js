@@ -164,6 +164,14 @@ const DEFAULTS = {
    */
   soundpadVolume: 100,
   /*
+   * How loudly Music Buddy's music plays for you, 0-350 like every volume here, and whether you have muted it. Its own
+   * pair, not the soundpad's: a clip is a second long and the music is the whole call, and turning one down should
+   * never be the way to turn the other down. Local, like all of them: everybody hears the same track at the same place
+   * and chooses how loud.
+   */
+  musicVolume: 100,
+  musicMuted: false,
+  /*
    * The emoji you reached for last, newest first.
    *
    * Local, like every other preference here: it is about your hands, not

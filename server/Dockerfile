@@ -122,6 +122,22 @@ LABEL org.opencontainers.image.title="Harmony server" \
 # `wait -n`, which busybox ash does not have.
 RUN apk add --no-cache tini bash
 
+# yt-dlp, for Music Buddy (off until the owner turns it on; see DEPLOYMENT.md). The standalone musl builds exist for
+# amd64 and arm64; on other platforms Music Buddy is simply unavailable. Whatever is here is as old as the image:
+# the entrypoint fetches a newer one into the data volume when it starts, which a read-only root cannot take.
+ARG TARGETARCH
+RUN apk add --no-cache ca-certificates; \
+    case "${TARGETARCH}" in \
+      amd64) asset=yt-dlp_musllinux ;; \
+      arm64) asset=yt-dlp_musllinux_aarch64 ;; \
+      *) asset= ;; \
+    esac; \
+    if [ -n "$asset" ]; then \
+      wget -q -O /usr/local/bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}" \
+        && chmod 0755 /usr/local/bin/yt-dlp \
+        || { rm -f /usr/local/bin/yt-dlp; echo "!!  yt-dlp could not be downloaded; Music Buddy will be unavailable." >&2; }; \
+    fi
+
 COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
 
 WORKDIR /opt/harmony

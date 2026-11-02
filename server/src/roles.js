@@ -38,6 +38,7 @@ export const PERMISSIONS = [
   'roles.hierarchy',
   'badges.create',
   'badges.edit',
+  'music.control',
 ];
 
 const PERMISSION_SET = new Set(PERMISSIONS);

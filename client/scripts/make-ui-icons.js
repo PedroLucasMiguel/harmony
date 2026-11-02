@@ -28,6 +28,8 @@ const ICONS = [
   // the composer and messages
   'plus-circle', 'smiley', 'paper-plane-right', 'x', 'download-simple',
   'pencil-simple', 'push-pin', 'star', 'trash', 'arrow-bend-up-left',
+  // Music Buddy
+  'playlist', 'skip-back', 'skip-forward', 'shuffle', 'repeat', 'repeat-once',
   // cropping a picture
   'arrow-clockwise', 'arrow-counter-clockwise',
   // tiles and players

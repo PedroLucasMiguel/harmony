@@ -31,6 +31,12 @@
 [data-icon='star'] { --icon: url('icons/star.svg'); }
 [data-icon='trash'] { --icon: url('icons/trash.svg'); }
 [data-icon='arrow-bend-up-left'] { --icon: url('icons/arrow-bend-up-left.svg'); }
+[data-icon='playlist'] { --icon: url('icons/playlist.svg'); }
+[data-icon='skip-back'] { --icon: url('icons/skip-back.svg'); }
+[data-icon='skip-forward'] { --icon: url('icons/skip-forward.svg'); }
+[data-icon='shuffle'] { --icon: url('icons/shuffle.svg'); }
+[data-icon='repeat'] { --icon: url('icons/repeat.svg'); }
+[data-icon='repeat-once'] { --icon: url('icons/repeat-once.svg'); }
 [data-icon='arrow-clockwise'] { --icon: url('icons/arrow-clockwise.svg'); }
 [data-icon='arrow-counter-clockwise'] { --icon: url('icons/arrow-counter-clockwise.svg'); }
 [data-icon='eye'] { --icon: url('icons/eye.svg'); }

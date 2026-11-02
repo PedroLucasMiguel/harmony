@@ -370,6 +370,8 @@ export const api = {
   me: (s) => requestJson(s, '/api/accounts/me'),
   notified: (s, id) => requestJson(s, `/api/messages/${Number(id)}/notified`),
   linkPreview: (s, url) => requestJson(s, `/api/link-preview?url=${encodeURIComponent(url)}`),
+  // What a link or some words in Music Buddy's box are: the tracks they name (server/src/music).
+  musicResolve: (s, input) => requestJson(s, '/api/music/resolve', { method: 'POST', body: { input } }),
   setAvatar: (s, hash) => requestJson(s, '/api/accounts/avatar', { method: 'POST', body: { hash } }),
   setBannerDim: (s, dim) => requestJson(s, '/api/accounts/banner-dim', { method: 'POST', body: { dim } }),
   setBanner: (s, hash) => requestJson(s, '/api/accounts/banner', { method: 'POST', body: { hash } }),

@@ -473,6 +473,41 @@ sudo userdel harmony
 
 # Part 2 — the client
 
+## Music Buddy (optional)
+
+Music Buddy lets people the owner allows put music on in the voice channel they are in: a YouTube link or playlist,
+a Spotify link or playlist, or words to search for. Everybody in the channel hears the same track at the same place
+(each client plays its own copy, so everybody has a volume of their own); the people with the permission can add
+songs, reorder the queue, skip, go back, shuffle and repeat.
+
+**It is off until the owner turns it on**, in *Server settings → General → Let people play music in voice channels*,
+and a role needs the *Play and control music* permission (the owner, super admins and admin roles always have it).
+
+**What it takes, and what it is.** The server fetches the audio with
+[yt-dlp](https://github.com/yt-dlp/yt-dlp), keeps it as an ordinary upload (so it counts in the upload storage and is
+the first thing swept when the disk needs room) and tells each client what to play and where. Nothing is decoded or
+re-encoded, and no audio goes through the media relay: it costs a download per song, which a Raspberry Pi manages.
+
+> **Your decision.** Downloading audio from YouTube this way is not something YouTube's terms of service allow, and
+> playing copyrighted music to other people can need a licence where you live. Harmony ships with the feature off and
+> does not decide this for you; if you turn it on, it is yours to answer for. Spotify's audio is never used: a Spotify
+> link is read only for its list of songs (from the public embed page Spotify makes for embedding, which has no
+> promise of staying as it is), and each song is looked for on YouTube.
+
+- **Installing yt-dlp.** `install.sh` puts the standalone build in `/usr/local/bin/yt-dlp` (root-owned) and a timer,
+  `harmony-ytdlp-update.timer`, updates it daily, because YouTube breaks old versions often. `HARMONY_YTDLP=0` leaves it
+  out; without it the setting says yt-dlp is not installed and cannot be turned on. The Docker image has it too and
+  fetches a newer one into the data volume when it starts (`HARMONY_YTDLP_AUTOUPDATE=0` turns that off); there is no
+  build of it for 32-bit ARM in Docker.
+- **If YouTube says to sign in** ("confirm you're not a bot", usually from a datacentre address), give yt-dlp a
+  cookies file in Netscape format with `HARMONY_YTDLP_COOKIES=/path/to/cookies.txt` (readable by the `harmony` user).
+  Use a throwaway account's cookies: they are sent to YouTube.
+- **Limits.** A track longer than `HARMONY_MUSIC_MAX_SECONDS` (900, fifteen minutes) or bigger than 24 MB is refused, a
+  queue holds `HARMONY_MUSIC_QUEUE_MAX` songs (200), and a playlist adds its first 100.
+- **When it stops working.** Update yt-dlp first (`sudo yt-dlp -U`, or restart the container). If only Spotify links fail
+  with "could not read that Spotify link", Spotify changed its page; the one file that reads it is
+  `server/src/music/spotify.js`.
+
 ## Running from source
 
 ```bash

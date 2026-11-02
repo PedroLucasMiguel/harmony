@@ -206,6 +206,23 @@ async function run() {
   check('the server settings: the same, with Done on the screen', server.open && server.doneBottom <= server.screen, JSON.stringify(server));
   await cdp.evaluate('document.getElementById(\'server-dialog\').close(); return true;');
 
+  // --- the app is the screen --------------------------------------------------------------------------------------------------------
+  // A pinch used to enlarge the whole app, and it could then be dragged around in both directions.
+  await cdp.send('Input.synthesizePinchGesture', { x: 195, y: 400, scaleFactor: 2.2, relativeSpeed: 400, gestureSourceType: 'touch' });
+  await sleep(400);
+  for (let i = 0; i < 2; i++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: 500, id: 1 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await sleep(60);
+  }
+  await sleep(400);
+  const zoom = await cdp.evaluate('return { scale: visualViewport.scale, x: visualViewport.pageLeft, y: visualViewport.pageTop };');
+  check('a pinch or a double tap does not enlarge the app', zoom.scale === 1 && zoom.x === 0 && zoom.y === 0, JSON.stringify(zoom));
+  await cdp.evaluate('window.scrollTo(120, 200); return true;');
+  await sleep(200);
+  const slid = await cdp.evaluate('return [scrollX, scrollY, document.scrollingElement.scrollLeft];');
+  check('and the page is put back if something does move it', slid.every((n) => n === 0), JSON.stringify(slid));
+
   // --- the call controls ------------------------------------------------------------------------------------------------------------------
   const dock = await cdp.evaluate(`
     const panel = document.getElementById('voice-panel');

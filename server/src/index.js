@@ -7,6 +7,7 @@
 //
 // No media touches this process.
 
+import { join } from 'node:path';
 import express from 'express';
 import { config, iceServers, whepUrl, whipUrl } from './config.js';
 import { LoginLimiter, secretsMatch } from './auth.js';
@@ -43,6 +44,11 @@ import {
 import { UploadSessions } from './upload-sessions.js';
 import { LinkPreviews } from './link-preview.js';
 import { Throttle } from './throttle.js';
+import { YtDlp, MusicError } from './music/ytdlp.js';
+import { MusicLibrary } from './music/library.js';
+import { Music } from './music/service.js';
+import { classify } from './music/classify.js';
+import { Spotify } from './music/spotify.js';
 import { DirectMessages } from './dms.js';
 import { ChannelReads } from './reads.js';
 import { mountDirectMessages } from './dm-routes.js';
@@ -93,6 +99,32 @@ const chat = new Chat(db, { dataDir: config.dataDir, maxDiskBytes: config.maxDis
 // Reads pages for the cards under links. HARMONY_LINKS_ALLOW_PRIVATE lets the tests point it at a page on this computer.
 const linkPreviews = new LinkPreviews(chat, { allowPrivate: process.env.HARMONY_LINKS_ALLOW_PRIVATE === '1' });
 const linkThrottle = new Throttle({ burst: 20, perSecond: 0.5 });
+
+/*
+ * Music Buddy: yt-dlp to find and fetch the audio, the library to keep it as ordinary uploads, and the service that
+ * runs each voice channel's queue. All of it sits idle until the owner switches it on, and nothing is started or
+ * fetched for a server that never does. Whether yt-dlp is there at all is asked once, in the background.
+ */
+const ytdlp = new YtDlp({
+  bin: config.ytdlpBin,
+  cookies: config.ytdlpCookies,
+  maxSeconds: config.musicMaxSeconds,
+  tmpDir: join(config.dataDir, 'music-tmp'),
+});
+const musicLibrary = new MusicLibrary({ db, chat, ytdlp, thumbnails: process.env.HARMONY_MUSIC_NO_THUMBNAILS !== '1' });
+// Spotify links are only read for their list of songs; each is then looked for on YouTube (music/spotify.js).
+const spotify = new Spotify({
+  ytdlp,
+  base: process.env.HARMONY_SPOTIFY_BASE,
+  allowPrivate: process.env.HARMONY_LINKS_ALLOW_PRIVATE === '1',
+});
+const music = new Music({
+  library: musicLibrary,
+  spotify,
+  push: (channelId, payload) => realtime?.toChannel(channelId, payload),
+  maxQueue: config.musicQueueMax,
+});
+const musicResolveThrottle = new Throttle({ burst: 12, perSecond: 0.5 });
 const uploads = new UploadSessions(chat);
 const soundpad = new Soundpad(db);
 const emojis = new Emojis(db);
@@ -107,6 +139,10 @@ const recovery = new Recovery(db);
  * more, to seed it, and nothing else in this file should consult it again.
  */
 const serverSettings = new ServerSettings(metaStore, { envPassword: config.password });
+ytdlp.version().then((version) => {
+  if (version) console.log(`[harmony] yt-dlp ${version}: Music Buddy ${serverSettings.musicEnabled ? 'is on' : 'is available (off)'}`);
+});
+
 
 const rooms = new Rooms({ claimTtlMs: config.claimTtlMs });
 const limiter = new LoginLimiter({
@@ -799,6 +835,8 @@ const serverView = () => ({
   usedBytes: chat.usedBytes,
   diskFreeBytes: chat.diskFreeBytes(),
   maxFileLimit: MAX_FILE_LIMIT,
+  // Only whether there is a yt-dlp to use: where it is, and any cookies, stay on the server.
+  musicAvailable: ytdlp.available,
 });
 
 app.get('/api/server', requireLogin, (_req, res) => {
@@ -845,6 +883,12 @@ app.post('/api/server', requireRole('owner'), (req, res) => {
     if (previous && previous !== hash) chat.release(previous);
   }
 
+  if (typeof req.body?.musicEnabled === 'boolean') {
+    serverSettings.setMusicEnabled(req.body.musicEnabled);
+    // Switched off, it is off now: every channel's music ends, and its files are let go of.
+    if (!req.body.musicEnabled) music.stopAll();
+  }
+
   if (req.body?.name !== undefined) serverSettings.setName(req.body.name);
   if (typeof req.body?.password === 'string') serverSettings.setPassword(req.body.password);
 
@@ -879,6 +923,12 @@ app.post('/api/server', requireRole('owner'), (req, res) => {
 
   const view = serverView();
   realtime?.broadcast({ type: 'server', server: view });
+  /*
+   * The same again under a name that survives the trip. The client's connection tags every message it relays with the
+   * server it came from, in a field called `server` -- which is also where the line above puts the view, so by the time
+   * a client reads it that is the address and not the view. `info` is not overwritten.
+   */
+  realtime?.broadcast({ type: 'server:info', info: view });
   return res.json({ server: view });
 });
 
@@ -935,6 +985,70 @@ app.get('/api/link-preview', requireLogin, guarded(async (req, res) => {
   }
   const preview = await linkPreviews.get(String(req.query.url ?? ''));
   return res.json({ preview });
+}));
+
+/**
+ * What a link or some words in Music Buddy's box are: the tracks they name, to choose from. Nothing is fetched or
+ * queued here (that is music:add, over the socket); this only looks.
+ */
+const MUSIC_ERRORS = {
+  timeout: [504, 'YouTube took too long to answer.'],
+  unavailable: [503, 'This server cannot reach yt-dlp.'],
+  too_long: [422, 'That is too long to play here.'],
+  no_audio: [422, 'There is no audio to play for that.'],
+  spotify_changed: [502, 'Could not read that Spotify link: Spotify may have changed the page this reads.'],
+};
+app.post('/api/music/resolve', requireLogin, guarded(async (req, res) => {
+  if (!serverSettings.musicEnabled || !ytdlp.available) {
+    return res.status(409).json({ error: 'music_off', message: 'Music Buddy is not turned on for this server.' });
+  }
+  if (!roles.context(req.user).can('music.control')) {
+    return res.status(403).json({ error: 'forbidden', message: 'You are not allowed to play music here.' });
+  }
+  const gate = musicResolveThrottle.take(req.user.id);
+  if (!gate.allowed) {
+    res.set('Retry-After', String(gate.retryAfterSec));
+    return res.status(429).json({ error: 'slow_down', retryAfterSec: gate.retryAfterSec });
+  }
+
+  const found = classify(req.body?.input);
+  try {
+    let items;
+    let playlist = null;
+    switch (found.kind) {
+      case 'refused':
+        return res.status(400).json({
+          error: found.reason,
+          message: found.reason === 'empty' ? 'Type a link or some words.' : 'Only YouTube and Spotify links work here.',
+        });
+      case 'search':
+        items = await ytdlp.search(found.query, 10);
+        break;
+      case 'youtube-video':
+        items = [await ytdlp.video(found.id)];
+        // A video opened from inside a playlist: the whole list is offered too.
+        playlist = found.list;
+        break;
+      case 'youtube-playlist':
+        items = await ytdlp.playlist(found.id, 100);
+        break;
+      case 'spotify-track':
+      case 'spotify-album':
+      case 'spotify-playlist':
+        // What it lists; each song is looked for on YouTube later, when it is about to play. No pictures: Spotify's
+        // are Spotify's.
+        items = await spotify.tracksOf(found.kind.slice('spotify-'.length), found.id);
+        break;
+      default:
+        return res.status(400).json({ error: 'unsupported', message: 'That is not something Music Buddy can play.' });
+    }
+    if (found.kind.startsWith('spotify-')) return res.json({ kind: found.kind, playlist: null, items });
+    return res.json({ kind: found.kind, playlist, items: await musicLibrary.withThumbnails(items) });
+  } catch (err) {
+    if (!(err instanceof MusicError)) throw err;
+    const [status, message] = MUSIC_ERRORS[err.code] ?? [502, 'Could not look that up.'];
+    return res.status(status).json({ error: err.code, message });
+  }
 }));
 
 app.post('/api/uploads/sessions', requireLogin, guarded(async (req, res) => {
@@ -2237,6 +2351,8 @@ realtime = new Realtime({
   roles,
   badges,
   soundpad,
+  music,
+  musicEnabled: () => serverSettings.musicEnabled && ytdlp.available,
   issueTokens,
   unreadFor,
   kickMember: (channelId, mid) => monitor.kickPath(channelPath(channelId, mid, 'voice')),

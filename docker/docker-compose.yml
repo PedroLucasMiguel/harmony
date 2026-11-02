@@ -67,6 +67,14 @@ services:
       # HARMONY_TURN_USERNAME: ""
       # HARMONY_TURN_PASSWORD: ""
 
+      # Music Buddy (off until the owner turns it on in the server's settings; see DEPLOYMENT.md). yt-dlp is in the
+      # image and refreshed at start; set this to 0 to keep the image's own.
+      # HARMONY_YTDLP_AUTOUPDATE: "1"
+      # A cookies file, for when YouTube asks this server's address to sign in (mount it into the container).
+      # HARMONY_YTDLP_COOKIES: "/data/youtube-cookies.txt"
+      # HARMONY_MUSIC_MAX_SECONDS: "900"
+      # HARMONY_MUSIC_QUEUE_MAX: "200"
+
     # The image ships a health check that asks the control server whether it can
     # see MediaMTX, so an unhealthy container means the two have lost each other.
     healthcheck:

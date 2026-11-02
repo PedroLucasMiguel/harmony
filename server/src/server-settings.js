@@ -15,6 +15,7 @@ const DOOR_KEY = 'door_password';
 const LOGO_KEY = 'server_logo';
 const MAX_FILE_KEY = 'max_file_bytes';
 const STORAGE_KEY = 'storage_bytes';
+const MUSIC_KEY = 'music_enabled';
 
 /** What a server with no name of its own is called. */
 export const DEFAULT_NAME = 'Harmony';
@@ -121,6 +122,19 @@ export class ServerSettings {
     else this.#meta.set(STORAGE_KEY, String(Math.round(bytes)));
   }
 
+  /**
+   * Whether Music Buddy is on. Off until the owner says so: it fetches audio from YouTube with yt-dlp, which is the
+   * owner's to decide to do (see DEPLOYMENT.md), and a server that was never asked about it must not start.
+   */
+  get musicEnabled() {
+    return this.#meta.get(MUSIC_KEY) === '1';
+  }
+
+  setMusicEnabled(on) {
+    if (on) this.#meta.set(MUSIC_KEY, '1');
+    else this.#meta.delete(MUSIC_KEY);
+  }
+
   /** The override, or null when the environment is still in charge. */
   #stored() {
     return this.#meta.get(DOOR_KEY);
@@ -197,6 +211,7 @@ export class ServerSettings {
       logo: this.logo,
       passwordRequired: this.passwordRequired,
       restartRequired: this.restartRequired,
+      musicEnabled: this.musicEnabled,
     };
   }
 }

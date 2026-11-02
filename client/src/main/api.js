@@ -542,6 +542,8 @@ module.exports = {
   // Who a message notified (server/src/index.js).
   notified: (s, id) => requestJson(s, `/api/messages/${Number(id)}/notified`),
   linkPreview: (s, url) => requestJson(s, `/api/link-preview?url=${encodeURIComponent(url)}`),
+  // What a link or some words in Music Buddy's box are: the tracks they name (server/src/music).
+  musicResolve: (s, input) => requestJson(s, '/api/music/resolve', { method: 'POST', body: { input } }),
   // `hash` is an already-uploaded image, or null to go back to initials. The
   // picture itself travels through uploadFile like any other attachment.
   setAvatar: (s, hash) =>

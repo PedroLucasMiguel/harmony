@@ -32,6 +32,8 @@
 #   CF_API_TOKEN         certbot route only; Zone > DNS > Edit on the domain
 #   HARMONY_PUBLIC_URL   none route only; the URL clients use
 #   HARMONY_PASSWORD     server password; empty means none
+#   HARMONY_YTDLP        0 leaves yt-dlp out. It is what Music Buddy fetches audio with (off until the owner turns
+#                        it on in the server's settings); see DEPLOYMENT.md before you do.
 #   MEDIAMTX_PATCHED     0 installs the published MediaMTX instead of Harmony's build of it (the patches in
 #                        patches/; see patches/README.md). Needs no Go on the machine; falls back to the
 #                        published binary by itself if the build cannot be made. Re-run to switch.
@@ -137,6 +139,38 @@ echo "==> Node $(node -v)"
 # than failing; see patches/install-mediamtx.sh.
 MEDIAMTX_VERSION="$MEDIAMTX_VERSION" MTX_ARCH="$MTX_ARCH" bash "$SRC_DIR/patches/install-mediamtx.sh"
 
+# --- yt-dlp (Music Buddy) ------------------------------------------------------
+# What Music Buddy looks things up and fetches audio with. Installing it changes nothing by itself: the feature is off
+# until the owner turns it on in the server's settings, and DEPLOYMENT.md says what that involves. The standalone
+# build needs no Python and no ffmpeg (the audio is taken as YouTube serves it). It goes in /usr/local/bin, owned by
+# root, so the harmony user (which has no write access there, by design) can run it but never replace it; a timer
+# keeps it current, because YouTube breaks old versions often. A machine it cannot be had for, or a download that fails,
+# only leaves Music Buddy unavailable: nothing else depends on it.
+YTDLP_OK=no
+if [[ ${HARMONY_YTDLP:-1} != 0 ]]; then
+  case "$(uname -m)" in
+    x86_64)        YTDLP_ASSET=yt-dlp_linux ;;
+    aarch64|arm64) YTDLP_ASSET=yt-dlp_linux_aarch64 ;;
+    armv7l)        YTDLP_ASSET=yt-dlp_linux_armv7l ;;
+    *)             YTDLP_ASSET= ;;
+  esac
+  if [[ -z $YTDLP_ASSET ]]; then
+    echo "==> yt-dlp: no build for $(uname -m); Music Buddy will not be available"
+  else
+    echo "==> Installing yt-dlp (for Music Buddy)"
+    if curl -fsSL -o /usr/local/bin/yt-dlp.new "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${YTDLP_ASSET}" \
+        && chmod 0755 /usr/local/bin/yt-dlp.new \
+        && /usr/local/bin/yt-dlp.new --version >/dev/null 2>&1; then
+      mv -f /usr/local/bin/yt-dlp.new /usr/local/bin/yt-dlp
+      YTDLP_OK=yes
+      echo "    yt-dlp $(/usr/local/bin/yt-dlp --version)"
+    else
+      rm -f /usr/local/bin/yt-dlp.new
+      echo "    could not install yt-dlp; Music Buddy will not be available (re-run to try again)"
+    fi
+  fi
+fi
+
 # --- UDP socket buffers ------------------------------------------------------
 # Every voice and video stream a room has goes through this one host's UDP
 # socket, in bursts: a keyframe is dozens of packets at once. Linux's default
@@ -234,8 +268,17 @@ install -m 0755 "$SRC_DIR/ip-watch.sh" /usr/local/bin/harmony-ip-watch.sh
 install -m 0644 "$SRC_DIR/systemd/harmony-ip-watch.service" /etc/systemd/system/harmony-ip-watch.service
 install -m 0644 "$SRC_DIR/systemd/harmony-ip-watch.timer" /etc/systemd/system/harmony-ip-watch.timer
 
+# A daily look for a newer yt-dlp, where there is one.
+if [[ $YTDLP_OK == yes || -x /usr/local/bin/yt-dlp ]]; then
+  install -m 0644 "$SRC_DIR/systemd/harmony-ytdlp-update.service" /etc/systemd/system/harmony-ytdlp-update.service
+  install -m 0644 "$SRC_DIR/systemd/harmony-ytdlp-update.timer" /etc/systemd/system/harmony-ytdlp-update.timer
+fi
+
 systemctl daemon-reload
 systemctl enable harmony-server mediamtx harmony-ip-watch.timer
+if [[ -f /etc/systemd/system/harmony-ytdlp-update.timer ]]; then
+  systemctl enable --now harmony-ytdlp-update.timer
+fi
 
 # =============================================================================
 # Setup: domain, HTTPS, configuration, first start

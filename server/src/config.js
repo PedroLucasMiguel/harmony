@@ -68,6 +68,13 @@ export const config = {
 
   signalingBase,
 
+  // Music Buddy (see music/). yt-dlp is looked up on the PATH unless told where it is; a cookies file is only for
+  // when YouTube asks the server's address to sign in.
+  ytdlpBin: process.env.HARMONY_YTDLP_BIN || 'yt-dlp',
+  ytdlpCookies: process.env.HARMONY_YTDLP_COOKIES || null,
+  musicMaxSeconds: num(process.env.HARMONY_MUSIC_MAX_SECONDS, 900),
+  musicQueueMax: num(process.env.HARMONY_MUSIC_QUEUE_MAX, 200),
+
   // How long an unpublished username stays reserved. This only has to cover the
   // gap between "user picked a name" and "MediaMTX sees their publisher" --
   // source picking, permission prompts and the ICE handshake.

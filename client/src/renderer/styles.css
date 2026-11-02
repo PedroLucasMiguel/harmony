@@ -237,6 +237,13 @@ html,
 body {
   height: 100%;
   margin: 0;
+  /* The app is the screen, not a page: nothing pulls it past its edges. */
+  overscroll-behavior: none;
+}
+html {
+  /* A finger pans what scrolls and does nothing else: no pinch or double tap enlarging the whole app, which then
+     could be dragged around in both directions (the viewport tag says the same, but a browser may not listen). */
+  touch-action: pan-x pan-y;
 }
 
 body {
@@ -10274,4 +10281,430 @@ input[type='number'].volume-exact::-webkit-inner-spin-button,
 input[type='number'].volume-exact::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* ------------------------------------------------------------------------------------------------------------------
+ * Music Buddy
+ *
+ * Its own strip in the call panel and its own popover, with nothing borrowed from the soundpad's (a grid of clips that
+ * fire once). See music-ui.js.
+ * ------------------------------------------------------------------------------------------------------------------ */
+.music-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: 10px;
+  background: rgb(var(--tint-rgb) / 0.06);
+  border: 1px solid rgb(var(--tint-rgb) / 0.1);
+}
+.music-strip[hidden] {
+  display: none;
+}
+.music-strip-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.music-cover {
+  flex: 0 0 auto;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgb(var(--tint-rgb) / 0.12);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.music-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.music-cover-big {
+  width: 3.2rem;
+  height: 3.2rem;
+}
+.music-strip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.music-strip-text strong,
+.music-strip-text span {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.82rem;
+}
+.music-strip-text span {
+  font-size: 0.72rem;
+}
+.music-strip[data-paused] .music-strip-text strong {
+  opacity: 0.6;
+}
+.music-flags {
+  display: inline-flex;
+  gap: 0.25rem;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+.music-flags [data-icon][hidden] {
+  display: none;
+}
+.music-strip-transport {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.1rem;
+  padding: 0 0.15rem;
+}
+.music-strip-transport .icon-only {
+  min-width: 30px;
+  padding: 4px 5px;
+}
+.music-strip-transport[hidden] {
+  display: none;
+}
+.music-strip-transport button[data-on] {
+  color: var(--accent);
+}
+.music-flags[hidden] {
+  display: none;
+}
+.music-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(var(--tint-rgb) / 0.14);
+  overflow: hidden;
+}
+.music-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
+.music-strip-volume {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.music-volume {
+  flex: 1 1 auto;
+  min-width: 4rem;
+  accent-color: var(--accent);
+}
+.music-volume-label {
+  font-size: 0.72rem;
+  opacity: 0.6;
+  min-width: 2.6rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.music-volume-label[data-boosted] {
+  color: var(--warn);
+  opacity: 1;
+  font-weight: 600;
+}
+.music-volume-label[data-exact] {
+  cursor: text;
+}
+.music-mute {
+  font-variant-emoji: text;
+}
+
+.music-pop {
+  position: fixed;
+  z-index: 45;
+  width: min(32rem, calc(100vw - 2rem));
+  /* The height is set from the window by placePop() (music-ui.js); this is for before it has run. */
+  max-height: min(40rem, calc(100vh - 1rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgb(var(--tint-rgb) / 0.14);
+  background: var(--surface-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.music-pop[hidden] {
+  display: none;
+}
+.music-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+}
+.music-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.music-find {
+  display: flex;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+.music-find[hidden] {
+  display: none;
+}
+.music-find input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.music-note {
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+}
+.music-results {
+  flex: 0 1 auto;
+  max-height: 11rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.3rem;
+  border-radius: 8px;
+  background: rgb(var(--tint-rgb) / 0.05);
+}
+.music-results[hidden] {
+  display: none;
+}
+.music-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.1rem 0.2rem 0.3rem;
+}
+.music-result,
+.music-track {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 8px;
+  min-width: 0;
+}
+.music-track {
+  list-style: none;
+}
+.music-track[data-clickable] {
+  cursor: pointer;
+}
+.music-track[data-clickable]:hover,
+.music-result:hover {
+  background: rgb(var(--tint-rgb) / 0.08);
+}
+.music-track[data-current] {
+  background: rgb(var(--tint-rgb) / 0.12);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.music-track[data-failed] .music-track-text {
+  opacity: 0.5;
+}
+.music-track-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.music-track-text strong,
+.music-track-text span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.84rem;
+}
+.music-track-text span {
+  font-size: 0.74rem;
+}
+.music-track-length,
+.music-track-by {
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+.music-track-tools {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 0.1rem;
+}
+.music-now {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border-radius: 8px;
+  background: rgb(var(--tint-rgb) / 0.06);
+}
+.music-now[hidden] {
+  display: none;
+}
+.music-now-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.music-now-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.music-now-text strong,
+.music-now-text span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.music-time {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.music-seek {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.music-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.music-transport [data-on] {
+  color: var(--accent);
+}
+.music-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+}
+.music-queue-head[hidden] {
+  display: none;
+}
+.music-queue {
+  flex: 1 1 auto;
+  min-height: 3rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+.music-empty {
+  margin: 0;
+  padding: 0.5rem;
+  text-align: center;
+}
+.music-empty[hidden] {
+  display: none;
+}
+@media (max-width: 720px) {
+  .music-track-by {
+    display: none;
+  }
+}
+
+.music-track[data-dragging] {
+  opacity: 0.4;
+}
+.music-track[data-drop='before'] {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.music-track[data-drop='after'] {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.music-track[draggable='true'] {
+  cursor: grab;
+}
+
+/*
+ * A phone. The call is one row of the dock (see .mobile-dock .voice-panel), so the strip wraps onto a row of its own
+ * under it instead of joining that row, and the panel is a sheet along the bottom of the screen, as the search and the
+ * pins are, rather than a box placed beside a button there is no room beside.
+ */
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
+  .mobile-dock .voice-panel {
+    flex-wrap: wrap;
+  }
+  .mobile-dock .music-strip {
+    order: 4;
+    flex: 1 1 100%;
+    min-width: 0;
+    margin-top: 2px;
+    padding: 0.35rem 0.45rem;
+    gap: 0.25rem;
+  }
+  /* The state gives way to the buttons (it is cut short with an ellipsis), so the hang-up stays on the row with the four of them. */
+  .mobile-dock .voice-panel-where {
+    flex: 1 1 0;
+    min-width: 3rem;
+  }
+  .mobile-dock .voice-panel-where strong,
+  .mobile-dock .voice-panel-where .muted {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .music-strip .music-cover {
+    width: 1.9rem;
+    height: 1.9rem;
+  }
+  .music-strip-transport .icon-only {
+    min-width: 0;
+    flex: 1 1 0;
+    min-height: 36px;
+  }
+  .music-strip .music-mute {
+    min-width: 36px;
+    min-height: 32px;
+  }
+  .music-pop {
+    left: 0 !important;
+    right: 0;
+    top: auto !important;
+    bottom: 0;
+    width: auto;
+    max-height: calc(100dvh - var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) - 0.5rem) !important;
+    padding: 0.6rem 0.6rem calc(0.6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+    border-width: 1px 0 0;
+    border-radius: 14px 14px 0 0;
+    z-index: 70;
+  }
+  /* One line each, and the length gives way, so a song's name has room. */
+  .music-result .music-track-length {
+    display: none;
+  }
+  .music-result button {
+    white-space: nowrap;
+    padding-inline: 0.6rem;
+  }
+  .music-transport .icon-only {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 42px;
+  }
 }

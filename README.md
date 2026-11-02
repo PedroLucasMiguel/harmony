@@ -36,6 +36,11 @@ A [five-minute tour](media/harmony-demo.mp4) of everything below, recorded from 
   in the member list and voice channels, a font for your name from ten that
   ship with the app, and a join sound of up to 10 seconds that plays for the
   room when you arrive.
+- **Music Buddy** (off until the owner turns it on): people the owner allows put music on for the voice channel
+  they are in, from YouTube links and playlists, Spotify links and playlists (looked up on YouTube), or a search.
+  Everybody in the channel hears it in sync, with a volume of their own; the queue can be reordered live, skipped,
+  shuffled and repeated. It fetches audio with yt-dlp, which is the owner's call: see
+  [DEPLOYMENT.md](DEPLOYMENT.md#music-buddy-optional).
 - **Private messages**: end-to-end encrypted conversations between two members
   of a server, opened from the button in the top bar or by right-clicking
   someone in the member list. Text, files, replies, edits and reactions are

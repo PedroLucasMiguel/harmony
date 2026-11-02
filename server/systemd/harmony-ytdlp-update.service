@@ -1,0 +1,15 @@
+[Unit]
+Description=Update yt-dlp, which Harmony's Music Buddy uses to fetch audio
+After=network-online.target
+Wants=network-online.target
+# Only where install.sh put one: no yt-dlp, nothing to update.
+ConditionPathExists=/usr/local/bin/yt-dlp
+
+[Service]
+Type=oneshot
+# YouTube changes often enough that a yt-dlp a few weeks old stops finding anything. The standalone binary replaces
+# itself in place; this runs as root, which owns it (the harmony user only runs it, and cannot write there).
+ExecStart=/usr/local/bin/yt-dlp -U
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=harmony-ytdlp-update

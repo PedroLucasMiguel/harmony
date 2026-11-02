@@ -26,6 +26,26 @@ if [ -z "${MTX_WEBRTCADDITIONALHOSTS:-}" ]; then
   log '         Set it to the public hostname or IP clients will use.'
 fi
 
+# Music Buddy's yt-dlp: a newer one than the image's, kept in the data volume (the root filesystem is read-only).
+# Best effort and quiet -- nothing depends on it, and the image's own copy is used if this cannot be done.
+# HARMONY_YTDLP_AUTOUPDATE=0 turns it off.
+if [ "${HARMONY_YTDLP_AUTOUPDATE:-1}" != 0 ] && [ -x /usr/local/bin/yt-dlp ] && [ -n "${HARMONY_DATA_DIR:-}" ]; then
+  case "$(uname -m)" in
+    x86_64) ytdlp_asset=yt-dlp_musllinux ;;
+    aarch64) ytdlp_asset=yt-dlp_musllinux_aarch64 ;;
+    *) ytdlp_asset= ;;
+  esac
+  if [ -n "$ytdlp_asset" ] && mkdir -p "$HARMONY_DATA_DIR/bin" 2>/dev/null \
+      && wget -q -T 20 -O "$HARMONY_DATA_DIR/bin/yt-dlp.new" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$ytdlp_asset" \
+      && chmod 0755 "$HARMONY_DATA_DIR/bin/yt-dlp.new" && "$HARMONY_DATA_DIR/bin/yt-dlp.new" --version >/dev/null 2>&1; then
+    mv -f "$HARMONY_DATA_DIR/bin/yt-dlp.new" "$HARMONY_DATA_DIR/bin/yt-dlp"
+    export HARMONY_YTDLP_BIN="$HARMONY_DATA_DIR/bin/yt-dlp"
+    log "yt-dlp $("$HARMONY_YTDLP_BIN" --version) (for Music Buddy)"
+  else
+    rm -f "$HARMONY_DATA_DIR/bin/yt-dlp.new" 2>/dev/null || true
+  fi
+fi
+
 node /opt/harmony/src/index.js &
 control_pid=$!
 

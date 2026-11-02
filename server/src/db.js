@@ -729,6 +729,27 @@ const MIGRATIONS = [
       CREATE INDEX dm_messages_pinned ON dm_messages(conversation_id) WHERE pinned = 1;
     `);
   },
+  /*
+   * v26: Music Buddy's cache of tracks.
+   *
+   * A track fetched once (by yt-dlp, see music/library.js) is kept as an ordinary upload, and this says which one: the
+   * source it came from ("yt:<video id>") to the file's hash, so a song asked for again is not downloaded again. The
+   * file is the cache and this is only its index -- a row whose file has been swept to make room is ignored and made
+   * again. The title and artist are kept for what was learned while downloading.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE music_tracks (
+        source_key  TEXT PRIMARY KEY,
+        file_hash   TEXT NOT NULL,
+        title       TEXT NOT NULL DEFAULT '',
+        artist      TEXT NOT NULL DEFAULT '',
+        duration_ms INTEGER,
+        thumb_hash  TEXT,
+        fetched_at  INTEGER NOT NULL
+      );
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

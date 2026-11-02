@@ -666,6 +666,7 @@ handle('api:recovery-reset', (_e, s, token, p) => api.recoveryReset(s, token, p)
 handle('api:me', (_e, s) => api.me(s));
 handle('api:notified', (_e, s, id) => api.notified(s, id));
 handle('api:link-preview', (_e, s, url) => api.linkPreview(s, url));
+handle('api:music-resolve', (_e, s, input) => api.musicResolve(s, input));
 handle('api:set-avatar', (_e, s, hash) => api.setAvatar(s, hash));
 handle('api:set-banner', (_e, s, hash) => api.setBanner(s, hash));
 handle('api:set-banner-dim', (_e, s, dim) => api.setBannerDim(s, dim));

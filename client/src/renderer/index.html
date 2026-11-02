@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <!-- For the browser and Android builds; the desktop window ignores it. -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; frame-src https://www.youtube-nocookie.com; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
@@ -478,6 +478,50 @@
               >
                 Soundboard
               </button>
+              <!--
+                Music Buddy is its own thing: its own button, its own panel (#music-pop, below), its own volume.
+                Shown only to people who may play music (and only where the owner has switched it on); everybody
+                else gets the strip underneath, which is only for listening.
+              -->
+              <button
+                class="voice-action"
+                id="voice-music"
+                data-icon="playlist"
+                hidden
+                title="Music Buddy" data-i18n-title="music.title" data-i18n="music.button"
+              >
+                Music Buddy
+              </button>
+            </div>
+            <!-- What is playing, for everybody in the call: its own volume and mute, and the way into the queue. -->
+            <div class="music-strip" id="music-strip" hidden>
+              <div class="music-strip-top">
+                <span class="music-cover" id="music-cover" aria-hidden="true"></span>
+                <button type="button" class="music-strip-text" id="music-open" title="Open the queue" data-i18n-title="music.open_queue">
+                  <strong id="music-title"></strong>
+                  <span class="muted" id="music-artist"></span>
+                </button>
+                <span class="music-flags" id="music-flags" aria-hidden="true">
+                  <span id="music-flag-shuffle" data-icon="shuffle" hidden></span>
+                  <span id="music-flag-repeat" data-icon="repeat" hidden></span>
+                </span>
+              </div>
+              <div class="music-bar" id="music-bar" role="progressbar" aria-label="Progress" data-i18n-aria-label="music.progress"><i id="music-bar-fill"></i></div>
+              <!-- The same moves as the panel's, for the people who may make them, without opening it. -->
+              <div class="music-strip-transport" id="music-strip-transport" hidden>
+                <button type="button" class="ghost icon-only" id="music-s-shuffle" data-icon="shuffle" title="Shuffle" aria-label="Shuffle" data-i18n-title="music.shuffle" data-i18n-aria-label="music.shuffle"></button>
+                <button type="button" class="ghost icon-only" id="music-s-prev" data-icon="skip-back" title="Previous" aria-label="Previous" data-i18n-title="music.previous" data-i18n-aria-label="music.previous"></button>
+                <button type="button" class="primary icon-only" id="music-s-play" data-icon="pause" title="Pause" aria-label="Pause" data-i18n-title="music.pause" data-i18n-aria-label="music.pause"></button>
+                <button type="button" class="ghost icon-only" id="music-s-next" data-icon="skip-forward" title="Next" aria-label="Next" data-i18n-title="music.next" data-i18n-aria-label="music.next"></button>
+                <button type="button" class="ghost icon-only" id="music-s-repeat" data-icon="repeat" title="Repeat" aria-label="Repeat" data-i18n-title="music.repeat" data-i18n-aria-label="music.repeat"></button>
+                <button type="button" class="ghost icon-only" id="music-s-mix" data-icon="arrow-clockwise" title="Mix the queue again" aria-label="Mix the queue again" data-i18n-title="music.mix" data-i18n-aria-label="music.mix"></button>
+              </div>
+              <div class="music-strip-volume">
+                <button class="ghost tiny music-mute" id="music-mute" type="button" data-icon="speaker-high" aria-label="Mute the music" data-i18n-aria-label="music.mute"></button>
+                <input id="music-volume" class="music-volume" type="range" min="0" max="350" step="1" value="100"
+                       title="How loudly the music plays for you" data-i18n-title="music.how_loud" />
+                <span class="music-volume-label volume-value" id="music-volume-label">100%</span>
+              </div>
             </div>
           </div>
 
@@ -1173,6 +1217,51 @@
     </div>
 
     <!--
+      Music Buddy's panel. Nothing in it is the soundpad's: it is opened by its own button (#voice-music, or the
+      strip's title), is built by music-ui.js, and lists tracks that stay in a queue rather than clips that fire once.
+      People who may not play music see the queue and where it is, read-only.
+    -->
+    <div class="music-pop" id="music-pop" hidden role="dialog" aria-labelledby="music-heading">
+      <div class="music-head">
+        <h3 id="music-heading" data-i18n="music.title">Music Buddy</h3>
+        <button type="button" class="ghost small icon-only" id="music-close" data-icon="x" title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
+      </div>
+      <form class="music-find" id="music-find" hidden>
+        <input id="music-input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="A YouTube or Spotify link, or the name of a song" data-i18n-placeholder="music.find_placeholder" />
+        <button type="submit" class="primary small" id="music-go" data-i18n="music.search">Search</button>
+      </form>
+      <p class="error music-note" id="music-note" hidden></p>
+      <div class="music-results" id="music-results" hidden></div>
+      <div class="music-now" id="music-now" hidden>
+        <div class="music-now-line">
+          <span class="music-cover music-cover-big" id="music-now-cover" aria-hidden="true"></span>
+          <span class="music-now-text">
+            <strong id="music-now-title"></strong>
+            <span class="muted" id="music-now-artist"></span>
+          </span>
+          <span class="music-time" id="music-time">0:00 / 0:00</span>
+        </div>
+        <input id="music-seek" class="music-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Position" data-i18n-aria-label="music.position" />
+        <div class="music-transport" id="music-transport">
+          <button type="button" class="ghost icon-only" id="music-shuffle" data-icon="shuffle" title="Shuffle" aria-label="Shuffle" data-i18n-title="music.shuffle" data-i18n-aria-label="music.shuffle"></button>
+          <button type="button" class="ghost icon-only" id="music-prev" data-icon="skip-back" title="Previous" aria-label="Previous" data-i18n-title="music.previous" data-i18n-aria-label="music.previous"></button>
+          <button type="button" class="primary icon-only" id="music-play" data-icon="pause" title="Pause" aria-label="Pause" data-i18n-title="music.pause" data-i18n-aria-label="music.pause"></button>
+          <button type="button" class="ghost icon-only" id="music-next" data-icon="skip-forward" title="Next" aria-label="Next" data-i18n-title="music.next" data-i18n-aria-label="music.next"></button>
+          <button type="button" class="ghost icon-only" id="music-repeat" data-icon="repeat" title="Repeat" aria-label="Repeat" data-i18n-title="music.repeat" data-i18n-aria-label="music.repeat"></button>
+          <!-- Not the switch beside it: this mixes what is left again, now, as often as it is pressed. -->
+          <button type="button" class="ghost icon-only" id="music-mix" data-icon="arrow-clockwise" title="Mix the queue again" aria-label="Mix the queue again" data-i18n-title="music.mix" data-i18n-aria-label="music.mix"></button>
+        </div>
+      </div>
+      <div class="music-queue-head" id="music-queue-head" hidden>
+        <span class="muted" id="music-queue-count"></span>
+        <button type="button" class="ghost small" id="music-clear" hidden data-i18n="music.clear">Clear</button>
+      </div>
+      <ol class="music-queue" id="music-queue"></ol>
+      <p class="muted music-empty" id="music-empty" data-i18n="music.nothing_playing">Nothing is playing. Search for a song, or paste a link.</p>
+    </div>
+
+    <!--
       Rename the server, or change the key to its front door.
 
       A dialog of its own rather than a section in Settings: everything in
@@ -1277,6 +1366,15 @@
                   <small id="server-storage-note"></small>
                 </label>
               </div>
+              <!-- Music Buddy. Off until the owner says so; hidden for a server too old to have it. -->
+              <label class="check" id="server-music-row" hidden>
+                <input type="checkbox" class="switch" role="switch" id="server-music" />
+                <span>
+                  <span data-i18n="music.owner_label">Let people play music in voice channels</span>
+                  <small data-i18n="music.owner_hint">People whose role allows it can add songs from YouTube and Spotify links.</small>
+                  <small id="server-music-note" hidden></small>
+                </span>
+              </label>
                 <p class="error" id="server-error" hidden></p>
                 <p class="muted" id="server-note" hidden></p>
                 <div class="ask-buttons">

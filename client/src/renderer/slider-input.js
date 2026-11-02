@@ -12,7 +12,7 @@
 
 /** The sliders that are volumes, as a selector: the ones whose number can be typed. */
 export const VOLUME_SLIDERS = [
-  '#volume', '#mosaic-volume', '#soundpad-volume', '#master-volume', '#sound-volume', '#mic-gain', '.peer-volume', '.tile-volume',
+  '#volume', '#mosaic-volume', '#soundpad-volume', '#master-volume', '#sound-volume', '#music-volume', '#mic-gain', '.peer-volume', '.tile-volume',
 ].join(', ');
 
 /** What a volume's number is drawn in, by what it can be: the little labels beside the sliders. */

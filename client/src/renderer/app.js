@@ -42,7 +42,17 @@ import { openImageEditor } from './image-editor.js';
 import { installSliderInput } from './slider-input.js';
 import { createProfileCard } from './profile-card.js';
 import { createDebugLog } from './debug-log.js';
+import { createMusicPlayer } from './music-player.js';
+import { createMusicUi } from './music-ui.js';
 import { NAME_COLOR_SPEED, NAME_COLOR_STOPS, paintName, startingPoint } from './name-color.js';
+
+/**
+ * Music Buddy's player and screen (see "Music Buddy" below): made once the page is up (initMusic), and declared here at
+ * the top because the functions that call them -- the roles, the server's info, the call's buttons -- can run before
+ * that, and what they ask of music before it exists is nothing.
+ */
+let musicPlayer = null;
+let musicUi = null;
 
 // ---------------------------------------------------------------------------
 // Stream presets
@@ -299,6 +309,9 @@ const el = {
   serverMaxFile: $('server-max-file'),
   serverStorage: $('server-storage'),
   serverStorageNote: $('server-storage-note'),
+  serverMusicRow: $('server-music-row'),
+  serverMusic: $('server-music'),
+  serverMusicNote: $('server-music-note'),
   serverPasswordNote: $('server-password-note'),
   serverErrorLine: $('server-error'),
   serverNote: $('server-note'),
@@ -397,6 +410,10 @@ const el = {
   soundpadEmpty: $('soundpad-empty'),
   soundpadVolume: $('soundpad-volume'),
   soundpadVolumeLabel: $('soundpad-volume-label'),
+  // Music Buddy's own volume and mute, on the strip in the call panel: nothing of the soundpad's.
+  musicVolume: $('music-volume'),
+  musicVolumeLabel: $('music-volume-label'),
+  musicMute: $('music-mute'),
   soundpadMute: $('soundpad-mute'),
   ask: $('ask'),
   askForm: $('ask-form'),
@@ -1047,6 +1064,11 @@ document.addEventListener('mouseout', (event) => {
 });
 document.addEventListener('pointerdown', hideTooltip, true);
 document.addEventListener('scroll', hideTooltip, true);
+// The page itself never scrolls: the app is the screen. Something that does move it (a focus inside a closed drawer, a
+// keyboard coming up) is put straight back, so the whole app is never left slid to one side.
+window.addEventListener('scroll', () => {
+  if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+});
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -1747,6 +1769,12 @@ function voiceBackgroundEvent(msg) {
       state.voiceCtx.roster = msg.roster;
       state.voice.syncPeers(msg.roster).catch(() => { /* retried next push */ });
       state.voice.syncVideo(msg.roster).catch(() => { /* the reconcile timer comes back */ });
+      break;
+    case 'music:state':
+    case 'music:tick':
+    case 'music:error':
+      // The music goes on while another server is on screen, as the call it belongs to does.
+      handleMusicEvent(msg);
       break;
     case 'voice:moved':
       endDetachedCall(t('app.disconnected_you', { by: msg.by }));
@@ -4576,7 +4604,7 @@ function openMemberMenu(user, event) {
 // ---------------------------------------------------------------------------
 
 /** What the server last said about itself. */
-const serverInfo = { name: 'Harmony', passwordRequired: false, restartRequired: false };
+const serverInfo = { name: 'Harmony', passwordRequired: false, restartRequired: false, musicEnabled: false };
 
 /**
  * Draw what the server says about itself.
@@ -4594,6 +4622,9 @@ function applyServerInfo(info) {
   // disabled: a control you can see and cannot use is a question nobody
   // else needs asked.
   el.serverSettings.hidden = !canAdminister(rolesContext());
+  // The owner turned Music Buddy off: it is quiet at once, and its button and strip go.
+  if (serverInfo.musicEnabled === false) musicPlayer?.apply(null);
+  musicUi?.render();
 }
 
 /**
@@ -4672,6 +4703,8 @@ function applyRolePowers() {
   nameFont(el.channelsWho, state.auth.user.id, state.auth.user);
   applyServerInfo();
   renderSoundpad();
+  // The permission to play music came or went.
+  musicUi?.render();
   // The server dialog loses the pages somebody may no longer use.
   if (el.serverDialog.open) {
     applyServerTabs();
@@ -4845,6 +4878,12 @@ function openServerDialog(tab) {
       })
       : t('server.storage_note_short', { used });
   }
+  // Music Buddy: only on a server that knows it, and it cannot be switched on without yt-dlp there to run.
+  el.serverMusicRow.hidden = serverInfo.musicAvailable === undefined;
+  el.serverMusic.checked = Boolean(serverInfo.musicEnabled);
+  el.serverMusic.disabled = !serverInfo.musicAvailable && !serverInfo.musicEnabled;
+  el.serverMusicNote.hidden = Boolean(serverInfo.musicAvailable);
+  el.serverMusicNote.textContent = t('music.owner_missing');
   el.serverErrorLine.hidden = true;
   el.serverNote.hidden = true;
   const allowed = serverTabsAllowed();
@@ -4877,6 +4916,10 @@ async function saveServerSettings() {
     const storage = Math.round(Number(el.serverStorage.value) * 1024 ** 3);
     if (Number.isFinite(storage) && storage > 0
       && Math.abs(storage - serverInfo.storageBytes) > 1024 ** 2) body.storageBytes = storage;
+  }
+
+  if (serverInfo.musicAvailable !== undefined && el.serverMusic.checked !== Boolean(serverInfo.musicEnabled)) {
+    body.musicEnabled = el.serverMusic.checked;
   }
 
   try {
@@ -5219,6 +5262,9 @@ async function joinVoice(channel, password, { cued = false } = {}) {
       connected: true,
       roster: reply.roster ?? [],
     };
+    // Joined in the middle of a song: the music is already where it is.
+    musicPlayer?.apply(reply.music ?? null);
+    startMusicClock();
 
     // Joining a voice channel puts the streams back on the stage. Clicking a
     // voice channel is the only way back from a text channel, so leaving the
@@ -5518,6 +5564,10 @@ async function leaveVoice({ silent = false, quiet = false } = {}) {
   state.voiceServer = null;
   state.voiceCtx = null;
   state.channels.roster = [];
+  // The music is the call's: it stops with it.
+  musicPlayer?.stop();
+  musicUi?.reset();
+  musicClockStarted = false;
   resetCues();
   if (!quiet) stopJoinSounds();
   // No call, so no key to watch for.
@@ -5593,6 +5643,8 @@ function applyVoiceButtons() {
 
   el.voiceSoundboard.toggleAttribute('data-on', !el.soundpad.hidden);
   el.voiceSoundboard.disabled = !state.voice.channelId;
+  // Deafened silences the music too, and un-deafening brings it back at its own volume.
+  applyMusicVolume();
 
   /*
    * What the strip at the bottom says about you.
@@ -11440,6 +11492,121 @@ function closeSoundpad() {
   applyVoiceButtons();
 }
 
+// ---------------------------------------------------------------------------
+// Music Buddy
+//
+// Its own player, panel and volume (music-player.js, music-ui.js). The server decides what plays and where it has got
+// to; this plays it. None of it goes through the soundpad.
+// ---------------------------------------------------------------------------
+
+/** The music's gain: its own volume, silenced by its mute and by being deafened. */
+function musicGain() {
+  const percent = typeof state.settings?.musicVolume === 'number' ? state.settings.musicVolume : 100;
+  return state.settings?.musicMuted || state.voice.deafened ? 0 : Math.max(0, Math.min(MAX_GAIN, percent / 100));
+}
+
+/** Paint the music's volume control from the saved settings, and give the player what it comes to. */
+function applyMusicVolume() {
+  const percent = typeof state.settings?.musicVolume === 'number' ? state.settings.musicVolume : 100;
+  const muted = Boolean(state.settings?.musicMuted);
+  showVolume(el.musicVolume, el.musicVolumeLabel, percent, muted);
+  setIcon(el.musicMute, muted || percent === 0 ? 'speaker-x' : 'speaker-high');
+  el.musicMute.title = muted ? t('music.unmute') : t('music.mute');
+  el.musicMute.setAttribute('aria-label', el.musicMute.title);
+  el.musicMute.toggleAttribute('data-on', muted);
+  musicPlayer?.setGain(musicGain());
+}
+
+/** What the server says about the music of the call: a new state, or a track it could not fetch. */
+function handleMusicEvent(msg) {
+  if (msg.channelId !== state.voice.channelId) return;
+  if (msg.type === 'music:error') {
+    toast(t('music.track_failed', { title: msg.title || t('music.untitled') }));
+    return;
+  }
+  if (msg.type === 'music:tick') {
+    // A heartbeat for a queue this client has not got the latest of: the whole of it is asked for.
+    if (!musicPlayer?.tick(msg)) resyncMusic();
+    return;
+  }
+  musicPlayer?.apply(msg);
+  startMusicClock();
+}
+
+/** Ask for the music as it is now. At most one question at a time, whatever called for it. */
+let musicSyncing = false;
+async function resyncMusic() {
+  if (musicSyncing || !voiceHere()) return;
+  musicSyncing = true;
+  try {
+    const reply = await voiceRt('music:sync', { channelId: state.voice.channelId });
+    if (reply?.type === 'music:sync') musicPlayer?.apply(reply.music ?? null);
+  } catch { /* the next heartbeat asks again */ } finally {
+    musicSyncing = false;
+  }
+}
+
+/**
+ * How far the server is, in time: a tiny request for its clock, timed. The shortest of the last few is the nearest the
+ * truth (a slow one was held up on the way), and half of it is how long a push takes to arrive, which is what puts this
+ * client at the same place in the track as everybody else's.
+ */
+async function probeMusicClock() {
+  if (!musicPlayer?.view() || !voiceHere()) return;
+  const sent = performance.now();
+  try {
+    const reply = await voiceRt('music:clock', { channelId: state.voice.channelId });
+    if (reply?.type === 'music:clock') musicPlayer.calibrate(performance.now() - sent);
+  } catch { /* measured again at the next heartbeat */ }
+}
+
+/** Whether the opening few probes have been sent for this call's music. */
+let musicClockStarted = false;
+function startMusicClock() {
+  if (musicClockStarted || !musicPlayer?.view()) return;
+  musicClockStarted = true;
+  // Three quick ones, so the first estimate is already the best of a few; then one every fifteen seconds.
+  for (const wait of [0, 350, 700]) setTimeout(probeMusicClock, wait);
+}
+setInterval(probeMusicClock, 15_000);
+
+function initMusic() {
+  musicPlayer = createMusicPlayer({
+    mediaUrl: (hash) => harmony.mediaUrl(hash),
+    onChange: () => musicUi?.render(),
+    onBlocked: () => toast(t('music.blocked')),
+    onError: () => toast(t('music.cannot_play')),
+  });
+  musicUi = createMusicUi({
+    t,
+    mediaUrl: (hash) => harmony.mediaUrl(hash),
+    resolve: (input) => harmony.api.musicResolve(state.voiceServer ?? state.server, input),
+    send: (type, payload) => voiceRt(type, payload),
+    // Who may play: the permission, and the owner's switch -- and only on the server the call is on.
+    canControl: () => voiceHere() && serverInfo.musicEnabled === true && can('music.control'),
+    view: () => musicPlayer.view(),
+    position: () => musicPlayer.positionMs(),
+    channelId: () => (voiceHere() ? state.voice.channelId : null),
+  });
+  applyMusicVolume();
+}
+
+el.musicVolume.addEventListener('input', () => {
+  showVolume(el.musicVolume, el.musicVolumeLabel, Number(el.musicVolume.value), Boolean(state.settings?.musicMuted));
+  // Heard as it moves; saved when it is let go.
+  if (!state.settings?.musicMuted) musicPlayer?.setGain(state.voice.deafened ? 0 : Number(el.musicVolume.value) / 100);
+});
+el.musicVolume.addEventListener('change', async () => {
+  // Moving the slider is a way of un-muting it, as it is for a person.
+  state.settings = await harmony.settings.set({ musicVolume: Number(el.musicVolume.value), musicMuted: false });
+  applyMusicVolume();
+});
+el.musicMute.addEventListener('click', async () => {
+  state.settings = await harmony.settings.set({ musicMuted: !state.settings?.musicMuted });
+  applyMusicVolume();
+});
+initMusic();
+
 /**
  * Play a clip for the whole channel. From a click or from a hotkey.
  *
@@ -12618,10 +12785,17 @@ function onRealtimeEvent(msg) {
       break;
 
     case 'server':
-      applyServerInfo(msg.server);
+    case 'server:info': {
+      // `server:info` carries the view in `info`: this connection tags every message it relays with the server's address
+      // in `server`, which is where a plain `server` event keeps the view, so that one only still works when it
+      // survived the tag (it never does, from a current relay).
+      const info = msg.type === 'server:info' ? msg.info : (msg.server && typeof msg.server === 'object' ? msg.server : null);
+      if (!info) break;
+      applyServerInfo(info);
       // The owner changed the logo: everybody's list follows, without a restart.
-      syncLogo(el.serverUrl.value.trim(), el.password.value, msg.server?.logo ?? null);
+      syncLogo(el.serverUrl.value.trim(), el.password.value, info.logo ?? null);
       break;
+    }
 
     /*
      * Your account is gone.
@@ -12698,6 +12872,12 @@ function onRealtimeEvent(msg) {
       renderChat();
       serverAdmin?.render();
       profileCard?.refresh();
+      break;
+
+    case 'music:state':
+    case 'music:tick':
+    case 'music:error':
+      handleMusicEvent(msg);
       break;
 
     case 'soundpad:play':

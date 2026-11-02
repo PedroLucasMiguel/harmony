@@ -225,6 +225,7 @@ contextBridge.exposeInMainWorld('harmony', {
     recoveryReset: invoke('api:recovery-reset'),
     me: invoke('api:me'),
     linkPreview: invoke('api:link-preview'),
+    musicResolve: invoke('api:music-resolve'),
     notified: invoke('api:notified'),
     setAvatar: invoke('api:set-avatar'),
     setBanner: invoke('api:set-banner'),

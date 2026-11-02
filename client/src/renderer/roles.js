@@ -17,6 +17,7 @@ export const PERMISSION_GROUPS = [
   { key: 'messages', permissions: ['messages.delete', 'messages.pin'] },
   { key: 'roles', permissions: ['roles.hierarchy'] },
   { key: 'badges', permissions: ['badges.create', 'badges.edit'] },
+  { key: 'music', permissions: ['music.control'] },
 ];
 
 const ROLE_BASE = 1_000_000;
