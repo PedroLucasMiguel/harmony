@@ -750,6 +750,17 @@ const MIGRATIONS = [
       );
     `);
   },
+
+  // 27: how loud each music track is (see music/loudness.js), so tracks can be played at one level. loudness_at is
+  // when it was measured, and set even when the measuring found nothing, so a file that cannot be measured is not
+  // tried at every play. A track from before this column has none and is measured the next time it is asked for.
+  (db) => {
+    db.exec(`
+      ALTER TABLE music_tracks ADD COLUMN loudness_lufs REAL;
+      ALTER TABLE music_tracks ADD COLUMN peak_db REAL;
+      ALTER TABLE music_tracks ADD COLUMN loudness_at INTEGER;
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

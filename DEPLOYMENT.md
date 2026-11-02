@@ -485,8 +485,12 @@ and a role needs the *Play and control music* permission (the owner, super admin
 
 **What it takes, and what it is.** The server fetches the audio with
 [yt-dlp](https://github.com/yt-dlp/yt-dlp), keeps it as an ordinary upload (so it counts in the upload storage and is
-the first thing swept when the disk needs room) and tells each client what to play and where. Nothing is decoded or
-re-encoded, and no audio goes through the media relay: it costs a download per song, which a Raspberry Pi manages.
+the first thing swept when the disk needs room) and tells each client what to play and where. The file is not
+re-encoded and no audio goes through the media relay: it costs a download per song, which a Raspberry Pi manages. Each
+song is also measured once, when it is fetched (about a second of processor per song on a Pi, in small steps so the
+server stays responsive), and the server tells every client how many dB brings that song to a common loudness
+(-14 LUFS, like the streaming services), so songs mastered louder or quieter than each other play at one level under
+each listener's own volume. A song that cannot be measured is played as it is.
 
 > **Your decision.** Downloading audio from YouTube this way is not something YouTube's terms of service allow, and
 > playing copyrighted music to other people can need a licence where you live. Harmony ships with the feature off and

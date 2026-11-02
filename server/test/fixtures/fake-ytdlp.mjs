@@ -6,6 +6,7 @@
 //   FAKE_LOG        a file every call's arguments are appended to, one JSON line each
 //
 // A video id that starts with "bad" cannot be fetched; one that starts with "long" is too long for the filter.
+// One that starts with "loud" or "quiet" downloads a file that is that (a tone, -9.6 and -22.2 LUFS); the rest are silent.
 
 import { appendFileSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -47,7 +48,8 @@ if (args.includes('--version')) {
     const out = args[args.indexOf('-o') + 1].replace('%(id)s', id).replace('%(ext)s', 'webm');
     // Forty seconds of real (silent) Opus, so a client that plays it has something to play. The bytes are the same for
     // every id, so two ids are one file to the upload store -- which is how a real cache behaves with a repeated song.
-    copyFileSync(join(dirname(fileURLToPath(import.meta.url)), 'silence.webm'), out);
+    const tone = id.startsWith('loud') ? 'tone-loud' : id.startsWith('quiet') ? 'tone-quiet' : 'silence';
+    copyFileSync(join(dirname(fileURLToPath(import.meta.url)), `${tone}.webm`), out);
     console.log(JSON.stringify({ ...video(id), requested_downloads: [{ filepath: out }] }));
   } else {
     console.log(JSON.stringify(video(id)));

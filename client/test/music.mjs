@@ -407,6 +407,33 @@ async function run() {
   check('the music kept playing under the mute', !(await audioOf(fanPage)).paused, '');
   await click(fanPage, '#music-mute');
 
+  // --- tracks at one level, under a volume that stays where it was put ----------------------------------------------------------------
+  // The server measures each track and says how many dB brings it to a common level; the listener's volume (40% here) is
+  // theirs for every track, and the track's correction goes under it. (Silence, loud and quiet tones from the fake yt-dlp.)
+  if (await djPage.evaluate("return document.getElementById('music-pop').hidden")) await click(djPage, '#voice-music');
+  const addLink = async (url, title) => {
+    await djPage.evaluate(`${setInput('music-input', url)} document.getElementById('music-find').requestSubmit(); return true;`);
+    await waitFor(djPage, `document.querySelectorAll('#music-results .music-result').length === 1 && document.querySelector('#music-results .music-result').textContent.includes(${JSON.stringify(title)})`, { label: `the result for ${url}` });
+    await djPage.evaluate("document.querySelector('#music-results .music-result .primary').click(); return true;");
+    await waitFor(djPage, `[...document.querySelectorAll('#music-queue .music-track strong')].some((e) => e.textContent === ${JSON.stringify(title)})`, { label: `${title} in the queue` });
+  };
+  await addLink('https://youtu.be/loud0000001', 'Song loud0000001');
+  await addLink('https://youtu.be/quiet000001', 'Song quiet000001');
+  const gainsOn = async (title) => {
+    await djPage.evaluate(`[...document.querySelectorAll('#music-queue .music-track')].find((r) => r.querySelector('strong').textContent === ${JSON.stringify(title)}).click(); return true;`);
+    await waitFor(fanPage, `document.getElementById('music-title').textContent === ${JSON.stringify(title)} && document.getElementById('music-audio') && !document.getElementById('music-audio').paused`, { label: `${title} playing for the listener`, timeoutMs: 20_000 });
+    await sleep(500);
+    const [dj, fan] = await Promise.all([djPage, fanPage].map((pg) => pg.evaluate("return Number(document.getElementById('music-audio').dataset.gain)")));
+    return { dj, fan };
+  };
+  const loudOne = await gainsOn('Song loud0000001');
+  const quietOne = await gainsOn('Song quiet000001');
+  const plain = await gainsOn(await djPage.evaluate("return [...document.querySelectorAll('#music-queue .music-track strong')].map((e) => e.textContent).find((t) => !/loud|quiet/.test(t))"));
+  check('a loud track is turned down and a quiet one up, and one that was not measured is played as it is',
+    loudOne.dj > 0.55 && loudOne.dj < 0.65 && quietOne.dj > 2.4 && quietOne.dj < 2.75 && plain.dj === 1, JSON.stringify({ loudOne, quietOne, plain }));
+  check('the listener\'s 40% is 40% of every track\'s level, whichever track is playing',
+    [loudOne, quietOne, plain].every((g) => Math.abs(g.fan - 0.4 * g.dj) < 0.005), JSON.stringify({ loudOne, quietOne, plain }));
+
   // --- leaving, joining in the middle ------------------------------------------------------------------------------------------------
   await click(fanPage, '#voice-leave');
   await waitFor(fanPage, "document.getElementById('voice-active').hidden", { label: 'the listener out of the call' });

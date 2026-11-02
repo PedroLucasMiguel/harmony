@@ -278,7 +278,7 @@ export class Music {
       }
       this.#hold(live, id, got.hash);
       const wasLoading = live.room.current?.id === id && live.room.status === 'loading';
-      live.room.ready(id, this.#now(), { hash: got.hash, durationMs: got.durationMs });
+      live.room.ready(id, this.#now(), { hash: got.hash, durationMs: got.durationMs, gainDb: got.gainDb });
       if (got.title && !track.title) track.title = clean(got.title, 200);
       if (got.artist && !track.artist) track.artist = clean(got.artist, 120);
       if (got.thumbHash && !track.thumbHash) track.thumbHash = got.thumbHash;

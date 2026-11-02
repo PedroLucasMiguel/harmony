@@ -18,6 +18,11 @@
 // The sound is the file played by an <audio> element, and the element goes through the same output as every other sound
 // in the app (gain.js), so the master volume and the chosen speaker apply. It has its own volume, which is the
 // music's, nothing else's.
+//
+// Tracks are not all recorded at one level, so the server measures each and says in the snapshot how many dB it takes to
+// bring a track to a common one (`gainDb`). That is applied here under the listener's volume -- a track that is mastered
+// loud is turned down, a quiet one up -- so the volume the listener chose is the volume of every track, not of the
+// first. It is one gain (the volume times the track's), so changing track never moves the listener's own setting.
 
 import { playMusicElement } from './gain.js';
 
@@ -63,6 +68,14 @@ export function createMusicPlayer({
   let loaded = null;
   let checker = null;
   let gain = 1;
+  /** The loudness correction of the track that is playing, as a multiplier: 1 where the track was not measured. */
+  let levelling = 1;
+
+  /** The listener's volume and the track's correction, as one gain on the element's output. */
+  function applyGain() {
+    chain?.set(gain * levelling);
+    if (audio) audio.dataset.gain = (gain * levelling).toFixed(3);
+  }
 
   /** What the server's clock reads now: its reading in the snapshot, plus the way it travelled, plus the time since. */
   const serverNow = () => (music ? music.serverNow + latencyMs + (now() - music.at) : now());
@@ -106,7 +119,7 @@ export function createMusicPlayer({
     audio.addEventListener('error', () => onError(new Error(audio?.error?.message || 'could not play the track')));
     audio.addEventListener('loadedmetadata', () => place());
     chain = attach(audio);
-    chain.set(gain);
+    applyGain();
     checker = setInterval(() => {
       if (music?.state.status === 'playing') place();
     }, CHECK_MS);
@@ -150,6 +163,11 @@ export function createMusicPlayer({
       return;
     }
     ensureAudio();
+    const wanted = typeof track.gainDb === 'number' ? 10 ** (track.gainDb / 20) : 1;
+    if (wanted !== levelling) {
+      levelling = wanted;
+      applyGain();
+    }
     // The same track again (the previous one pressed, a seek) is not loaded again: it is only moved.
     const key = `${track.id}:${track.hash}`;
     if (loaded !== key) {
@@ -196,7 +214,7 @@ export function createMusicPlayer({
     /** The music's volume as a gain, 0 to MAX_GAIN; 0 is silence (and is what deafened is). */
     setGain(value) {
       gain = Math.max(0, Number(value) || 0);
-      chain?.set(gain);
+      applyGain();
     },
 
     /** Where the music ought to be, now: for drawing a progress bar. */

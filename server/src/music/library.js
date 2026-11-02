@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 
 import { fetchLimited, sniffImage } from '../link-preview.js';
+import { gainDbFor, measureFile } from './loudness.js';
 import { MusicError } from './ytdlp.js';
 
 const THUMB_BYTES = 256 * 1024;
@@ -30,6 +31,7 @@ export class MusicLibrary {
   #chat;
   #ytdlp;
   #fetching = new Map();
+  #measuring = Promise.resolve();
   #thumbs = new Map();
   #allowPrivate;
   #pictures;
@@ -52,12 +54,15 @@ export class MusicLibrary {
     this.#q = {
       get: db.prepare('SELECT * FROM music_tracks WHERE source_key = ?'),
       put: db.prepare(`
-        INSERT INTO music_tracks (source_key, file_hash, title, artist, duration_ms, thumb_hash, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO music_tracks (source_key, file_hash, title, artist, duration_ms, thumb_hash, fetched_at,
+          loudness_lufs, peak_db, loudness_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_key) DO UPDATE SET file_hash = excluded.file_hash, title = excluded.title,
           artist = excluded.artist, duration_ms = excluded.duration_ms, thumb_hash = excluded.thumb_hash,
-          fetched_at = excluded.fetched_at`),
+          fetched_at = excluded.fetched_at, loudness_lufs = excluded.loudness_lufs, peak_db = excluded.peak_db,
+          loudness_at = excluded.loudness_at`),
       touch: db.prepare('UPDATE music_tracks SET fetched_at = ? WHERE source_key = ?'),
+      loudness: db.prepare('UPDATE music_tracks SET loudness_lufs = ?, peak_db = ?, loudness_at = ? WHERE source_key = ?'),
     };
   }
 
@@ -74,11 +79,23 @@ export class MusicLibrary {
     if (!id) return Promise.reject(new MusicError('bad_input', 'not a source'));
 
     const row = this.#q.get.get(source);
-    if (row && this.#chat.fileInfo(row.file_hash)) {
+    const file = row ? this.#chat.fileInfo(row.file_hash) : null;
+    if (row && file) {
       this.#q.touch.run(Date.now(), source);
-      return Promise.resolve({
+      const found = {
         hash: row.file_hash, durationMs: row.duration_ms, title: row.title, artist: row.artist, thumbHash: row.thumb_hash,
-      });
+        gainDb: gainDbFor(row.loudness_lufs == null ? null : { lufs: row.loudness_lufs, peakDb: row.peak_db ?? -Infinity }),
+      };
+      if (row.loudness_at) return Promise.resolve(found);
+      // A file from before tracks were measured: measured now, once.
+      if (!this.#fetching.has(source)) {
+        const job = this.#measure(file.path).then((loudness) => {
+          this.#q.loudness.run(loudness?.lufs ?? null, Number.isFinite(loudness?.peakDb) ? loudness.peakDb : null, Date.now(), source);
+          return { ...found, gainDb: gainDbFor(loudness) };
+        }).finally(() => this.#fetching.delete(source));
+        this.#fetching.set(source, job);
+      }
+      return this.#fetching.get(source);
     }
     // Two people queueing the same song at once is one download.
     if (!this.#fetching.has(source)) {
@@ -88,6 +105,13 @@ export class MusicLibrary {
     return this.#fetching.get(source);
   }
 
+  /** One track measured at a time: it is work for the processor, and two at once only make both slower. */
+  #measure(path) {
+    const run = this.#measuring.then(() => measureFile(path));
+    this.#measuring = run.catch(() => {});
+    return run;
+  }
+
   async #fetch(source, id) {
     const got = await this.#ytdlp.fetchAudio(id);
     try {
@@ -95,8 +119,12 @@ export class MusicLibrary {
       const kept = this.#chat.adopt(got.path, { hash, bytes: got.bytes, claimedType: 'audio/webm' });
       if (!kept.ok) throw new MusicError('failed', 'could not keep the file');
       const thumbHash = await this.thumbnail(id);
-      this.#q.put.run(source, hash, got.title, got.artist, got.durationMs, thumbHash, Date.now());
-      return { hash, durationMs: got.durationMs, title: got.title, artist: got.artist, thumbHash };
+      const loudness = await this.#measure(this.#chat.fileInfo(hash)?.path ?? got.path);
+      this.#q.put.run(
+        source, hash, got.title, got.artist, got.durationMs, thumbHash, Date.now(),
+        loudness?.lufs ?? null, Number.isFinite(loudness?.peakDb) ? loudness.peakDb : null, Date.now(),
+      );
+      return { hash, durationMs: got.durationMs, title: got.title, artist: got.artist, thumbHash, gainDb: gainDbFor(loudness) };
     } finally {
       got.done();
     }

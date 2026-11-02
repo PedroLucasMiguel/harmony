@@ -108,6 +108,7 @@ export class MusicRoom {
       thumbHash: item.thumbHash ?? null,
       addedBy,
       hash: null,
+      gainDb: null,
       error: null,
     }));
     if (!made.length) return made;
@@ -195,10 +196,11 @@ export class MusicRoom {
   }
 
   /** The current track's file arrived: the clock starts. */
-  ready(id, now, { hash, durationMs } = {}) {
+  ready(id, now, { hash, durationMs, gainDb } = {}) {
     const track = this.track(id);
     if (!track) return false;
     if (hash) track.hash = hash;
+    if (typeof gainDb === 'number') track.gainDb = gainDb;
     if (durationMs) track.durationMs = durationMs;
     if (this.#current === id && this.#status === 'loading') {
       this.#status = 'playing';
@@ -371,6 +373,7 @@ export class MusicRoom {
       thumbHash: t.thumbHash,
       addedBy: t.addedBy,
       hash: t.hash,
+      gainDb: t.gainDb,
       error: t.error,
     });
     return {
