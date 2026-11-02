@@ -14,6 +14,13 @@ never re-encodes it.
   <img src="media/server_view.png" alt="A server: channels, chat and members" width="32%">
   <img src="media/streamer_view.png" alt="Choosing what to share: source, resolution and frame rate" width="32%">
 </p>
+<p align="center">
+  <img src="media/stars_view.png" alt="Starred messages: a private list, with a search box" width="32%">
+  <img src="media/dm_view.png" alt="An end-to-end encrypted private conversation" width="32%">
+  <img src="media/phone_view.png" alt="The phone layout" height="330">
+</p>
+
+A [five-minute tour](media/harmony-demo.mp4) of everything below, recorded from the real app.
 
 ## Features
 

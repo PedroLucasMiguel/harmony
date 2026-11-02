@@ -10,6 +10,7 @@
 const { app, BrowserWindow } = require('electron');
 
 const title = process.argv[2] || 'Release slides';
+const version = /^\d+\.\d+\.\d+$/.test(process.argv[3] ?? '') ? process.argv[3] : '';
 
 const page = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
 <style>
@@ -29,12 +30,12 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</
          border-radius: 8px; background: #ffffff14; overflow: hidden; }
   #bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #5b8cff, #9a7bff); }
 </style></head><body>
-  <h1>Harmony 3.6.0<small>release walkthrough</small></h1>
+  <h1>Harmony ${version}<small>release walkthrough</small></h1>
   <ul>
-    <li>Audio exclusion on every OS <b>done</b></li>
-    <li>Tabbed settings <b>done</b></li>
-    <li>Drawers close with a swipe <b>done</b></li>
-    <li>Text channels remember where you were <b>done</b></li>
+    <li>Animated profile pictures <b>done</b></li>
+    <li>A crop window for pictures and banners <b>done</b></li>
+    <li>Search, pins and stars <b>done</b></li>
+    <li>A phone layout that fits <b>done</b></li>
     <li>Screen shares up to 120 fps <b id="fps">60 fps</b></li>
   </ul>
   <div id="clock">00:00</div>
