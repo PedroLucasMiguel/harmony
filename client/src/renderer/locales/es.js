@@ -725,6 +725,9 @@ export default {
   'members.move': 'Mover…',
   'members.offline': 'Desconectados — {count}',
   'members.online': 'En línea — {count}',
+  'members.search': "Buscar miembros",
+  'members.found': "{count} de {total} coinciden",
+  'members.none': "Ningún miembro tiene esas palabras.",
 
   // --- mosaic
   'mosaic.nobody': 'Nadie está transmitiendo ahora mismo.',

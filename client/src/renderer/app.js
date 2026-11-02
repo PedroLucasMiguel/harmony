@@ -34,7 +34,7 @@ import {
 import { createServerAdmin } from './server-admin.js';
 import { createSearchUi } from './search-ui.js';
 import { attachmentThumb, createPins, messageCard, toolButton } from './pins-ui.js';
-import { StarError, channelSnapshot, createStarStore } from './stars-store.js';
+import { StarError, channelSnapshot, createStarStore, matches as hasWords } from './stars-store.js';
 import { createStarsUi } from './stars-ui.js';
 import { keepEnd } from './chat-follow.js';
 import { expiring } from './expiring.js';
@@ -313,6 +313,8 @@ const el = {
   privacyToggle: $('privacy-toggle'),
   memberItems: $('member-items'),
   memberCount: $('member-count'),
+  memberSearch: $('member-search'),
+  memberSearchClear: $('member-search-clear'),
   channelsSignout: $('channels-signout'),
   channelAdd: $('channel-add'),
   channelItems: $('channel-items'),
@@ -4963,7 +4965,13 @@ async function saveServerSettings() {
 function renderMembers() {
   if (el.memberList.hidden) return;
 
-  const everybody = [...state.users.values()];
+  const all = [...state.users.values()];
+  // Only who has the words typed in the search box, by the name shown and the name they signed up with.
+  const query = el.memberSearch.value.trim();
+  el.memberSearchClear.hidden = !query;
+  const everybody = query
+    ? all.filter((u) => hasWords(query, `${displayOf(u.id, u.nickname)} ${u.nickname ?? ''}`))
+    : all;
   // The hierarchy first -- owner, super admins, then the roles top down --
   // and by name inside each rank.
   const rankOf = (u) => contextOf(u, state.roles).rank;
@@ -4972,7 +4980,9 @@ function renderMembers() {
   const online = everybody.filter((u) => state.channels.online.has(u.id)).sort(byRank);
   const offline = everybody.filter((u) => !state.channels.online.has(u.id)).sort(byRank);
 
-  el.memberCount.textContent = `${online.length} of ${everybody.length}`;
+  el.memberCount.textContent = query
+    ? t('members.found', { count: everybody.length, total: all.length })
+    : `${online.length} of ${everybody.length}`;
 
   const row = (user, off) => {
     const li = document.createElement('li');
@@ -5026,6 +5036,13 @@ function renderMembers() {
   };
 
   const nodes = [];
+  if (query && !everybody.length) {
+    const none = document.createElement('li');
+    none.className = 'member-empty muted';
+    none.textContent = t('members.none');
+    el.memberItems.replaceChildren(none);
+    return;
+  }
   // Online people sit under the highest thing they are: the owner, the
   // super admins, then each role in the hierarchy's order. Everybody with
   // none of them is "Online", drawn even when empty, so the list does not
@@ -5046,7 +5063,8 @@ function renderMembers() {
   const plain = online.filter((u) => topOf(u) === null);
   // "Online" is the heading for people with no role. With role sections
   // above it and nobody to put under it, it would only be an empty heading.
-  if (plain.length || !nodes.length) {
+  // (While somebody is being looked for, an empty "Online" is just noise above the people who matched.)
+  if (plain.length || (!nodes.length && !query)) {
     nodes.push(head(t('members.online', { count: plain.length })));
     nodes.push(...plain.map((u) => row(u, false)));
   }
@@ -15306,6 +15324,19 @@ document.addEventListener('keydown', (event) => {
 });
 window.addEventListener('blur', () => closeRowMenu());
 el.memberItems.addEventListener('scroll', () => closeMemberMenu());
+el.memberSearch.addEventListener('input', () => renderMembers());
+el.memberSearch.addEventListener('keydown', (event) => {
+  // The first Escape takes back what was typed.
+  if (event.key !== 'Escape' || !el.memberSearch.value) return;
+  event.stopPropagation();
+  el.memberSearch.value = '';
+  renderMembers();
+});
+el.memberSearchClear.addEventListener('click', () => {
+  el.memberSearch.value = '';
+  renderMembers();
+  el.memberSearch.focus();
+});
 window.addEventListener('blur', () => closeMemberMenu());
 
 el.channelsMembers.addEventListener('click', async () => {

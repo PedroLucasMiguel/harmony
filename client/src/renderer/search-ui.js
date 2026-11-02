@@ -201,6 +201,7 @@ export function createSearchUi(config) {
         removeChip(chip);
         input.focus();
         refreshPop();
+        searchNow();
       });
       el.append(remove);
       return el;
@@ -401,6 +402,7 @@ export function createSearchUi(config) {
       addChip(chip);
       input.focus();
       refreshPop();
+      searchNow();
     };
     const valueRow = (build, chip) => {
       const el = row('search-value', build);
@@ -536,6 +538,25 @@ export function createSearchUi(config) {
       current = { text, page, total: 0, capped: false, results: [], loading: false, error: err.message };
     }
     drawPanel();
+  }
+
+  /**
+   * A filter was set, changed or taken off: the answers follow it, without Enter. With nothing left to look for the
+   * answers go away. On a phone they fill the screen, so the keyboard and the list are put away as Enter does --
+   * except while a filter is being typed out, where taking the screen would be taking it from the typing.
+   */
+  function searchNow({ typing = false } = {}) {
+    const text = input.value.trim();
+    if (!text && !chips.length) {
+      closeResults();
+      return;
+    }
+    if (isNarrow()) {
+      if (typing) return;
+      closePop();
+      document.activeElement?.blur?.();
+    }
+    run({ text, page: 0, save: false });
   }
 
   /** Enter in the box. */
@@ -924,8 +945,11 @@ export function createSearchUi(config) {
 
   input.addEventListener('focus', () => refreshPop());
   input.addEventListener('input', () => {
+    const had = chips.length;
     if (/\s$/.test(input.value)) absorbTokens();
     refreshPop();
+    // `from:ana ` typed out whole is a filter set, like one chosen from the list.
+    if (chips.length !== had) searchNow({ typing: true });
   });
   input.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
@@ -943,6 +967,7 @@ export function createSearchUi(config) {
     } else if (event.key === 'Backspace' && !input.value && chips.length) {
       removeChip(chips.at(-1));
       refreshPop();
+      searchNow();
     } else if (event.key === 'Escape') {
       if (popOpen()) { closePop(); event.stopPropagation(); }
       else if (!panel.hidden) { closeResults(); event.stopPropagation(); }

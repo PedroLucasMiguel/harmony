@@ -16,6 +16,11 @@
  * Start, Orbitron) is held to a width a name can live with. Measured with a
  * canvas at 100px on the faces in fonts/ -- see test/name-font-size.mjs, which
  * keeps them within a few percent of each other.
+ *
+ * The size a name is meant to have where it is is --name-size (default: that of what it sits in, 1em). A place that
+ * gives its names a size of their own says it there, next to the font-size -- and not as a font-size alone, which
+ * would put the face's scale out of reach: a rule of a place that sets a font-size on the name takes the place of
+ * the face's, and the face then comes out its own, unscaled size beside the same name in the chat.
  */
 @font-face {
   font-family: 'Pacifico';
@@ -91,7 +96,7 @@
 [data-name-font='pacifico'] {
   font-family: 'Pacifico', system-ui, sans-serif;
   --name-scale: 0.91;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -99,7 +104,7 @@
 [data-name-font='press-start'] {
   font-family: 'Press Start 2P', system-ui, sans-serif;
   --name-scale: 0.7;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -107,7 +112,7 @@
 [data-name-font='orbitron'] {
   font-family: 'Orbitron', system-ui, sans-serif;
   --name-scale: 0.94;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -115,7 +120,7 @@
 [data-name-font='playfair'] {
   font-family: 'Playfair Display', system-ui, sans-serif;
   --name-scale: 1;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -123,7 +128,7 @@
 [data-name-font='bebas'] {
   font-family: 'Bebas Neue', system-ui, sans-serif;
   --name-scale: 0.87;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -131,7 +136,7 @@
 [data-name-font='caveat'] {
   font-family: 'Caveat', system-ui, sans-serif;
   --name-scale: 1.16;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -139,7 +144,7 @@
 [data-name-font='fredoka'] {
   font-family: 'Fredoka', system-ui, sans-serif;
   --name-scale: 1.04;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -147,7 +152,7 @@
 [data-name-font='cinzel'] {
   font-family: 'Cinzel', system-ui, sans-serif;
   --name-scale: 0.94;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -155,7 +160,7 @@
 [data-name-font='typewriter'] {
   font-family: 'Special Elite', system-ui, sans-serif;
   --name-scale: 1.04;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;
@@ -163,7 +168,7 @@
 [data-name-font='marker'] {
   font-family: 'Permanent Marker', system-ui, sans-serif;
   --name-scale: 0.92;
-  font-size: calc(var(--name-scale) * 1em);
+  font-size: calc(var(--name-scale) * var(--name-size, 1em));
   /* The line stays as tall as the ordinary font's, whatever the size of this face's letters. */
   line-height: calc(1.3 / var(--name-scale));
   font-synthesis: none;

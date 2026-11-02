@@ -736,6 +736,17 @@
             <h2 data-i18n="member_list.members">Members</h2>
             <span class="muted" id="member-count"></span>
           </div>
+          <!-- Finds somebody in the list by name; the list is only who matches while it has words in it. -->
+          <div class="member-search">
+            <div class="search-box">
+              <span class="search-box-icon" data-icon="magnifying-glass" aria-hidden="true"></span>
+              <input id="member-search" class="search-input" type="text" autocomplete="off" spellcheck="false"
+                     placeholder="Search members" aria-label="Search members"
+                     data-i18n-placeholder="members.search" data-i18n-aria-label="members.search" />
+              <button type="button" class="search-clear" id="member-search-clear" hidden data-icon="x"
+                      title="Clear search" aria-label="Clear search" data-i18n-title="search.clear" data-i18n-aria-label="search.clear"></button>
+            </div>
+          </div>
           <ul id="member-items"></ul>
         </aside>
 

@@ -677,7 +677,8 @@ p {
   vertical-align: baseline;
 }
 #view-dms .dm-row-name {
-  font-size: 0.95rem;
+  --name-size: 0.95rem;
+  font-size: calc(0.95rem * var(--name-scale, 1));
 }
 
 #view-dms .dms-pane {
@@ -2151,7 +2152,8 @@ select:focus {
   line-height: 1.2;
 }
 .self-text strong {
-  font-size: 0.88rem;
+  --name-size: 0.88rem;
+  font-size: calc(0.88rem * var(--name-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3552,6 +3554,14 @@ button.danger {
 .pin-card:hover {
   background: rgb(var(--tint-rgb) / 0.06);
 }
+/*
+ * The picture's size is --face, which a message row sets for itself; a card is not a row, so it sets it here. Without
+ * it a person with a picture of their own (not just initials) had it drawn at its natural size.
+ */
+.pin-card,
+.search-card {
+  --face: 1.6rem;
+}
 .pin-card .msg-avatar {
   flex: 0 0 auto;
 }
@@ -3835,7 +3845,8 @@ button.danger {
   min-width: 0;
 }
 .search-row-title {
-  font-size: 0.92rem;
+  --name-size: 0.92rem;
+  font-size: calc(0.92rem * var(--name-scale, 1));
 }
 .search-row-hint {
   font-size: 0.78rem;
@@ -9393,7 +9404,8 @@ body.pip-window {
   gap: 0.25rem;
 }
 .profile-card-name {
-  font-size: 1.15rem;
+  --name-size: 1.15rem;
+  font-size: calc(1.15rem * var(--name-scale, 1));
   overflow-wrap: anywhere;
 }
 .profile-card-handle,
@@ -10097,4 +10109,18 @@ input[type='color'] {
   .stars-search .search-box {
     min-height: 2.75rem;
   }
+}
+
+/* Finding somebody in the member list: the box under its heading, the width of the column. */
+.member-search {
+  flex: 0 0 auto;
+  margin: 0 0.4rem 0.5rem 0;
+}
+.member-search .search-box {
+  flex: none;
+  width: 100%;
+}
+.member-empty {
+  padding: 0.6rem 0.3rem;
+  font-size: 0.85rem;
 }

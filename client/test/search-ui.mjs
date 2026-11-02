@@ -204,6 +204,8 @@ async function run() {
   const app = launchApp({ port: DEBUG_PORT, userDataDir });
   procs.push(app);
   const cdp = await attach(await findPage(DEBUG_PORT));
+  // The window is not always the one in front when this runs: focus() must be a focus either way.
+  await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await sleep(1200);
 
   const set = (id, value) => cdp.evaluate(`
@@ -401,6 +403,64 @@ async function run() {
   await cdp.evaluate("document.querySelector('#search-pop .search-pop-action').click(); return true;");
   await sleep(300);
   check('the trash clears the history', (await popRows(cdp)).length === 5, JSON.stringify(await popRows(cdp)));
+
+  // --- a filter set, changed or taken off searches by itself --------------------------------------------------------------------------
+  await cdp.evaluate("document.getElementById('chat-search-clear').click(); return true;");
+  await sleep(300);
+  check('nothing is searched to begin with', !(await panel(cdp)).open && (await chipsOf(cdp)).length === 0, '');
+  await cdp.evaluate("document.getElementById('chat-search').focus(); return true;");
+  await type(cdp, 'from:');
+  await sleep(250);
+  await cdp.evaluate("document.querySelector('#search-pop .search-row').click(); return true;");
+  await waitFor(cdp, "!document.getElementById('search-results').hidden && document.querySelectorAll('#search-results .search-card').length > 0", { label: 'the answers to a filter chosen, with no Enter' });
+  await sleep(300);
+  p = await panel(cdp);
+  const byOne = p.cards.length;
+  check('choosing a person from the list searches at once: the answers are theirs, and there was no Enter', p.open && (await chipsOf(cdp)).length === 1 && byOne > 0, JSON.stringify([await chipsOf(cdp), p.count]));
+  const groupsBefore = p.groups.length;
+  await type(cdp, 'in:');
+  await sleep(250);
+  await cdp.evaluate("[...document.querySelectorAll('#search-pop .search-row')].find((r) => /random/.test(r.textContent)).click(); return true;");
+  await sleep(1200);
+  p = await panel(cdp);
+  check('a second filter narrows the answers without another Enter: only that channel is left', (await chipsOf(cdp)).length === 2 && p.groups.length === 1 && /random/.test(p.groups[0]) && groupsBefore > 1, JSON.stringify([p.groups, groupsBefore]));
+  await cdp.evaluate("document.querySelectorAll('#search-chips .search-chip-remove')[1].click(); return true;");
+  await sleep(1200);
+  p = await panel(cdp);
+  check('taking a filter off searches again with what is left', (await chipsOf(cdp)).length === 1 && p.groups.length > 1, JSON.stringify([p.groups, p.count]));
+  await cdp.evaluate("document.querySelectorAll('#search-chips .search-chip-remove')[0].click(); return true;");
+  await sleep(600);
+  check('and with nothing left to look for the answers go away', !(await panel(cdp)).open && (await chipsOf(cdp)).length === 0, '');
+  await type(cdp, 'has:link ');
+  await sleep(1200);
+  p = await panel(cdp);
+  check('a filter typed out whole (followed by a space) searches too', p.open && (await chipsOf(cdp)).join('|') === 'has:link' && p.cards.length > 0 && p.cards.every((c) => /link|https/i.test(c)), JSON.stringify([await chipsOf(cdp), p.cards.length]));
+  await cdp.evaluate("document.getElementById('chat-search-clear').click(); return true;");
+  await sleep(300);
+
+  // --- a person's own picture is the size of the others' ---------------------------------------------------------------------------
+  // A card is not a message row, and the picture's size is set by the row: a face with an image (not just initials) was
+  // drawn at the image's own size in the answers, the pins and the stars.
+  await type(cdp, 'zebra');
+  await press(cdp, 'Enter');
+  await waitFor(cdp, "!document.getElementById('search-results').hidden && document.querySelectorAll('#search-results .search-card').length > 0", { label: 'answers to measure a face in' });
+  await sleep(300);
+  const faces = await cdp.evaluate(`
+    const big = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="red"/></svg>');
+    const out = {};
+    for (const [name, host] of [['search', 'search-card'], ['pin', 'pin-card']]) {
+      const card = document.createElement('div'); card.className = host;
+      const face = document.createElement('span'); face.className = 'avatar msg-avatar';
+      const img = document.createElement('img'); img.src = big; face.append(img); card.append(face);
+      (document.getElementById('sr-body')).append(card);
+      await new Promise((r) => setTimeout(r, 150));
+      const box = face.getBoundingClientRect();
+      out[name] = { w: Math.round(box.width), h: Math.round(box.height) };
+      card.remove();
+    }
+    return out;`);
+  check('a face with a picture of its own is small in an answer and in a pin, as it is in the log',
+    faces.search.w > 0 && faces.search.w <= 48 && faces.search.h <= 48 && faces.pin.w > 0 && faces.pin.w <= 48 && faces.pin.h <= 48, JSON.stringify(faces));
 
   app.kill();
 }

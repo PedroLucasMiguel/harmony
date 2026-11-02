@@ -735,6 +735,9 @@ export default {
   'members.move': 'Move…',
   'members.offline': 'Offline — {count}',
   'members.online': 'Online — {count}',
+  'members.search': "Search members",
+  'members.found': "{count} of {total} match",
+  'members.none': "No member has those words.",
 
   // --- mosaic
   'mosaic.nobody': 'Nobody is streaming right now.',
