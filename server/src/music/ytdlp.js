@@ -66,6 +66,7 @@ export class YtDlp {
   #running = 0;
   #jsRuntimes = null;
   #version = undefined;
+  #why = '';
   #exec;
 
   /**
@@ -93,15 +94,25 @@ export class YtDlp {
   async version() {
     if (this.#version !== undefined) return this.#version;
     try {
-      const { stdout } = await this.#run(['--version'], { timeout: 15_000, queue: false });
+      const { stdout } = await this.#run(['--version'], { timeout: 30_000, queue: false });
       this.#version = stdout.trim() || null;
-      // Recent versions need a JavaScript runtime to read YouTube, and Node is the one that is here.
-      const help = await this.#run(['--help'], { timeout: 15_000, queue: false });
-      this.#jsRuntimes = /--js-runtimes/.test(help.stdout);
-    } catch {
+    } catch (err) {
       this.#version = null;
+      this.#why = String(err?.code === 'ENOENT' ? `${this.#bin} was not found` : err?.message ?? err).split('\n')[0].slice(0, 200);
+      return null;
     }
+    // Recent versions need a JavaScript runtime to read YouTube, and Node is the one that is here. Not knowing is not
+    // a reason to call yt-dlp unavailable.
+    try {
+      const help = await this.#run(['--help'], { timeout: 30_000, queue: false });
+      this.#jsRuntimes = /--js-runtimes/.test(help.stdout);
+    } catch { /* leave it off */ }
     return this.#version;
+  }
+
+  /** Why there is no yt-dlp, in a line, for the log. */
+  get why() {
+    return this.#why;
   }
 
   get available() {

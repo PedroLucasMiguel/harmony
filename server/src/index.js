@@ -141,6 +141,7 @@ const recovery = new Recovery(db);
 const serverSettings = new ServerSettings(metaStore, { envPassword: config.password });
 ytdlp.version().then((version) => {
   if (version) console.log(`[harmony] yt-dlp ${version}: Music Buddy ${serverSettings.musicEnabled ? 'is on' : 'is available (off)'}`);
+  else console.log(`[harmony] Music Buddy is not available: yt-dlp could not be run (${ytdlp.why || 'no answer'})`);
 });
 
 
