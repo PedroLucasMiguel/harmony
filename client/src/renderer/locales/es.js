@@ -937,6 +937,8 @@ export default {
   'settings.appearance.everything_at_once_the': 'Todo a la vez: el texto, los iconos, las imágenes y el espacio entre ellos. Es el zoom propio de la ventana, así que un valor más grande deja menos cosas en pantalla.',
   'settings.appearance.interface_size': 'Tamaño de la interfaz',
   'settings.appearance.smaller': 'Más pequeña',
+  'settings.appearance.text_size': "Tamaño del texto",
+  'settings.appearance.text_size_note': "Solo crece el texto y el espacio a su alrededor (botones, listas, paneles); las imágenes y los iconos se quedan como están. Se suma al tamaño de la interfaz de arriba.",
   'settings.appearance.yours_alone_nothing_is': 'Solo tuyo. No se envía nada al servidor, y dos personas en el mismo canal pueden ver colores distintos.',
   'settings.hotkeys': 'Atajos',
   'settings.hotkeys.hotkeys': 'Atajos',

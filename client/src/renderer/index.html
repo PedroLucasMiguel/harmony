@@ -2079,6 +2079,27 @@
                 </div>
               </div>
 
+              <!-- The type only: the interface size above scales everything, this scales what is written (and what is
+                   measured by it), and the two add up. -->
+              <div class="setting-group">
+                <div class="setting-head">
+                  <label class="setting-title" for="text-scale" data-i18n="settings.appearance.text_size">Text size</label>
+                  <span class="setting-tools">
+                    <output class="value-pill" id="text-scale-value" for="text-scale">100%</output>
+                    <button type="button" class="ghost small" id="text-scale-reset" data-i18n="scale_reset.reset">Reset</button>
+                  </span>
+                </div>
+                <p class="setting-note" data-i18n="settings.appearance.text_size_note">
+                  Only the type, and the room around it (buttons, lists, panels), grows with this; pictures and icons stay as
+                  they are. It comes on top of the interface size above.
+                </p>
+                <div class="scale-row">
+                  <button type="button" class="step-btn" id="text-scale-down" title="Smaller" aria-label="Smaller" data-i18n-title="settings.appearance.smaller" data-i18n-aria-label="settings.appearance.smaller">&#8722;</button>
+                  <input id="text-scale" type="range" min="80" max="200" step="5" value="100" />
+                  <button type="button" class="step-btn" id="text-scale-up" title="Bigger" aria-label="Bigger" data-i18n-title="settings.appearance.bigger" data-i18n-aria-label="settings.appearance.bigger">&#43;</button>
+                </div>
+              </div>
+
               <div class="setting-group">
                 <label class="setting-toggle">
                   <span class="setting-text">

@@ -196,6 +196,11 @@ const DEFAULTS = {
   language: 'auto',
   uiScale: 115,
   /*
+   * How big the type is, as a percentage, apart from uiScale (which scales everything, pictures included). 100 is as
+   * the app is drawn; the layout that is measured in rem follows it.
+   */
+  textScale: 100,
+  /*
    * A sound when somebody writes your name.
    *
    * Separate from voiceSounds, because it is a different question: that

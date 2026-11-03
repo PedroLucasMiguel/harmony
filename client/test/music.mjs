@@ -301,7 +301,7 @@ async function run() {
 
   // A client that falls behind is put right by the heartbeat, without anybody pressing anything.
   await fanPage.evaluate("document.getElementById('music-audio').currentTime = 2; return true;");
-  await waitFor(fanPage, "Math.abs(document.getElementById('music-audio').currentTime - 17) < 3 || document.getElementById('music-audio').currentTime > 5", { label: 'the listener put right', timeoutMs: 20_000 });
+  await waitFor(fanPage, "document.getElementById('music-audio').currentTime > 10", { label: 'the listener put right', timeoutMs: 20_000 });
   await together('a listener who drifted is set right again, by the server\'s heartbeat', 0.8);
 
   // --- editing the queue, live ------------------------------------------------------------------------------------------------------

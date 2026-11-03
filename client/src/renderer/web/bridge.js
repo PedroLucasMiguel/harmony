@@ -32,7 +32,7 @@ const unsupported = (what) => {
 
 // Defaults that differ on a phone: the desktop's 115% is for reading a laptop
 // from across a desk, and a phone has its own text-size setting.
-const PLATFORM_DEFAULTS = { uiScale: 100 };
+const PLATFORM_DEFAULTS = { uiScale: 100, textScale: 100 };
 
 let settingsCache = null;
 

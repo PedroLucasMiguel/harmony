@@ -123,6 +123,16 @@ contextBridge.exposeInMainWorld('harmony', {
   },
 
   /**
+   * Fires when the interface size was changed from the keyboard (Ctrl+, Ctrl+-, Ctrl+0), with what it came to.
+   * @param {(percent: number) => void} handler
+   */
+  onScaleChanged(handler) {
+    const listener = (_e, percent) => handler(percent);
+    ipcRenderer.on('app:scale-changed', listener);
+    return () => ipcRenderer.removeListener('app:scale-changed', listener);
+  },
+
+  /**
    * Fires when the GPU process died and was started again: the pictures of
    * streams have to be attached again.
    * @param {() => void} handler

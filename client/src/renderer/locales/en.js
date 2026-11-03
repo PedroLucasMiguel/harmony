@@ -947,6 +947,8 @@ export default {
   'settings.appearance.everything_at_once_the': 'Everything at once: the type, the icons, the pictures and the spacing between them. This is the window\'s own zoom, so a bigger setting fits less on screen.',
   'settings.appearance.interface_size': 'Interface size',
   'settings.appearance.smaller': 'Smaller',
+  'settings.appearance.text_size': "Text size",
+  'settings.appearance.text_size_note': "Only the type, and the room around it (buttons, lists, panels), grows with this; pictures and icons stay as they are. It comes on top of the interface size above.",
   'settings.appearance.yours_alone_nothing_is': 'Yours alone. Nothing is sent to the server, and two people in the same channel can be looking at different colours.',
   'settings.hotkeys': 'Hotkeys',
   'settings.hotkeys.hotkeys': 'Hotkeys',

@@ -18,6 +18,7 @@ const debugLog = require('./debug-log');
 const hotkeys = require('./hotkeys');
 const ptt = require('./ptt');
 const { opensDevTools } = require('./devtools-keys');
+const { zoomKey } = require('./zoom-keys');
 const updater = require('./updater');
 const voiceTray = require('./voice-tray');
 const strings = require('./strings');
@@ -398,9 +399,18 @@ function createWindow() {
   // devtools-keys. Handled here, so the menu's own accelerator never also fires
   // and shuts what this just opened.
   win.webContents.on('before-input-event', (event, input) => {
-    if (!opensDevTools(input, process.platform)) return;
-    event.preventDefault();
-    win.webContents.toggleDevTools();
+    if (opensDevTools(input, process.platform)) {
+      event.preventDefault();
+      win.webContents.toggleDevTools();
+      return;
+    }
+    // Ctrl++, Ctrl+- and Ctrl+0 change the interface size the way the slider does (kept, and the slider follows). Taken
+    // here so that the default menu's own zoom does not also act, and ignores what is chosen in the settings.
+    const zoom = zoomKey(input, process.platform);
+    if (zoom) {
+      event.preventDefault();
+      nudgeScale(zoom);
+    }
   });
 
   // In a dev run, renderer errors would otherwise vanish into DevTools nobody
@@ -764,6 +774,14 @@ function applyScale(percent) {
 }
 
 handle('app:scale', (_e, percent) => applyScale(percent));
+
+/** The size changed from the keyboard: applied, kept, and told to the page so that the slider shows it. */
+function nudgeScale(direction) {
+  const current = Number(settings.read().uiScale ?? settings.DEFAULTS.uiScale) || 100;
+  const used = applyScale(direction === 'reset' ? settings.DEFAULTS.uiScale : current + (direction === 'bigger' ? 5 : -5));
+  settings.write({ uiScale: used });
+  if (win && !win.isDestroyed()) win.webContents.send('app:scale-changed', used);
+}
 
 handle('hotkeys:set', (_e, bindings) => hotkeys.set(bindings));
 

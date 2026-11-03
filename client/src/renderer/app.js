@@ -362,6 +362,11 @@ const el = {
   chatRecord: $('chat-record'),
   chatRecorder: $('chat-recorder'),
   uiScale: $('ui-scale'),
+  textScale: $('text-scale'),
+  textScaleValue: $('text-scale-value'),
+  textScaleReset: $('text-scale-reset'),
+  textScaleDown: $('text-scale-down'),
+  textScaleUp: $('text-scale-up'),
   scaleValue: $('scale-value'),
   scaleDown: $('scale-down'),
   scaleUp: $('scale-up'),
@@ -1099,6 +1104,12 @@ function applyCapabilities() {
 // drawn is already in it. boot() settles it for real a moment later.
 const earlyLanguage = setLanguage(cachedPreference());
 
+// The type's size from the last run, before anything is drawn (boot reads the real setting a moment later).
+try {
+  const remembered = Number(localStorage.getItem('harmony.textScale'));
+  if (remembered >= 80 && remembered <= 200) document.documentElement.style.setProperty('--text-scale', String(remembered / 100));
+} catch { /* the settings say it, a moment later */ }
+
 async function boot() {
   applyCapabilities();
   state.settings = await harmony.settings.get();
@@ -1106,6 +1117,8 @@ async function boot() {
   if ((state.settings.language ?? 'auto') !== cachedPreference()) {
     await setLanguage(state.settings.language ?? 'auto');
   }
+  // The type's own size, from the settings (it was drawn from what the last run left in the page, if that was there).
+  applyTextScale(state.settings.textScale ?? 100, { save: false });
   // The desktop's main process applies the size as the window opens; a
   // build without one applies it here, before anything is laid out.
   if (harmony.platform === 'android') {
@@ -8060,8 +8073,16 @@ function renderChannelVideo() {
       if (compose) compose.hidden = !state.live.compositor;
       // Changing source mints a new preview stream; a preview that is
       // showing follows it rather than freezing on the old capture.
-      const shown = own ? kept.querySelector('video') : null;
-      if (shown?.srcObject && shown.srcObject !== stream) shown.srcObject = stream;
+      //
+      // Somebody else's tile follows its stream too. A subscription that is opened again (it stalled and was rebuilt, the
+      // connection came back, Fix black video was pressed) is a NEW stream under the same key, and the tile that was
+      // kept still held the old one, which has ended: black, for as long as the call lasted, though the new picture was
+      // arriving and being decoded all the while. (Your own preview, hidden, has no stream on purpose and is left so.)
+      const shown = kept.querySelector('video');
+      if (shown && stream && shown.srcObject !== stream && (!own || shown.srcObject)) {
+        shown.srcObject = stream;
+        shown.play?.().catch(() => { /* a tile that is not meant to be playing */ });
+      }
       return kept;
     }
 
@@ -11450,6 +11471,29 @@ let soundpadFilter = '';
 // 115 on the desktop, 100 on a phone, which has its own text size setting.
 const SCALE_DEFAULT = harmony.scaleDefault ?? 115;
 
+/**
+ * The size of the type alone (the CSS variable the stylesheet's rem and font sizes are made from), kept and drawn on the
+ * slider. Within 80 to 200 whatever the file says. Remembered in the page as well, so that the next start draws the
+ * type at its size from the first frame rather than moving once the settings have been read.
+ */
+const TEXT_SCALE_MIN = 80;
+const TEXT_SCALE_MAX = 200;
+const TEXT_SCALE_KEY = 'harmony.textScale';
+async function applyTextScale(percent, { save = true } = {}) {
+  const wanted = Number(percent);
+  const used = Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, Number.isFinite(wanted) ? Math.round(wanted) : 100));
+  document.documentElement.style.setProperty('--text-scale', String(used / 100));
+  try { localStorage.setItem(TEXT_SCALE_KEY, String(used)); } catch { /* no storage: next time it is read from the settings */ }
+  el.textScale.value = String(used);
+  paintRange(el.textScale);
+  el.textScaleValue.textContent = `${used}%`;
+  if (save) {
+    await harmony.settings.set({ textScale: used });
+    state.settings = await harmony.settings.get();
+  }
+  return used;
+}
+
 async function applyScale(percent, { save = true } = {}) {
   const used = await harmony.setScale(percent);
   el.uiScale.value = String(used);
@@ -11611,6 +11655,29 @@ el.musicMute.addEventListener('click', async () => {
   applyMusicVolume();
 });
 initMusic();
+
+/**
+ * The desktop's strip with you in it spans under the server rail and the channel list (styles.css, "The desktop"): how
+ * wide that is is where the channel list ends, and how tall it is is what the rail and the list leave room for.
+ */
+function measureSelfStrip() {
+  const strip = document.querySelector('.channel-list .self-strip');
+  const list = document.querySelector('.channel-list');
+  if (!strip || !list) return;
+  const right = list.getBoundingClientRect().right;
+  const height = strip.getBoundingClientRect().height;
+  const root = document.documentElement.style;
+  // A view that is not showing measures as nothing: what was there is kept for when it comes back.
+  if (right > 0) root.setProperty('--self-strip-w', `${Math.round(right)}px`);
+  if (height > 0) root.setProperty('--self-strip-h', `${Math.round(height)}px`);
+}
+{
+  const watch = new ResizeObserver(measureSelfStrip);
+  for (const node of [document.querySelector('.channel-list'), document.querySelector('.channel-list .self-strip'), el.serverRail]) {
+    if (node) watch.observe(node);
+  }
+  window.addEventListener('resize', measureSelfStrip);
+}
 
 /**
  * Play a clip for the whole channel. From a click or from a hotkey.
@@ -16163,7 +16230,19 @@ el.uiScale.addEventListener('input', () => {
   applyScale(Number(el.uiScale.value));
 });
 
+el.textScale.addEventListener('input', () => applyTextScale(Number(el.textScale.value)));
+el.textScaleDown.addEventListener('click', () => applyTextScale(Number(el.textScale.value) - 5));
+el.textScaleUp.addEventListener('click', () => applyTextScale(Number(el.textScale.value) + 5));
+el.textScaleReset.addEventListener('click', () => applyTextScale(100));
+
 const nudgeScale = (delta) => applyScale(Number(el.uiScale.value) + delta);
+// Ctrl++, Ctrl+- and Ctrl+0 are handled in main, which has kept and applied it: the slider only has to show it.
+harmony.onScaleChanged?.((used) => {
+  el.uiScale.value = String(used);
+  paintRange(el.uiScale);
+  el.scaleValue.textContent = `${used}%`;
+  harmony.settings.get().then((fresh) => { state.settings = fresh; }).catch(() => {});
+});
 el.scaleDown.addEventListener('click', () => nudgeScale(-5));
 el.scaleUp.addEventListener('click', () => nudgeScale(5));
 el.scaleReset.addEventListener('click', () => applyScale(SCALE_DEFAULT));
