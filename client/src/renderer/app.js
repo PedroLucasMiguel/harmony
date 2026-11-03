@@ -12148,17 +12148,34 @@ function applyBackgroundLive() {
       return;
     }
 
-    // Off to on, or on to off: the camera goes through a different path, so it
-    // is opened again and swapped in on the live sender (replaceTrack), the way
+    // On to off, or off to on: the camera goes through a different path, so
+    // what is sent is swapped on the live sender (replaceTrack), the way
     // changing webcam is -- nobody watching has to resubscribe.
-    const raw = await openCamera(state.voice.camDeviceId || '').catch(() => null);
-    if (!raw) {
-      deviceNote(t('app.the_camera_could_not_be_2'));
+    //
+    // The camera that is already open is the one used: it is handed over, not
+    // opened a second time. Many cameras can be open only once (virtual ones
+    // like Iriun, OBS or a phone's, above all), and the second open failed or
+    // hung, so a background could be turned on but never off again until the
+    // camera was stopped and started.
+    if (effect) {
+      // On to off: the effect gives the camera back, still running.
+      const plain = effect.release();
+      if (await state.voice.switchCam(plain)) {
+        renderChannelVideo();
+        return;
+      }
+      effect.reclaim();
       return;
     }
-    const stream = await withBackground(raw);
-    if (!await state.voice.switchCam(stream)) {
-      stream.getTracks().forEach((track) => track.stop());
+    // Off to on: the effect is built on the camera that is running, and the old
+    // stream is left alone (it is the effect's source now).
+    const current = state.voice.camStream;
+    if (!current) return;
+    const stream = await withBackground(current);
+    // Not made (too slow before, nothing to draw, the effect would not start): the camera carries on as it was.
+    if (stream === current) return;
+    if (!await state.voice.switchCam(stream, { keepOld: true })) {
+      state.camera.effect?.stop({ keepSource: true });
       return;
     }
     renderChannelVideo();

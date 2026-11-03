@@ -1401,7 +1401,7 @@ export class VoiceSession {
    * @returns {Promise<boolean>} false if the stream had no video track or
    *   there is no camera running, in which case nothing has changed.
    */
-  async switchCam(stream) {
+  async switchCam(stream, { keepOld = false } = {}) {
     if (!this.#cam) return false;
     const track = stream.getVideoTracks()[0];
     if (!track) return false;
@@ -1411,7 +1411,8 @@ export class VoiceSession {
     track.contentHint = 'motion';
     await sender.replaceTrack(track);
 
-    this.#camStream?.getTracks().forEach((t) => t.stop());
+    // keepOld: the new stream is built on the old one (the camera is its source), so stopping that would end both.
+    if (!keepOld) this.#camStream?.getTracks().forEach((t) => t.stop());
     this.#camStream = stream;
     return true;
   }

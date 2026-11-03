@@ -272,6 +272,13 @@ async function run() {
   let c = await corner(ana);
   check('with a colour chosen, Ana receives that colour behind him', near(c, [31, 111, 235]), `corner ${c}`);
 
+  // From here the camera behaves like a virtual one (Iriun, OBS, a phone's): it can be open only once, and a second open is
+  // refused. Changing the background must not need one.
+  await pedro.evaluate(`
+    const md = navigator.mediaDevices; const open = md.getUserMedia.bind(md); window.__videoOpens = 0;
+    md.getUserMedia = async (c) => { if (c?.video) { window.__videoOpens += 1; throw new DOMException('device busy', 'NotReadableError'); } return open(c); };
+    return true;`);
+
   // --- changed live, with the camera running ------------------------------------
   const before = await framesOf(ana);
   await mode('gradient');
@@ -342,6 +349,21 @@ async function run() {
   const after = await framesOf(ana);
   await sleep(1500);
   check('and the video is still moving', (await framesOf(ana)) > after);
+
+  // --- on and off again, on a camera that cannot be opened twice -------------------------------------------------------
+  await mode('color');
+  await sleep(3000);
+  c = await corner(ana);
+  check('turned on again, the colour is back behind him', near(c, [31, 111, 235], 40), `corner ${c}`);
+  await mode('off');
+  await sleep(2500);
+  c = await corner(ana);
+  check('and off again: the real camera, not the colour', Array.isArray(c) && !near(c, [31, 111, 235], 40), `corner ${c}`);
+  await done();
+  const again = await framesOf(ana);
+  await sleep(1500);
+  check('with the video still moving', (await framesOf(ana)) > again);
+  check('and the camera was not opened a second time to do any of it', (await pedro.evaluate('return window.__videoOpens')) === 0, String(await pedro.evaluate('return window.__videoOpens')));
 }
 
 run()

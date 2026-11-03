@@ -393,6 +393,8 @@ export class BackgroundEffect {
   #mask = null;
   #maskSize = { w: 0, h: 0 };
   #stopped = false;
+  /** Set by release(): the camera is somebody else's now, and stopping the effect leaves it running. */
+  #keepSource = false;
   #out = null;
   #stopOutput = null;
   #frames = 0;
@@ -445,6 +447,21 @@ export class BackgroundEffect {
   /** The processed camera: hand it to whatever would have taken the raw one. */
   get stream() {
     return this.#out;
+  }
+
+  /**
+   * Gives the camera back, still running, to be sent as it is: turning the effect off without opening the device a
+   * second time. Some cameras (virtual ones, above all) can be open only once, and a second open of one that is busy
+   * fails or hangs. From here on stopping the effect -- which happens when its output is let go of -- leaves the camera
+   * alone. reclaim() undoes it, for when the camera could not be handed on after all.
+   */
+  release() {
+    this.#keepSource = true;
+    return this.#raw;
+  }
+
+  reclaim() {
+    this.#keepSource = false;
   }
 
   get canvas() {
@@ -788,7 +805,7 @@ export class BackgroundEffect {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#reader?.cancel().catch(() => {});
-    if (!keepSource) this.#raw.getTracks().forEach((track) => track.stop());
+    if (!keepSource && !this.#keepSource) this.#raw.getTracks().forEach((track) => track.stop());
     // The original stop, not the override that calls back into here.
     this.#stopOutput?.();
     this.#image?.close();
