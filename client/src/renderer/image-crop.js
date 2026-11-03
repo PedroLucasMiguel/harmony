@@ -34,6 +34,14 @@ export const KINDS = Object.freeze({
     still: { w: 960, h: 320, maxBytes: 2 * 1024 * 1024 },
     gif: { w: 720, h: 240, maxBytes: 2 * 1024 * 1024 },
   },
+  // A server's picture, in the square its list shows it in. Kept as a PNG, so that what is cut out of a picture
+  // stays cut out (a logo is usually a shape, and flattening it onto a colour would change it); a photo too big for
+  // that falls back to a JPEG. Not animated: a still is what every list draws.
+  logo: {
+    shape: 'rect',
+    aspect: 1,
+    still: { w: 256, h: 256, maxBytes: 256 * 1024, png: true },
+  },
 });
 
 /** Behind a picture that does not reach all the way (a cut-out), the colour of the pages it is shown on. */
@@ -126,8 +134,11 @@ export function cssTransform(p, iw, ih) {
 export function drawPlacement(ctx, source, sw, sh, p, mask, out) {
   const k = out.w / mask.w;
   ctx.save();
-  ctx.fillStyle = BACKGROUND;
-  ctx.fillRect(0, 0, out.w, out.h);
+  // A cut-out is left see-through when the picture is kept as one (out.transparent); otherwise it is the page's colour.
+  if (!out.transparent) {
+    ctx.fillStyle = BACKGROUND;
+    ctx.fillRect(0, 0, out.w, out.h);
+  }
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.scale(k, k);
@@ -175,13 +186,24 @@ const canvasOf = (w, h) => {
   return canvas;
 };
 
-/** A still, as a JPEG that fits: tried at a lower quality until it does. */
+/** A still, as a JPEG that fits: tried at a lower quality until it does (or as a PNG first, where the kind keeps one). */
 async function encodeStill(file, p, mask, kind) {
-  const { w, h, maxBytes } = KINDS[kind].still;
+  const { w, h, maxBytes, png } = KINDS[kind].still;
   const bitmap = await createImageBitmap(file);
   const canvas = canvasOf(w, h);
-  drawPlacement(canvas.getContext('2d'), bitmap, bitmap.width, bitmap.height, p, mask, { w: canvas.width, h: canvas.height });
-  bitmap.close();
+  const ctx = canvas.getContext('2d');
+  const out = { w: canvas.width, h: canvas.height };
+  try {
+    if (png) {
+      drawPlacement(ctx, bitmap, bitmap.width, bitmap.height, p, mask, { ...out, transparent: true });
+      const exact = await new Promise((done) => canvas.toBlob(done, 'image/png'));
+      if (exact && exact.size <= maxBytes) return exact;
+      ctx.clearRect(0, 0, out.w, out.h);
+    }
+    drawPlacement(ctx, bitmap, bitmap.width, bitmap.height, p, mask, out);
+  } finally {
+    bitmap.close();
+  }
   let blob = null;
   for (const quality of [0.9, 0.8, 0.65, 0.5, 0.35]) {
     blob = await new Promise((done) => canvas.toBlob(done, 'image/jpeg', quality));
@@ -266,11 +288,11 @@ async function encodeGif(file, p, mask, kind, onProgress) {
  * @param {File|Blob} file
  * @param {{s: number, cx: number, cy: number, deg: number}} placement
  * @param {{x: number, y: number, w: number, h: number, shape: string}} mask
- * @param {'avatar'|'banner'} kind
+ * @param {'avatar'|'banner'|'logo'} kind
  * @param {{gif: boolean}} source  what `inspect` said of the file
  */
 export function cropToBlob(file, placement, mask, kind, source, onProgress) {
-  return source.gif && canAnimate()
+  return source.gif && KINDS[kind].gif && canAnimate()
     ? encodeGif(file, placement, mask, kind, onProgress)
     : encodeStill(file, placement, mask, kind);
 }

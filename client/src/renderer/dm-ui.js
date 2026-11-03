@@ -637,6 +637,12 @@ export function createDmUi(deps) {
     else syncRecord();
   }
 
+  /** The line over the news, taken away: what it marked has been read. It is drawn again only on opening the conversation. */
+  function dropNewsLine() {
+    newAfter = null;
+    el.log.querySelector('.new-divider')?.remove();
+  }
+
   function renderConversation({ scrollToBottom = false, toNews = false } = {}) {
     const c = session?.conversations.get(currentId);
     if (!c) {
@@ -1097,6 +1103,8 @@ export function createDmUi(deps) {
     setPending(null);
     setReply(null);
     syncRecord();
+    // Answering is having read what came.
+    dropNewsLine();
     releaseHold();
     el.log.scrollTop = el.log.scrollHeight;
     holdBottom();
@@ -1301,6 +1309,9 @@ export function createDmUi(deps) {
     mine.session.handle(msg).then(async ({ incoming, conversation }) => {
       if (!incoming) return;
       if (mine === home && conversation.id === currentId && isLookingAtIt()) {
+        // Somebody at the bottom of the conversation, looking at it, has seen the news the line stood over.
+        const log = el.log;
+        if (log.scrollHeight - log.scrollTop - log.clientHeight < 40) dropNewsLine();
         await mine.session.markRead(currentId);
         return;
       }
@@ -1327,7 +1338,22 @@ export function createDmUi(deps) {
    * have kept every message unread there.
    */
   function isLookingAtIt() {
-    return currentId !== null && document.hasFocus() && !el.active.hidden && el.active.getClientRects().length > 0;
+    return currentId !== null && onScreen() && (document.hasFocus() || touchedLately());
+  }
+
+  /** The conversation is on the screen: open, and not put away behind another page. */
+  const onScreen = () => !el.active.hidden && el.active.getClientRects().length > 0;
+
+  /**
+   * Whether somebody has just done something in the page. A window can be in plain sight and used while the page
+   * says it has no focus (it depends on the platform, and on what last had the focus: a phone's WebView, a window that
+   * was brought forward without being clicked); a touch, a key or the wheel is proof enough that it is being looked at.
+   */
+  let touchedAt = 0;
+  const PRESENT_MS = 30_000;
+  const touchedLately = () => document.visibilityState === 'visible' && Date.now() - touchedAt < PRESENT_MS;
+  for (const name of ['pointerdown', 'touchstart', 'keydown', 'wheel']) {
+    document.addEventListener(name, () => { touchedAt = Date.now(); }, { capture: true, passive: true });
   }
 
   /*
@@ -1335,12 +1361,17 @@ export function createDmUi(deps) {
    * arrived, so one that came while the window was not focused stayed counted until you sent something or opened
    * another conversation and returned.
    */
-  function readWhatIsOpen() {
-    if (!session?.ready || !isLookingAtIt()) return;
+  function readWhatIsOpen({ touched = false } = {}) {
+    if (!session?.ready || currentId === null) return;
+    // Pressing, typing or scrolling in the conversation is itself looking at it, whatever the window says of its focus.
+    if (touched ? !onScreen() || document.hidden : !isLookingAtIt()) return;
     session.markRead(currentId).catch(() => {});
   }
-  window.addEventListener('focus', readWhatIsOpen);
+  window.addEventListener('focus', () => readWhatIsOpen());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) readWhatIsOpen(); });
+  for (const name of ['pointerdown', 'touchstart', 'keydown', 'wheel']) {
+    el.active.addEventListener(name, () => readWhatIsOpen({ touched: true }), { capture: true, passive: true });
+  }
 
   /** Every server's list, asked for again. */
   function refreshAll() {

@@ -1265,6 +1265,8 @@ export default {
   'image_editor.title_banner': "Banner",
   'image_editor.hint': "Arrastra para moverla, desplaza o pellizca para acercar. Lo que queda dentro del círculo es lo que se guarda.",
   'image_editor.hint_banner': "Arrastra para moverlo, desplaza o pellizca para acercar. Lo que queda dentro del contorno se guarda; las líneas de puntos son lo que muestra la lista de miembros.",
+  'image_editor.title_logo': "Imagen del servidor",
+  'image_editor.hint_logo': "Arrastra para moverla, desplaza o pellizca para acercar. Lo que queda dentro del cuadrado es lo que se guarda.",
   'image_editor.zoom': "Zoom",
   'image_editor.rotate': "Girar",
   'image_editor.rotate_left': "Girar 90° a la izquierda",

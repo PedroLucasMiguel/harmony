@@ -1,4 +1,4 @@
-// The window a picture is cropped in before it becomes a profile picture or a banner.
+// The window a picture is cropped in before it becomes a profile picture, a banner or a server's picture.
 //
 // The picture is shown whole, behind a mask that is the shape it will be seen in -- a circle, or the strip of a banner --
 // with what is outside the mask dimmed. It is moved by dragging, zoomed by the wheel, a pinch or the slider, and turned
@@ -19,7 +19,7 @@ const make = (tag, className, text) => {
 /**
  * @param {object} options
  * @param {File} options.file
- * @param {'avatar'|'banner'} options.kind
+ * @param {'avatar'|'banner'|'logo'} options.kind
  * @param {(key: string, params?: object) => string} options.t
  * @returns {Promise<Blob|null>}  the cropped picture, ready to upload; null if it was cancelled. Rejects when the file is
  *   not a picture that can be read.
@@ -44,9 +44,10 @@ export async function openImageEditor({ file, kind, t }) {
   const form = make('form', 'image-editor-form');
   form.method = 'dialog';
 
-  const title = make('h3', '', t(kind === 'banner' ? 'image_editor.title_banner' : 'image_editor.title_avatar'));
+  const words = { avatar: ['title_avatar', 'hint'], banner: ['title_banner', 'hint_banner'], logo: ['title_logo', 'hint_logo'] }[kind];
+  const title = make('h3', '', t(`image_editor.${words[0]}`));
   title.id = 'ie-title';
-  const hint = make('p', 'muted ie-hint', t(kind === 'banner' ? 'image_editor.hint_banner' : 'image_editor.hint'));
+  const hint = make('p', 'muted ie-hint', t(`image_editor.${words[1]}`));
 
   // The stage: the picture, and over it the mask.
   const stage = make('div', 'ie-stage');

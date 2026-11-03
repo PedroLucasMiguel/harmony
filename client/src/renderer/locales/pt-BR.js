@@ -1265,6 +1265,8 @@ export default {
   'image_editor.title_banner': "Banner",
   'image_editor.hint': "Arraste para mover, role ou use dois dedos para ampliar. O que fica dentro do círculo é o que é guardado.",
   'image_editor.hint_banner': "Arraste para mover, role ou use dois dedos para ampliar. O que fica dentro do contorno é guardado; as linhas tracejadas são o que a lista de membros mostra.",
+  'image_editor.title_logo': "Imagem do servidor",
+  'image_editor.hint_logo': "Arraste para mover, role ou use dois dedos para ampliar. O que fica dentro do quadrado é o que é guardado.",
   'image_editor.zoom': "Zoom",
   'image_editor.rotate': "Girar",
   'image_editor.rotate_left': "Girar 90° para a esquerda",

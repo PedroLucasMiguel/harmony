@@ -1275,6 +1275,8 @@ export default {
   'image_editor.title_banner': "Banner",
   'image_editor.hint': "Drag to move it, scroll or pinch to zoom. What is inside the circle is what is kept.",
   'image_editor.hint_banner': "Drag to move it, scroll or pinch to zoom. What is inside the outline is kept; the dashed lines are what the member list shows.",
+  'image_editor.title_logo': "Server picture",
+  'image_editor.hint_logo': "Drag to move it, scroll or pinch to zoom. What is inside the square is what is kept.",
   'image_editor.zoom': "Zoom",
   'image_editor.rotate': "Rotate",
   'image_editor.rotate_left': "Turn 90° left",

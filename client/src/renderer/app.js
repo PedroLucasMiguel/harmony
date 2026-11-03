@@ -1519,6 +1519,8 @@ async function syncLogo(url, password, hash) {
   }
   if (serverKey(url) === serverKey(el.serverUrl.value)) renderServerChip();
   if (!el.serverMenu.hidden) renderServerMenu();
+  // The rail draws the logo from the profile: it was kept above, so it is drawn again now.
+  renderServerRail();
 }
 
 /** Make the server on screen the current one, top-level fields and all. */
@@ -4617,6 +4619,11 @@ function applyServerInfo(info) {
   if (info) Object.assign(serverInfo, info);
   el.serverName.textContent = serverInfo.name;
   paintServerIcon();
+  // The rail names the server by it too, and follows a change the moment it is made.
+  if (info?.name && state.server) {
+    serverNames.set(serverKey(state.server), info.name);
+    renderServerRail();
+  }
   // Shown to whoever has something to do in it: the owner, an admin, or a
   // role that manages roles, channels or people. Hidden rather than
   // disabled: a control you can see and cannot use is a question nobody
@@ -4754,32 +4761,28 @@ function paintLogoPreview(src) {
 }
 
 /**
- * Shrink a picked image to a 256-pixel square PNG and upload it.
+ * Crop a picked image in the editor (moved, zoomed and turned under the square the logo is shown in, as a profile
+ * picture is under its circle) and upload what is left, a 256-pixel square PNG.
  *
- * Contain, not cover, and PNG, not JPEG: a logo is usually a shape on
- * transparency, and cropping it or flattening it onto black would both
- * change it. Shrunk here so the server needs no image library.
+ * A PNG, not a JPEG, so that a logo that is a shape on transparency stays one. Shrunk here so the server needs no
+ * image library.
  */
 async function stageServerLogo(file) {
-  const SIZE = 256;
-  const bitmap = await createImageBitmap(file);
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const scale = Math.min(SIZE / bitmap.width, SIZE / bitmap.height);
-  const w = bitmap.width * scale;
-  const h = bitmap.height * scale;
-  canvas.getContext('2d').drawImage(bitmap, (SIZE - w) / 2, (SIZE - h) / 2, w, h);
-  bitmap.close();
-  const blob = await new Promise((done) => canvas.toBlob(done, 'image/png'));
-  if (!blob) throw new Error(t('app.could_not_read_that_image'));
+  const blob = await openImageEditor({ file, kind: 'logo', t });
+  // Cancelled: nothing changes.
+  if (!blob) return;
   if (blob.size > AVATAR_MAX_BYTES) throw new Error(t('app.that_image_is_too_detailed'));
-  const upload = await harmony.media.upload(
-    state.server, new Uint8Array(await blob.arrayBuffer()), 'image/png',
-  );
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const upload = await harmony.media.upload(state.server, bytes, blob.type);
   pendingLogo = upload.hash;
   // A data: URL, because the page may only show images from itself or data:.
-  paintLogoPreview(canvas.toDataURL('image/png'));
+  const shown = await new Promise((done, fail) => {
+    const reader = new FileReader();
+    reader.onload = () => done(reader.result);
+    reader.onerror = () => fail(reader.error);
+    reader.readAsDataURL(blob);
+  });
+  paintLogoPreview(shown);
   el.serverLogoRemove.disabled = false;
 }
 
@@ -4925,6 +4928,8 @@ async function saveServerSettings() {
   try {
     const { server } = await harmony.api.updateServer(state.server, body);
     applyServerInfo(server);
+    // The new picture (or none) into this server's profile and the rail, without waiting for the broadcast.
+    await syncLogo(state.server, el.password.value, server.logo ?? null);
 
     /*
      * Tell this client the new key before anything else asks for it.
@@ -12793,7 +12798,7 @@ function onRealtimeEvent(msg) {
       if (!info) break;
       applyServerInfo(info);
       // The owner changed the logo: everybody's list follows, without a restart.
-      syncLogo(el.serverUrl.value.trim(), el.password.value, info.logo ?? null);
+      syncLogo(state.server || el.serverUrl.value.trim(), el.password.value, info.logo ?? null);
       break;
     }
 
@@ -15423,10 +15428,18 @@ el.serverLogoRemove.addEventListener('click', () => {
   paintLogoPreview(null);
   el.serverLogoRemove.disabled = true;
 });
+// A box the form will not accept says so on the dialog's own line: Electron draws no bubble of its own, and a form
+// that silently does nothing when Save is pressed is no answer.
+el.serverForm.addEventListener('invalid', (event) => {
+  if (!event.target.validationMessage) return;
+  el.serverErrorLine.textContent = event.target.validationMessage;
+  el.serverErrorLine.hidden = false;
+}, true);
 el.serverForm.addEventListener('submit', (event) => {
   // The dialog's own method="dialog" would close it before the save was
   // even attempted, and a failure would have nowhere to be shown.
   event.preventDefault();
+  el.serverErrorLine.hidden = true;
   saveServerSettings();
 });
 el.serverPasswordOff.addEventListener('change', () => {
