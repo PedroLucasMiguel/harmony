@@ -115,6 +115,10 @@ async function run() {
       list: document.querySelector('.channel-list').getBoundingClientRect().width,
       zoom: window.devicePixelRatio,
       pill: document.getElementById('text-scale-value').textContent,
+      rail: document.getElementById('server-rail').getBoundingClientRect().width,
+      railItem: document.querySelector('#server-rail .rail-item')?.getBoundingClientRect().width,
+      rowPad: px(document.querySelector('#channel-items li') ?? document.body, 'paddingLeft'),
+      strip: document.querySelector('.self-strip').getBoundingClientRect().height,
     };`);
   const base = await measure();
 
@@ -127,9 +131,19 @@ async function run() {
   await cdp.evaluate(`${setInput('text-scale', '150')} return true;`);
   await sleep(500);
   const big = await measure();
-  check('at 150% the root size, the body and the names are one and a half times as big',
-    Math.abs(big.html / base.html - 1.5) < 0.02 && Math.abs(big.body / base.body - 1.5) < 0.02 && Math.abs(big.who / base.who - 1.5) < 0.05, JSON.stringify({ base, big }));
-  check('what is measured in rem grows with it: the channel list is wider', big.list > base.list, JSON.stringify({ base: base.list, big: big.list }));
+  if (process.env.TEXT_SHOT) {
+    await cdp.evaluate("document.getElementById('devices').close(); return true;");
+    await sleep(400);
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    (await import('node:fs')).writeFileSync(process.env.TEXT_SHOT, Buffer.from(shot.data, 'base64'));
+    await cdp.evaluate("document.getElementById('voice-config').click(); return true;");
+    await sleep(400);
+  }
+  check('at 150% the type is one and a half times as big: the body, and the names',
+    Math.abs(big.body / base.body - 1.5) < 0.02 && Math.abs(big.who / base.who - 1.5) < 0.05, JSON.stringify({ base, big }));
+  check('and it is only the type: the root size, the spacing, the rail and the pictures are as they were',
+    big.html === base.html && big.rowPad === base.rowPad && big.rail === base.rail && big.railItem === base.railItem && Math.abs(big.avatar - base.avatar) < 1.5, JSON.stringify({ base, big }));
+  check('while the channel list widens to hold it', big.list > base.list, JSON.stringify({ base: base.list, big: big.list }));
   check('and the interface size (the window\'s own zoom) is not touched', big.zoom === base.zoom, JSON.stringify({ base: base.zoom, big: big.zoom }));
   check('and the slider says what it is', big.pill === '150%', big.pill);
   const kept = await cdp.evaluate("const s = await harmony.settings.get(); const d = s.data ?? s; return { text: d.textScale, ui: d.uiScale, local: localStorage.getItem('harmony.textScale') };");
@@ -141,7 +155,7 @@ async function run() {
   await cdp.evaluate("document.getElementById('text-scale-reset').click(); return true;");
   await sleep(400);
   const back = await measure();
-  check('Reset puts it back to 100%', back.pill === '100%' && Math.abs(back.html - base.html) < 0.01 && Math.abs(back.who - base.who) < 0.01, JSON.stringify(back));
+  check('Reset puts it back to 100%', back.pill === '100%' && Math.abs(back.body - base.body) < 0.01 && Math.abs(back.who - base.who) < 0.01, JSON.stringify(back));
   await cdp.evaluate(`${setInput('text-scale', '999')} return true;`);
   await sleep(300);
   check('and it is held to 200%', (await measure()).pill === '200%', '');

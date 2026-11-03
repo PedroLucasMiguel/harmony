@@ -938,7 +938,7 @@ export default {
   'settings.appearance.interface_size': 'Tamanho da interface',
   'settings.appearance.smaller': 'Menor',
   'settings.appearance.text_size': "Tamanho do texto",
-  'settings.appearance.text_size_note': "Só o texto, e o espaço ao redor dele (botões, listas, painéis), cresce com isto; imagens e ícones ficam como estão. Soma-se ao tamanho da interface acima.",
+  'settings.appearance.text_size_note': "Só o texto cresce com isto. Os espaços, as imagens e os ícones mantêm o tamanho, e as colunas se alargam para caber o texto. Soma-se ao tamanho da interface acima.",
   'settings.appearance.yours_alone_nothing_is': 'Só seu. Nada é enviado ao servidor, e duas pessoas no mesmo canal podem estar vendo cores diferentes.',
   'settings.hotkeys': 'Atalhos',
   'settings.hotkeys.hotkeys': 'Atalhos',

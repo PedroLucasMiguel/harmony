@@ -948,7 +948,7 @@ export default {
   'settings.appearance.interface_size': 'Interface size',
   'settings.appearance.smaller': 'Smaller',
   'settings.appearance.text_size': "Text size",
-  'settings.appearance.text_size_note': "Only the type, and the room around it (buttons, lists, panels), grows with this; pictures and icons stay as they are. It comes on top of the interface size above.",
+  'settings.appearance.text_size_note': "Only the type grows with this. Spacing, pictures and icons keep their size, and the columns widen to hold the text. It comes on top of the interface size above.",
   'settings.appearance.yours_alone_nothing_is': 'Yours alone. Nothing is sent to the server, and two people in the same channel can be looking at different colours.',
   'settings.hotkeys': 'Hotkeys',
   'settings.hotkeys.hotkeys': 'Hotkeys',

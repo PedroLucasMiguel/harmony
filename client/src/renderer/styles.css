@@ -241,13 +241,6 @@ body {
   overscroll-behavior: none;
 }
 html {
-  /*
-   * The size of the type, apart from the size of the interface (which is the window's own zoom and scales everything). A
-   * rem is this, so what is measured in it -- the padding, the lists, the panels, the dialogs -- grows with the type
-   * instead of crowding it; pictures and icons, measured in pixels, stay as they are. --text-scale is set from the
-   * setting (applyTextScale in app.js), 1 at 100%.
-   */
-  font-size: calc(16px * var(--text-scale, 1));
   /* A finger pans what scrolls and does nothing else: no pinch or double tap enlarging the whole app, which then
      could be dragged around in both directions (the viewport tag says the same, but a browser may not listen). */
   touch-action: pan-x pan-y;
@@ -644,7 +637,7 @@ p {
   border-bottom: 1px solid var(--border);
 }
 #view-dms .dm-panel-head h2 {
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
 }
 #view-dms .dm-panel-head #dm-panel-close {
   display: none;
@@ -658,7 +651,7 @@ p {
   white-space: pre-line;
 }
 #view-dms .dm-panel-note {
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 #view-dms .dm-panel-actions {
   flex-wrap: wrap;
@@ -667,7 +660,7 @@ p {
 #view-dms .dm-panel-actions button {
   flex: 1 1 auto;
   padding: 0.35rem 0.7rem;
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 #view-dms .dm-list {
   flex: 1 1 auto;
@@ -687,12 +680,12 @@ p {
   width: 2.5rem;
   height: 2.5rem;
   margin: 0;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   vertical-align: baseline;
 }
 #view-dms .dm-row-name {
   --name-size: 0.95rem;
-  font-size: calc(0.95rem * var(--name-scale, 1));
+  font-size: calc(0.95rem * var(--name-scale, 1) * var(--text-scale, 1));
 }
 
 #view-dms .dms-pane {
@@ -708,7 +701,7 @@ p {
 }
 #view-dms .dms-none {
   margin: auto;
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
 }
 #view-dms .dms-none[hidden] {
   display: none;
@@ -726,10 +719,10 @@ p {
 #view-dms .dm-head .avatar {
   width: 1.8rem;
   height: 1.8rem;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
 }
 #view-dms .dm-head {
-  font-size: 1.1rem;
+  font-size: calc(1.1rem * var(--text-scale, 1));
 }
 #view-dms .dm-head h2 {
   margin: 0;
@@ -1092,7 +1085,7 @@ select:focus {
 
 .switch-auth {
   margin: 0.25rem 0 0;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   opacity: 0.85;
   display: flex;
   gap: 0.35rem;
@@ -1228,7 +1221,7 @@ select:focus {
   flex: 0 0 auto;
 }
 .member-list h2 {
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
   margin: 0 0 0.5rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1253,7 +1246,7 @@ select:focus {
   gap: 0.4rem;
   background: var(--bg);
   padding: 0.9rem 0.4rem 0.25rem;
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--text-scale, 1));
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1339,7 +1332,7 @@ select:focus {
   gap: 0.5rem;
 }
 .brand-small {
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
   letter-spacing: 0.02em;
 }
 /* The server you are on, top left: its logo, its name, your role. */
@@ -1351,7 +1344,7 @@ select:focus {
 }
 .channel-list h2,
 .voice-head h2 {
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
   margin: 0 0 0.5rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1422,7 +1415,7 @@ select:focus {
   padding: 0.2rem 0.4rem;
   border-radius: 5px;
   cursor: pointer;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1434,7 +1427,7 @@ select:focus {
 }
 .channel-group .group-fold {
   flex: 0 0 auto;
-  font-size: 0.6rem;
+  font-size: calc(0.6rem * var(--text-scale, 1));
 }
 .channel-group .group-name {
   min-width: 0;
@@ -1535,7 +1528,7 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  font-size: 0.9rem;
+  font-size: calc(0.9rem * var(--text-scale, 1));
   padding: 0.2rem 0.35rem;
   border-radius: 6px;
   opacity: 0.9;
@@ -1591,13 +1584,13 @@ select:focus {
   flex: 0 0 auto;
   margin-left: auto;
   padding-left: 0.3rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   display: flex;
   align-items: center;
   gap: 0.15rem;
 }
 .channel-member .status-dot {
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
 }
 
 .channel-main {
@@ -1639,7 +1632,7 @@ select:focus {
   gap: 0.6rem;
   padding: 0.45rem 0.5rem;
   border-radius: 6px;
-  font-size: 1.02rem;
+  font-size: calc(1.02rem * var(--text-scale, 1));
 }
 #voice-roster li:hover {
   background: rgb(var(--tint-rgb) / 0.05);
@@ -1656,7 +1649,7 @@ select:focus {
   white-space: nowrap;
 }
 #voice-roster .tag {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   opacity: 0.7;
   border: 1px solid currentColor;
   border-radius: 999px;
@@ -1676,7 +1669,7 @@ select:focus {
   flex: 0 0 auto;
 }
 .status-dot {
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--text-scale, 1));
   line-height: 1;
   opacity: 0.75;
   /* Render the glyphs as symbols rather than full-colour emoji, so they sit
@@ -1765,7 +1758,7 @@ select:focus {
   border: 1px solid var(--border-strong, var(--border));
   background: var(--surface);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  font-size: 0.88rem;
+  font-size: calc(0.88rem * var(--text-scale, 1));
 }
 /* Who the menu is about: their picture and name, like the top of a profile
    card, with a hairline under it. */
@@ -1782,7 +1775,7 @@ select:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
 }
 .peer-menu-body {
   display: flex;
@@ -1796,7 +1789,7 @@ select:focus {
   padding: 0.2rem 0.5rem;
 }
 .peer-menu-row > span:first-child {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   opacity: 0.65;
 }
 /*
@@ -1872,7 +1865,7 @@ select:focus {
   accent-color: var(--accent);
 }
 .peer-volume-label {
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   opacity: 0.6;
   min-width: 2.6rem;
   text-align: right;
@@ -1901,7 +1894,7 @@ select:focus {
   gap: 0.75rem;
   flex-wrap: wrap;
   margin-top: 0.5rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 /*
  * Three equal columns across the whole dialog (wrapping on a narrow one),
@@ -1933,7 +1926,7 @@ select:focus {
 #voice-device-note {
   /* Its own line under the three, rather than squeezing in as a fourth. */
   flex: 1 0 100%;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   color: var(--warn);
 }
 #voice-device-note:empty {
@@ -1978,11 +1971,11 @@ select:focus {
   line-height: 1.25;
 }
 .voice-panel-where strong {
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   color: var(--live);
 }
 .voice-panel-where .muted {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2056,7 +2049,7 @@ select:focus {
   border-radius: 5px;
   background: var(--bg);
   border: 1px solid rgb(var(--tint-rgb) / 0.14);
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   line-height: 1.2;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -2084,7 +2077,7 @@ select:focus {
 }
 .icon-btn::before {
   content: attr(data-glyph);
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
   line-height: 1;
   font-variant-emoji: text;
 }
@@ -2167,13 +2160,13 @@ select:focus {
 }
 .self-text strong {
   --name-size: 0.88rem;
-  font-size: calc(0.88rem * var(--name-scale, 1));
+  font-size: calc(0.88rem * var(--name-scale, 1) * var(--text-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .self-status {
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   opacity: 0.6;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2216,7 +2209,7 @@ select:focus {
 /* From the attribute, so the button's textContent stays exactly its label. */
 .voice-action::before {
   content: attr(data-glyph);
-  font-size: 1.15rem;
+  font-size: calc(1.15rem * var(--text-scale, 1));
   line-height: 1;
   font-variant-emoji: text;
 }
@@ -2338,7 +2331,7 @@ button.danger {
 /* Beside the name, not pushed to the far right: the badge lives in that
    corner now and would sit on top of it on every hover. */
 .chat-msg .when {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   opacity: 0.5;
   flex: 0 0 auto;
 }
@@ -2364,7 +2357,7 @@ button.danger {
   width: calc(var(--face) + 0.4rem);
   margin-left: -0.4rem;
   padding-right: 0.25rem;
-  font-size: 0.6rem;
+  font-size: calc(0.6rem * var(--text-scale, 1));
   text-align: right;
   align-self: center;
   /* "04:40 PM" wraps in a column this narrow, and two lines of time were taller
@@ -2505,7 +2498,7 @@ button.danger {
 .notified-count {
   margin-left: auto;
   flex: none;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .notified-list {
@@ -2599,7 +2592,7 @@ button.danger {
 .channel-list li .voice-timer {
   margin-left: auto;
   flex: 0 0 auto;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--live);
@@ -2642,7 +2635,7 @@ button.danger {
   border-radius: 999px;
   background: #ff5470;
   color: #fff;
-  font-size: 0.68rem;
+  font-size: calc(0.68rem * var(--text-scale, 1));
   font-weight: 700;
   line-height: 1.3;
   text-transform: uppercase;
@@ -2661,7 +2654,7 @@ button.danger {
   flex: 0 0 auto;
   min-width: 1.4rem;
   text-align: center;
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--text-scale, 1));
   font-weight: 700;
   line-height: 1;
   padding: 0.15rem 0.35rem;
@@ -2718,7 +2711,7 @@ button.danger {
 .mention-pop .mention-nick {
   margin-left: auto;
   flex: 0 0 auto;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .mention-pop .mention-all {
@@ -2756,7 +2749,7 @@ button.danger {
   background: var(--surface-2);
   color: inherit;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   line-height: 1.4;
   cursor: pointer;
 }
@@ -2795,7 +2788,7 @@ button.danger {
  * No rule for .react-btn.
  *
  * There was one, left over from when the react button sat in the flow of
- * the row, and it set font-size: 0.9rem. `.chat-msg .react-btn` is (0,2,0)
+ * the row, and it set font-size: calc(0.9rem * var(--text-scale, 1)). `.chat-msg .react-btn` is (0,2,0)
  * and `.msg-tool` is (0,1,0), so it beat the font-size: 0 that collapses
  * the label on every one of these buttons -- and that one button alone
  * showed the word "React" beside its glyph. The badge looked like a design
@@ -2855,7 +2848,7 @@ button.danger {
   height: 26px;
   background: var(--surface);
   padding: 0.4rem 0.2rem 0;
-  font-size: 0.68rem;
+  font-size: calc(0.68rem * var(--text-scale, 1));
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2894,7 +2887,7 @@ button.danger {
   border-radius: 6px;
   background: none;
   color: inherit;
-  font-size: 1.3rem;
+  font-size: calc(1.3rem * var(--text-scale, 1));
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -2937,7 +2930,7 @@ button.danger {
   border: 0;
   background: var(--danger);
   color: #fff;
-  font-size: 0.6rem;
+  font-size: calc(0.6rem * var(--text-scale, 1));
   line-height: 1rem;
   padding: 0;
   cursor: pointer;
@@ -2961,11 +2954,11 @@ button.danger {
   min-height: 1.8rem;
   padding-top: 0.4rem;
   border-top: 1px solid var(--border);
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .emoji-preview .big {
-  font-size: 1.4rem;
+  font-size: calc(1.4rem * var(--text-scale, 1));
   line-height: 1;
   font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
 }
@@ -2978,7 +2971,7 @@ button.danger {
   flex: 0 0 auto;
   margin: 0;
   padding: 0.5rem 0.2rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .chat-msg img {
   max-width: min(420px, 100%);
@@ -3019,7 +3012,7 @@ button.danger {
   align-items: center;
   gap: 0.4rem;
   margin-top: 0.15rem;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   color: var(--muted);
   min-width: 0;
 }
@@ -3067,7 +3060,7 @@ button.danger {
   min-width: 0;
 }
 .attachment-card .attachment-name {
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
   color: var(--text);
 }
 .attachment-card .attachment-link {
@@ -3078,7 +3071,7 @@ button.danger {
   text-decoration: underline;
 }
 .attachment-card .attachment-size {
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   color: var(--muted);
   opacity: 1;
 }
@@ -3123,7 +3116,7 @@ button.danger {
 .textfile-left {
   display: block;
   margin-top: 0.35rem;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .textfile-foot {
@@ -3133,7 +3126,7 @@ button.danger {
   padding: 0.5rem 0.7rem;
 }
 .textfile-foot .attachment-name {
-  font-size: 0.9rem;
+  font-size: calc(0.9rem * var(--text-scale, 1));
   color: var(--text);
 }
 .textfile-foot .attachment-link {
@@ -3144,7 +3137,7 @@ button.danger {
   text-decoration: underline;
 }
 .textfile-foot .attachment-size {
-  font-size: 0.76rem;
+  font-size: calc(0.76rem * var(--text-scale, 1));
   color: var(--muted);
   opacity: 1;
 }
@@ -3174,7 +3167,7 @@ button.danger {
   padding: 0.3rem 0.4rem 0.45rem;
   border-radius: 8px;
   background: rgb(var(--tint-rgb) / 0.07);
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 .composer-upload-head {
   display: flex;
@@ -3326,7 +3319,7 @@ button.danger {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
   color: #fff;
   opacity: 0.8;
 }
@@ -3403,13 +3396,13 @@ button.danger {
 }
 .msg-tool::before {
   content: attr(data-glyph);
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
   line-height: 1;
 }
 /* The pencil is a drawn character rather than an emoji and comes out thin
    and small beside three pictographs. */
 .msg-tool[data-glyph='\270E']::before {
-  font-size: 1.1rem;
+  font-size: calc(1.1rem * var(--text-scale, 1));
 }
 .msg-tool:hover {
   background: rgb(var(--tint-rgb) / 0.12);
@@ -3439,7 +3432,7 @@ button.danger {
   border-radius: 6px;
   padding: 0.25rem;
   margin-bottom: 0.5rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   flex: 0 0 auto;
 }
 .pinned-strip[hidden] {
@@ -3468,7 +3461,7 @@ button.danger {
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   text-align: left;
   cursor: pointer;
 }
@@ -3540,7 +3533,7 @@ button.danger {
 }
 .pins-head h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
 }
 .pins-list {
   display: flex;
@@ -3589,7 +3582,7 @@ button.danger {
   gap: 0.5rem;
 }
 .pin-when {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   opacity: 0.6;
 }
 /* Where a starred message was written -- its channel, or the conversation -- after the time. */
@@ -3598,7 +3591,7 @@ button.danger {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   color: var(--accent);
 }
 /*
@@ -3647,7 +3640,7 @@ button.danger {
   background: var(--surface-2);
   color: inherit;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
   cursor: pointer;
 }
 .pin-tool:hover {
@@ -3677,13 +3670,14 @@ button.danger {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.3rem;
-  padding: 0.2rem 1.6rem 0.2rem 1.7rem;
+  /* The room for the magnifier (drawn in em, so it grows with the type) grows with it. */
+  padding: 0.2rem 1.6rem 0.2rem calc(1.7rem * var(--text-scale, 1));
   min-height: 2rem;
   box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--bg);
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   cursor: text;
 }
 .search-box[data-has-chips] {
@@ -3754,7 +3748,7 @@ button.danger {
   padding: 0.1rem 0.2rem 0.1rem 0.5rem;
   border-radius: 6px;
   background: rgb(var(--tint-rgb) / 0.12);
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   white-space: nowrap;
 }
 .search-chip b {
@@ -3779,7 +3773,7 @@ button.danger {
   border-radius: 4px;
   background: none;
   color: inherit;
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--text-scale, 1));
   opacity: 0.6;
   cursor: pointer;
 }
@@ -3812,7 +3806,7 @@ button.danger {
   align-items: center;
   justify-content: space-between;
   padding: 0.5rem 0.6rem 0.25rem;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   font-weight: 700;
   opacity: 0.8;
 }
@@ -3852,7 +3846,7 @@ button.danger {
 }
 .search-row-icon {
   flex: 0 0 auto;
-  font-size: 1.15rem;
+  font-size: calc(1.15rem * var(--text-scale, 1));
   opacity: 0.65;
 }
 .search-row-text {
@@ -3860,10 +3854,10 @@ button.danger {
 }
 .search-row-title {
   --name-size: 0.92rem;
-  font-size: calc(0.92rem * var(--name-scale, 1));
+  font-size: calc(0.92rem * var(--name-scale, 1) * var(--text-scale, 1));
 }
 .search-row-hint {
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   opacity: 0.65;
 }
 .search-row-hint b {
@@ -3920,7 +3914,7 @@ button.danger {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
 }
 .sr-sort {
   position: relative;
@@ -3949,7 +3943,7 @@ button.danger {
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 0.88rem;
+  font-size: calc(0.88rem * var(--text-scale, 1));
   text-align: left;
   cursor: pointer;
 }
@@ -3977,7 +3971,7 @@ button.danger {
   align-items: center;
   gap: 0.3rem;
   margin: 0.4rem 0 0.1rem;
-  font-size: 0.9rem;
+  font-size: calc(0.9rem * var(--text-scale, 1));
 }
 .search-group:first-child {
   margin-top: 0;
@@ -4036,7 +4030,7 @@ button.danger {
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 0.88rem;
+  font-size: calc(0.88rem * var(--text-scale, 1));
   cursor: pointer;
 }
 .search-page:hover:not(:disabled) {
@@ -4086,11 +4080,11 @@ button.danger {
 }
 .search-field-group h4 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: calc(0.95rem * var(--text-scale, 1));
 }
 .search-field-group p {
   margin: 0.1rem 0 0.4rem;
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 .search-pills {
   display: flex;
@@ -4108,7 +4102,7 @@ button.danger {
   background: var(--bg);
   color: inherit;
   font: inherit;
-  font-size: 0.9rem;
+  font-size: calc(0.9rem * var(--text-scale, 1));
 }
 .search-kind {
   padding: 0.3rem 0.7rem;
@@ -4117,7 +4111,7 @@ button.danger {
   background: var(--bg);
   color: inherit;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   cursor: pointer;
 }
 .search-kind[aria-pressed='true'] {
@@ -4331,7 +4325,7 @@ button.danger {
 }
 .composer-btn::before {
   content: attr(data-glyph);
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
   line-height: 1;
   font-variant-emoji: text;
 }
@@ -4342,7 +4336,7 @@ button.danger {
 /* The plus is a drawn character rather than an emoji, so it needs the
    weight to read as a button at this size. */
 .composer-plus::before {
-  font-size: 1.3rem;
+  font-size: calc(1.3rem * var(--text-scale, 1));
   font-weight: 300;
 }
 .composer-plus[data-icon]::before {
@@ -4446,13 +4440,13 @@ button.danger {
   min-width: 0;
 }
 .link-embed-site {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .link-embed-title {
   text-decoration: none;
   font-weight: 600;
-  font-size: 0.98rem;
+  font-size: calc(0.98rem * var(--text-scale, 1));
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -4463,7 +4457,7 @@ button.danger {
   text-decoration: underline;
 }
 .link-embed-description {
-  font-size: 0.86rem;
+  font-size: calc(0.86rem * var(--text-scale, 1));
   color: var(--text);
   display: -webkit-box;
   -webkit-line-clamp: 4;
@@ -4693,7 +4687,7 @@ button.danger {
 .voice-length {
   flex: none;
   min-width: 2.4rem;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
@@ -4704,7 +4698,7 @@ button.danger {
   border-radius: 999px;
   background: rgb(var(--tint-rgb) / 0.14);
   color: var(--text);
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   cursor: pointer;
 }
 
@@ -4723,7 +4717,7 @@ button.danger {
   padding: 0.3rem 0.4rem;
   border-radius: 8px;
   background: rgb(var(--tint-rgb) / 0.07);
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
   min-width: 0;
 }
 .composer-thumb {
@@ -4777,7 +4771,7 @@ button.danger {
   border-radius: 8px;
   background: rgb(var(--tint-rgb) / 0.07);
   overflow: hidden;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
 }
 .pending-preview {
   display: grid;
@@ -4811,7 +4805,7 @@ button.danger {
 }
 .pending-size {
   opacity: 0.6;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
 }
 /* On the picture's corner, over whatever it is: so it is dark and round, and found on a white one too. */
 .composer-btn.pending-remove {
@@ -4932,7 +4926,7 @@ button.danger {
   text-align: center;
 }
 .chat-drop-box strong {
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
   overflow-wrap: anywhere;
 }
 .chat-drop-box small {
@@ -4940,7 +4934,7 @@ button.danger {
 }
 .chat-drop-icon {
   color: var(--accent);
-  font-size: 2.2rem;
+  font-size: calc(2.2rem * var(--text-scale, 1));
   line-height: 1;
 }
 /*
@@ -4968,7 +4962,7 @@ button.danger {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238b93a7' stroke-width='1.6'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='M10.5 10.5 L14 14'/%3E%3C/svg%3E");
   color: inherit;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   min-width: 0;
 }
 .search-field:focus {
@@ -5049,7 +5043,7 @@ button.danger {
 .soundpad-empty {
   margin: 0.8rem 0 0.2rem;
   text-align: center;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 
 /*
@@ -5074,7 +5068,7 @@ button.danger {
   background: rgb(var(--tint-rgb) / 0.05);
   color: inherit;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   cursor: pointer;
   text-align: left;
 }
@@ -5089,7 +5083,7 @@ button.danger {
 }
 .clip-emoji {
   flex: 0 0 auto;
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
   line-height: 1;
 }
 .clip-name {
@@ -5108,7 +5102,7 @@ button.danger {
   border: 1px solid var(--border-strong);
   background: var(--bg);
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: calc(0.62rem * var(--text-scale, 1));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -5129,7 +5123,7 @@ button.danger {
 }
 .hotkey-name {
   flex: 1 1 12rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .hotkey-row .hotkey-key {
   min-width: 9rem;
@@ -5149,11 +5143,11 @@ button.danger {
   white-space: nowrap;
 }
 .hotkey-emoji {
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
 }
 .hotkey-heading {
   margin: 0.9rem 0 0.1rem;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -5165,7 +5159,7 @@ button.danger {
 .hotkey-problem {
   flex: 1 0 100%;
   color: var(--warn);
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
 }
 /* What has been pressed so far, large, while recording. */
 .hotkey-capture {
@@ -5173,7 +5167,7 @@ button.danger {
   padding: 0.9rem 1rem;
   min-width: min(18rem, 80vw);
   text-align: center;
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
   font-weight: 600;
   border: 1px dashed var(--accent);
   border-radius: 8px;
@@ -5194,7 +5188,7 @@ button.danger {
   opacity: 1;
 }
 .clip-tools button {
-  font-size: 0.65rem;
+  font-size: calc(0.65rem * var(--text-scale, 1));
   line-height: 1;
   padding: 0.1rem 0.2rem;
   border-radius: 4px;
@@ -5305,7 +5299,7 @@ button.danger {
   max-width: 100%;
 }
 .ghost-hint {
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   opacity: 0.6;
 }
 .ghost-tile.compact .ghost-hint {
@@ -5418,7 +5412,7 @@ button.danger {
   right: 0;
   bottom: 0;
   padding: 0.15rem 0.4rem;
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
@@ -5455,7 +5449,7 @@ button.danger {
   border: 0;
   color: inherit;
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   line-height: 1;
   padding: 0.1rem 0.2rem;
   border-radius: 4px;
@@ -5569,11 +5563,11 @@ button.danger {
 }
 .ask h2 {
   margin: 0 0 0.3rem;
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
 }
 .ask p {
   margin: 0 0 0.7rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .ask .field {
   display: flex;
@@ -5582,7 +5576,7 @@ button.danger {
   margin-bottom: 0.6rem;
 }
 .ask .field > span {
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   opacity: 0.7;
 }
 .ask input:not([type='range']):not([type='checkbox']),
@@ -5618,7 +5612,7 @@ button.danger {
   display: block;
   margin-top: -0.2rem;
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
 }
 #continue,
 #server-continue {
@@ -5847,7 +5841,7 @@ button.danger {
 .switch-auth {
   text-align: center;
   margin-top: 0.5rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .options-body #test-connection {
@@ -5878,7 +5872,7 @@ button.danger {
 .settings-nav h2 {
   margin: 0 0 0.8rem;
   padding: 0 0.6rem;
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
 }
 .settings-tab {
   display: flex;
@@ -5890,7 +5884,7 @@ button.danger {
   border-radius: 8px;
   background: none;
   color: var(--muted);
-  font-size: 0.88rem;
+  font-size: calc(0.88rem * var(--text-scale, 1));
   text-align: left;
 }
 .settings-tab:hover {
@@ -5977,7 +5971,7 @@ button.danger {
 
 .settings-page-title {
   margin: 0 0 0.9rem;
-  font-size: 1.15rem;
+  font-size: calc(1.15rem * var(--text-scale, 1));
   font-weight: 600;
 }
 .settings-footer {
@@ -6006,7 +6000,7 @@ button.danger {
   margin-bottom: 1rem;
 }
 .setting-title {
-  font-size: 0.9rem;
+  font-size: calc(0.9rem * var(--text-scale, 1));
   font-weight: 600;
   color: var(--text);
 }
@@ -6017,7 +6011,7 @@ button.danger {
 }
 .setting-note {
   margin: 0.15rem 0 0.7rem;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   line-height: 1.45;
   color: var(--muted);
 }
@@ -6032,7 +6026,7 @@ button.danger {
   border-radius: 999px;
   background: rgb(var(--accent-rgb) / 0.16);
   color: var(--accent);
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   font-weight: 600;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -6053,7 +6047,7 @@ button.danger {
   border-radius: 8px;
   background: var(--surface-2);
   color: var(--text);
-  font-size: 1.1rem;
+  font-size: calc(1.1rem * var(--text-scale, 1));
   line-height: 1;
 }
 .step-btn:hover {
@@ -6098,7 +6092,7 @@ button.danger {
   min-width: 0;
 }
 .setting-text small {
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   line-height: 1.4;
   color: var(--muted);
 }
@@ -6194,7 +6188,7 @@ input.switch:focus-visible {
     gap: 0.2rem;
     min-height: 3.4rem;
     padding: 0.4rem 0.25rem;
-    font-size: 0.72rem;
+    font-size: calc(0.72rem * var(--text-scale, 1));
     line-height: 1.15;
     text-align: center;
     white-space: normal;
@@ -6209,7 +6203,7 @@ input.switch:focus-visible {
     overscroll-behavior: contain;
   }
   .settings-page-title {
-    font-size: 1.05rem;
+    font-size: calc(1.05rem * var(--text-scale, 1));
     margin-bottom: 0.7rem;
   }
   .setting-group {
@@ -6234,7 +6228,7 @@ input.switch:focus-visible {
 @media (pointer: coarse) {
   #devices select {
     min-height: 2.8rem;
-    font-size: 1rem;
+    font-size: calc(1rem * var(--text-scale, 1));
   }
   #devices input[type='range'] {
     height: 8px;
@@ -6291,7 +6285,7 @@ input.switch:focus-visible {
   background: var(--surface);
   color: inherit;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   cursor: pointer;
   text-align: center;
 }
@@ -6333,7 +6327,7 @@ input.switch:focus-visible {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   cursor: pointer;
 }
 .theme-custom input[type='color'] {
@@ -6404,7 +6398,7 @@ input.switch:focus-visible {
   flex: 1 1 0;
   min-width: 0;
   padding: 0.45rem 0.25rem;
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 .bg-panel {
   margin-top: 0.9rem;
@@ -6465,7 +6459,7 @@ input.switch:focus-visible {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-2);
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   cursor: pointer;
 }
 .bg-picker:hover {
@@ -6507,10 +6501,10 @@ input.switch:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.88rem;
+  font-size: calc(0.88rem * var(--text-scale, 1));
 }
 .bg-image-text small {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .bg-preview {
@@ -6571,7 +6565,7 @@ input.switch:focus-visible {
 }
 button.tiny {
   padding: 0 0.3rem;
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--text-scale, 1));
   line-height: 1.4;
   min-width: 0;
 }
@@ -6580,7 +6574,7 @@ button.tiny:disabled {
   cursor: default;
 }
 .move-select {
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   padding: 0.1rem 0.2rem;
   max-width: 8rem;
 }
@@ -6713,7 +6707,7 @@ button.tiny:disabled {
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   text-overflow: ellipsis;
   cursor: pointer;
   outline: none;
@@ -6929,7 +6923,7 @@ button.tiny:disabled {
 }
 .picker-head h2 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: calc(1.1rem * var(--text-scale, 1));
 }
 .picker-head p {
   margin: 2px 0 0;
@@ -7531,7 +7525,7 @@ button.tiny:disabled {
 }
 #debug-log-file {
   overflow-wrap: anywhere;
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   margin: 0.4rem 0 0;
   user-select: text;
 }
@@ -7543,7 +7537,7 @@ button.tiny:disabled {
   gap: 2px;
 }
 .update-text .muted {
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
 }
 
 .tile-status {
@@ -7812,7 +7806,7 @@ input[type='range'][data-boosted] {
     display: none;
   }
   #channels-menu {
-    font-size: 1.1rem;
+    font-size: calc(1.1rem * var(--text-scale, 1));
     padding: 4px 10px;
   }
 
@@ -7936,10 +7930,10 @@ input[type='range'][data-boosted] {
     flex: 1 1 auto;
   }
   .mobile-dock .voice-panel-where strong {
-    font-size: 0.8rem;
+    font-size: calc(0.8rem * var(--text-scale, 1));
   }
   .mobile-dock .voice-panel-where .muted {
-    font-size: 0.7rem;
+    font-size: calc(0.7rem * var(--text-scale, 1));
   }
   .mobile-dock .voice-panel-actions {
     order: 2;
@@ -8036,7 +8030,7 @@ input[type='range'][data-boosted] {
   }
   .channel-tile figcaption {
     padding: 4px 6px;
-    font-size: 0.85rem;
+    font-size: calc(0.85rem * var(--text-scale, 1));
   }
   .channel-tile .tile-btn,
   .tile-corner .tile-btn,
@@ -8044,7 +8038,7 @@ input[type='range'][data-boosted] {
     min-width: 40px;
     min-height: 40px;
     padding: 0 10px;
-    font-size: 1.05rem;
+    font-size: calc(1.05rem * var(--text-scale, 1));
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -8091,7 +8085,7 @@ input[type='range'][data-boosted] {
 .comp-hint {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -8447,7 +8441,7 @@ input[data-saved] {
   padding: 0.2rem 0.25rem 0.3rem 0.4rem;
   margin-bottom: 0.15rem;
   border-bottom: 1px solid var(--border);
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
   color: var(--muted);
 }
 .composer-reply-text {
@@ -8570,7 +8564,7 @@ input[data-saved] {
   border-radius: 8px;
   background: rgb(var(--tint-rgb) / 0.04);
   color: inherit;
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
   cursor: pointer;
   min-width: 0;
 }
@@ -8649,7 +8643,7 @@ input[data-saved] {
 }
 .screen-permission p {
   margin: 0.35rem 0 0.7rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 
 /*
@@ -8756,12 +8750,12 @@ input[data-saved] {
 }
 .dm-panel-head h2 {
   margin: 0;
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
 }
 .dm-panel-note,
 .dm-empty {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   line-height: 1.4;
 }
 .dm-panel-actions {
@@ -8809,7 +8803,7 @@ input[data-saved] {
 .dm-row-time {
   flex: none;
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
 }
 .dm-row-text {
   min-width: 0;
@@ -8817,7 +8811,7 @@ input[data-saved] {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 .dm-row[data-unread] .dm-row-text {
   color: var(--text);
@@ -8829,7 +8823,7 @@ input[data-saved] {
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
-  font-size: 0.68rem;
+  font-size: calc(0.68rem * var(--text-scale, 1));
   font-weight: 700;
   line-height: 1.1rem;
   text-align: center;
@@ -8868,7 +8862,7 @@ input[data-saved] {
   border-radius: 999px;
   background: rgb(var(--live-rgb) / 0.18);
   color: var(--live);
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--text-scale, 1));
   font-weight: 600;
 }
 #dm-safety[data-verified] {
@@ -8894,7 +8888,7 @@ input[data-saved] {
   border-radius: 8px;
   border: 1px solid rgb(var(--tint-rgb) / 0.14);
   background: rgb(var(--tint-rgb) / 0.05);
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .dm-banner-row > span {
   flex: 1 1 14rem;
@@ -8916,7 +8910,7 @@ input[data-saved] {
   display: block;
   margin-top: 0.15rem;
   color: var(--warn);
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
 }
 
 /* The keys. */
@@ -8933,14 +8927,14 @@ input[data-saved] {
   background: var(--bg);
   border: 1px dashed var(--border-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
   letter-spacing: 0.04em;
   text-align: center;
   overflow-wrap: anywhere;
   user-select: all;
 }
 .dm-safety-number {
-  font-size: 1.2rem;
+  font-size: calc(1.2rem * var(--text-scale, 1));
 }
 .dm-recovery-input {
   width: 100%;
@@ -8983,7 +8977,7 @@ input[data-saved] {
   padding: 0.2rem 0.35rem;
   background: rgb(var(--tint-rgb) / 0.1);
   backdrop-filter: blur(6px);
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
   cursor: grab;
   touch-action: none;
 }
@@ -9106,7 +9100,7 @@ body.pip-window {
 /* The picture of whose stream it is, and their mute and deafen glyphs, in the
    caption. Small: the caption is a strip, and the stream is the point. */
 .channel-tile .tile-face {
-  font-size: 0.62rem;
+  font-size: calc(0.62rem * var(--text-scale, 1));
 }
 .channel-tile .tile-face[hidden],
 .channel-tile .tile-standing[hidden] {
@@ -9184,7 +9178,7 @@ body.pip-window {
   padding: 0 0.5em;
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   color: var(--muted);
   white-space: nowrap;
 }
@@ -9282,7 +9276,7 @@ body.pip-window {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
 }
 .admin-editor .ask-buttons {
   margin-top: 0.3rem;
@@ -9419,13 +9413,13 @@ body.pip-window {
 }
 .profile-card-name {
   --name-size: 1.15rem;
-  font-size: calc(1.15rem * var(--name-scale, 1));
+  font-size: calc(1.15rem * var(--name-scale, 1) * var(--text-scale, 1));
   overflow-wrap: anywhere;
 }
 .profile-card-handle,
 .profile-card-since {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .profile-card-roles {
   margin-top: 0.6rem;
@@ -9435,7 +9429,7 @@ body.pip-window {
 .profile-card-label {
   margin-bottom: 0.4rem;
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--text-scale, 1));
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -9447,7 +9441,7 @@ body.pip-window {
 }
 .profile-card-chips .role-chip {
   padding: 0.1em 0.55em;
-  font-size: 0.8rem;
+  font-size: calc(0.8rem * var(--text-scale, 1));
   color: var(--text);
   background: rgb(var(--tint-rgb) / 0.06);
 }
@@ -9471,7 +9465,7 @@ body.pip-window {
 }
 .profile-card-none {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .profile-card-pick {
   display: flex;
@@ -9595,12 +9589,12 @@ body.pip-window {
 .badge-icon.small {
   width: 1.5rem;
   height: 1.5rem;
-  font-size: 1.15rem;
+  font-size: calc(1.15rem * var(--text-scale, 1));
 }
 .badge-icon.large {
   width: 4.5rem;
   height: 4.5rem;
-  font-size: 3.4rem;
+  font-size: calc(3.4rem * var(--text-scale, 1));
 }
 
 /* Under the name on the profile card. */
@@ -9645,13 +9639,13 @@ body.pip-window {
   display: none;
 }
 .badge-tip strong {
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .badge-tip span:last-child:not(.badge-icon) {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 
 /* The editor's own preview, and the picture row. */
@@ -9689,7 +9683,7 @@ body.pip-window {
 #server-dialog .admin-subject {
   padding-bottom: 0.7rem;
   border-bottom: 1px solid var(--border);
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
   font-weight: 600;
 }
 
@@ -9700,7 +9694,7 @@ body.pip-window {
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-  font-size: 0.88rem;
+  font-size: calc(0.88rem * var(--text-scale, 1));
 }
 #server-dialog .check input.switch {
   margin: 0;
@@ -9752,7 +9746,7 @@ body.pip-window {
   padding: 0.5rem 0.8rem;
   border: 1px dashed var(--border);
   border-radius: 8px;
-  font-size: 1.05rem;
+  font-size: calc(1.05rem * var(--text-scale, 1));
 }
 .role-style .name-color-editor {
   margin: 0;
@@ -9766,7 +9760,7 @@ body.pip-window {
 }
 .role-style .font-choice {
   padding: 0.4rem 0.3rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .role-style .name-color-speed {
   flex-wrap: wrap;
@@ -9814,7 +9808,7 @@ input[type='color'] {
   border: 2px dashed var(--border-strong, var(--border));
   border-radius: 10px;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   text-align: center;
 }
 .channel-dropout[hidden] {
@@ -9856,7 +9850,7 @@ input[type='color'] {
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
-  font-size: 0.68rem;
+  font-size: calc(0.68rem * var(--text-scale, 1));
   font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
@@ -9996,7 +9990,7 @@ input[type='color'] {
 }
 .stars-count {
   padding: 0 0.2rem;
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
 }
 .stars-more {
   align-self: center;
@@ -10046,7 +10040,7 @@ input[type='color'] {
   }
   /* Room for the arrow, which is wider than the magnifier it stands in for. */
   .search-box:has(> .search-back):focus-within {
-    padding-left: 2.6rem;
+    padding-left: calc(2.6rem * var(--text-scale, 1));
   }
   .search-back {
     position: absolute;
@@ -10136,7 +10130,7 @@ input[type='color'] {
 }
 .member-empty {
   padding: 0.6rem 0.3rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 
 /*
@@ -10169,7 +10163,7 @@ input[type='color'] {
 }
 .ie-hint {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .ie-stage {
   position: relative;
@@ -10223,7 +10217,7 @@ input[type='color'] {
 }
 .ie-label {
   flex: 0 0 4.2rem;
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
   opacity: 0.8;
 }
 .ie-row input[type='range'] {
@@ -10357,10 +10351,10 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 .music-strip-text span {
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
 }
 .music-strip[data-paused] .music-strip-text strong {
   opacity: 0.6;
@@ -10369,7 +10363,7 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
   display: inline-flex;
   gap: 0.25rem;
   color: var(--accent);
-  font-size: 0.85rem;
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 .music-flags [data-icon][hidden] {
   display: none;
@@ -10417,7 +10411,7 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
   accent-color: var(--accent);
 }
 .music-volume-label {
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
   opacity: 0.6;
   min-width: 2.6rem;
   text-align: right;
@@ -10462,7 +10456,7 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
 }
 .music-head h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: calc(1rem * var(--text-scale, 1));
 }
 .music-find {
   display: flex;
@@ -10479,7 +10473,7 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
 .music-note {
   margin: 0;
   flex: 0 0 auto;
-  font-size: 0.82rem;
+  font-size: calc(0.82rem * var(--text-scale, 1));
 }
 .music-results {
   flex: 0 1 auto;
@@ -10539,15 +10533,15 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 0.84rem;
+  font-size: calc(0.84rem * var(--text-scale, 1));
 }
 .music-track-text span {
-  font-size: 0.74rem;
+  font-size: calc(0.74rem * var(--text-scale, 1));
 }
 .music-track-length,
 .music-track-by {
   flex: 0 0 auto;
-  font-size: 0.74rem;
+  font-size: calc(0.74rem * var(--text-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 .music-track-tools {
@@ -10587,7 +10581,7 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
 }
 .music-time {
   flex: 0 0 auto;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
@@ -10749,6 +10743,14 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
     font-size: 1.2em;
   }
   .channel-list .self-text strong {
-    font-size: calc(0.95rem * var(--name-scale, 1));
+    font-size: calc(0.95rem * var(--name-scale, 1) * var(--text-scale, 1));
   }
+}
+
+/*
+ * A picture does not grow with the type. An avatar is sized in em (of the font its initials are drawn in), so with a
+ * larger text size it would be larger too; this takes the text size back off it, leaving it at the size it was.
+ */
+.avatar {
+  zoom: calc(1 / var(--text-scale, 1));
 }
