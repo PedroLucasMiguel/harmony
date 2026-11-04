@@ -188,6 +188,17 @@ async function run() {
     .find((li) => li.querySelector('.channel-name')?.textContent === 'voice').click(); return true;`);
   await waitFor(page, "!document.getElementById('voice-active').hidden && document.querySelectorAll('#voice-roster li').length >= 2", { label: 'Pedro in the room', timeoutMs: 40_000 });
   check('with the call on server A, there is no call bar', (await bar(page)).hidden === true);
+  await sleep(800);
+  // Connected to a voice channel, at any text size: the channel list and the roster never scroll sideways.
+  for (const scale of [1, 1.5, 1.8]) {
+    await page.evaluate(`document.documentElement.style.setProperty('--text-scale', '${scale}'); return true;`);
+    await sleep(400);
+    const lists = await page.evaluate("return ['channel-items', 'voice-roster'].map((id) => { const n = document.getElementById(id); return { over: n.scrollWidth - n.clientWidth, x: getComputedStyle(n).overflowX }; })");
+    // The channel list fits; and neither list can grow a sideways scrollbar, whatever a long name does to it.
+    check(`in a call, at text size ${scale}, nothing in the lists scrolls sideways`, lists[0].over <= 1 && lists.every((l) => l.x === 'hidden'), JSON.stringify(lists));
+  }
+  await page.evaluate("document.documentElement.style.removeProperty('--text-scale'); return true;");
+
 
   // ...then opens server B.
   await page.evaluate("document.querySelector('#server-rail .rail-add').click(); return true;");

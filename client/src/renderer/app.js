@@ -1191,6 +1191,7 @@ async function boot() {
   applyColumnWidth('side', state.settings.sideWidth);
   applyColumnWidth('members', state.settings.membersWidth);
   applyColumnWidth('dms', state.settings.dmListWidth);
+  applyColumnWidth('forum', state.settings.forumListWidth);
   el.serverUrl.value = state.settings.serverUrl;
   el.username.value = state.settings.username;
   el.password.value = state.settings.password ?? '';
@@ -2179,7 +2180,7 @@ function paintOwnStatus() {
 /** A small coloured dot, with the word for those who cannot tell the colours apart. */
 function statusDot(status) {
   const dot = document.createElement('span');
-  dot.className = 'status-dot';
+  dot.className = 'presence-dot';
   dot.dataset.status = status;
   dot.title = t(`status.${status}`);
   return dot;
@@ -5247,6 +5248,12 @@ async function saveServerSettings() {
   try {
     const { server } = await harmony.api.updateServer(state.server, body);
     applyServerInfo(server);
+    // A server from before banners takes the rest and says nothing of this: it would look saved, and not be.
+    if (body.banner && !('banner' in server)) {
+      el.serverErrorLine.textContent = t('server.banner_unsupported');
+      el.serverErrorLine.hidden = false;
+      return;
+    }
     // The new picture (or none) into this server's profile and the rail, without waiting for the broadcast.
     await syncLogo(state.server, el.password.value, server.logo ?? null);
     await syncBanner(state.server, el.password.value, server.banner ?? null);
@@ -16536,6 +16543,10 @@ const COLUMNS = {
   side: { setting: 'sideWidth', css: '--side-col', min: 160, floor: 200, normal: 260, max: 560, share: 38 },
   members: { setting: 'membersWidth', css: '--members-col', min: 120, floor: 150, normal: 200, max: 480, share: 34 },
   // The list on the private-messages page, which has a layout of its own.
+  // The list of posts beside an open post: a flex item of the stage, so its width is a plain length.
+  forum: {
+    setting: 'forumListWidth', css: '--forum-list', min: 200, floor: 200, normal: 352, max: 640, share: 55, plain: true, host: () => el.channelStage,
+  },
   dms: {
     setting: 'dmListWidth', css: '--dms-col', min: 220, floor: 220, normal: 320, max: 640, share: 45, host: () => el.dmsLayout,
   },
@@ -16551,6 +16562,10 @@ function applyColumnWidth(key, width) {
     return null;
   }
   const w = Math.round(Math.min(col.max, Math.max(col.min, wanted)));
+  if (col.plain) {
+    host.style.setProperty(col.css, `min(${w}px, ${col.share}%)`);
+    return w;
+  }
   host.style.setProperty(
     col.css,
     `minmax(${Math.min(col.floor, w)}px, min(${w}px, ${col.share}vw))`,
@@ -17866,6 +17881,7 @@ el.channelAdd.addEventListener('click', async () => {
         options: [
           { value: 'voice', label: t('app.voice_channel') },
           { value: 'text', label: t('app.text_channel') },
+          { value: 'forum', label: t('app.forum_channel') },
           { value: 'group', label: t('app.group_a_folder') },
         ],
       },

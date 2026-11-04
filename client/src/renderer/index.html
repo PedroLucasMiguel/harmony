@@ -714,6 +714,9 @@
             is the chat pane showing that post. See forum-ui.js and openPost in app.js.
           -->
           <div id="forum-active" class="forum" hidden>
+            <!-- With a post open the list is a column of its own: drag its edge to narrow or widen it; double-click for the usual width. -->
+            <div class="col-resizer" data-resize="forum" role="separator"
+                 aria-orientation="vertical" aria-label="Resize the list of posts" data-i18n-aria-label="forum.resize_list"></div>
             <header class="voice-head">
               <h2 id="forum-name"></h2>
             </header>

@@ -1774,4 +1774,7 @@ export default {
   'profile_card.on_server': "Em {name}",
   'channel_link.open': "Abrir #{name}",
   'rail.voice_active': "Há alguém em um canal de voz",
+  'app.forum_channel': "Canal de fórum",
+  'forum.resize_list': "Redimensionar a lista de postagens",
+  'server.banner_unsupported': "Este servidor usa uma versão antiga que não consegue guardar um banner. Atualize o servidor e tente de novo. O resto foi salvo.",
 };

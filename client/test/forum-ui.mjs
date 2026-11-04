@@ -158,12 +158,24 @@ async function run() {
     document.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
     document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return true;`);
 
+  // ---- making a forum from the + above the channel list
+  await cdp.evaluate("document.getElementById('channel-add').click(); return true;");
+  await waitFor(cdp, "document.getElementById('ask').open", { label: 'the new channel dialog' });
+  const kinds = await cdp.evaluate("return [...document.querySelectorAll('#ask [name=kind] option')].map((o) => o.value)");
+  check('the + offers a forum among the kinds of channel', kinds.includes('forum'), JSON.stringify(kinds));
+  await cdp.evaluate(`const d = document.getElementById('ask'); d.querySelector('[name=name]').value = 'from-the-plus'; d.querySelector('[name=kind]').value = 'forum';
+    document.getElementById('ask-ok').click(); return true;`);
+  await waitFor(cdp, "[...document.querySelectorAll('#channel-items li.channel-row')].some((r) => r.textContent.includes('from-the-plus') && r.querySelector('.kind')?.dataset.icon === 'chats-teardrop')", { label: 'the forum made from the +' });
+
   // ---- the channel, and its list
   check('the forum is in the channel list, with its own icon', await cdp.evaluate(`return [...document.querySelectorAll('#channel-items li.channel-row')].some((r) => r.textContent.includes('questions') && r.querySelector('.kind')?.dataset.icon === 'chats-teardrop');`));
   await cdp.evaluate(`[...document.querySelectorAll('#channel-items li.channel-row')].find((r) => r.textContent.includes('questions')).click(); return true;`);
   await waitFor(cdp, "!document.getElementById('forum-active').hidden", { label: 'the forum list' });
   check('clicking it shows its list of posts and not a log', (await visible('#forum-active')) && !(await visible('#chat-active')) && (await text('#forum-name')) === 'questions');
   check('an empty forum says so, and has the search and New Post', /No posts yet/.test(await text('#forum-empty')) && (await visible('#forum-search')) && (await visible('#forum-new')));
+  const glass = await cdp.evaluate(`const i = document.querySelector('.forum-search .search-box-icon').getBoundingClientRect(); const f = document.querySelector('.forum-search input').getBoundingClientRect();
+    return { dy: Math.abs((i.top + i.height / 2) - (f.top + f.height / 2)) };`);
+  check('the search icon is level with what is typed beside it', glass.dy <= 1.5, JSON.stringify(glass));
   await shot('1-empty');
 
   // ---- starting a post
@@ -203,6 +215,31 @@ async function run() {
   await waitFor(cdp, "[...document.querySelectorAll('#chat-log .chat-msg')].some((r) => /My own answer/.test(r.textContent))", { label: 'my answer' });
   await waitFor(cdp, "document.querySelector('#forum-posts .forum-post .forum-post-replies')?.textContent === '2'", { label: 'the answer counted' });
   check('an answer is written in the post and counted in the list', true);
+
+  // ---- the list beside a post can be dragged wider or narrower, and put back
+  const listW = () => cdp.evaluate("return Math.round(document.getElementById('forum-active').getBoundingClientRect().width)");
+  const edgeNow = () => cdp.evaluate(`const r = document.querySelector('.col-resizer[data-resize="forum"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, shown: r.width > 0 };`);
+  const edge = await edgeNow();
+  const drag = async (dx) => {
+    const here = await edgeNow();
+    const m = (type, x) => cdp.send('Input.dispatchMouseEvent', { type, x, y: here.y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
+    await m('mousePressed', here.x);
+    for (let i = 1; i <= 8; i += 1) await m('mouseMoved', here.x + (dx * i) / 8);
+    await m('mouseReleased', here.x + dx);
+    await sleep(300);
+  };
+  const w0 = await listW();
+  check('with a post open there is an edge to drag on the list', edge.shown);
+  await drag(90);
+  const w1 = await listW();
+  check('dragging it right widens the list', w1 >= w0 + 80, `${w0} -> ${w1}`);
+  await drag(-90);
+  const w2 = await listW();
+  check('and left narrows it', w2 <= w1 - 80, `${w1} -> ${w2}`);
+  check('the width is remembered', Math.abs((await cdp.evaluate("const r = await harmony.settings.get(); return (r.data ?? r).forumListWidth")) - w2) <= 2);
+  await cdp.evaluate("document.querySelector('.col-resizer[data-resize=\"forum\"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true;");
+  await sleep(300);
+  check('double-clicking the edge puts it back', Math.abs((await listW()) - w0) <= 2, `${w0} vs ${await listW()}`);
 
   // ---- others, live
   const mine = (await json(`/api/channels/${forum.id}/posts`, boss)).posts[0].message;

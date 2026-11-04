@@ -1319,6 +1319,8 @@ select:focus {
    something you have to go looking for while twelve people talk over you. */
 #channel-items {
   overflow-y: auto;
+  /* Never sideways: a row that is too wide is cut (names have an ellipsis), not scrolled to. */
+  overflow-x: hidden;
   min-height: 0;
   flex: 1 1 auto;
 }
@@ -1614,6 +1616,7 @@ select:focus {
 }
 #voice-roster {
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
   flex: 1 1 auto;
 }
@@ -11486,7 +11489,15 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
   min-width: 0;
 }
 .channel-stage[data-forum][data-thread] > #forum-active {
-  flex: 0 0 clamp(14rem, 30%, 22rem);
+  flex: 0 0 var(--forum-list, clamp(14rem, 30%, 22rem));
+}
+/* The edge to drag, in the gap between the list and the post; only while there is a post beside it. */
+.col-resizer[data-resize='forum'] {
+  display: none;
+  right: -0.75rem;
+}
+.channel-stage[data-forum][data-thread] .col-resizer[data-resize='forum'] {
+  display: block;
 }
 /* With a post open there is a list and a thread to fit: the member list steps aside until it is closed. */
 .channels-layout[data-members]:has(.channel-stage[data-thread]) {
@@ -11850,6 +11861,8 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
 /* The forum's search box is a row, not the channel search's absolutely placed field. */
 .forum-search .search-box-icon {
   position: static;
+  /* The channel search's own placement (top and a half-height lift) is not this row's: it pushed the glass up. */
+  transform: none;
   flex: none;
   color: var(--muted);
 }
@@ -12340,7 +12353,7 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
   display: inline-flex;
   line-height: 0;
 }
-.status-dot,
+.presence-dot,
 .status-button {
   --status-color: var(--status-online);
   box-sizing: border-box;
@@ -12359,7 +12372,7 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
 [data-status='invisible'] {
   --status-color: var(--status-invisible);
 }
-.status-dot {
+.presence-dot {
   position: absolute;
   right: -3px;
   bottom: -3px;
@@ -12368,11 +12381,11 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
   border: 2px solid var(--bg);
 }
 /* Not by colour alone: idle has a bite out of it, do not disturb a bar across it, invisible is a ring. */
-.status-dot[data-status='idle'],
+.presence-dot[data-status='idle'],
 .status-button[data-status='idle'] {
   background: radial-gradient(circle at 28% 28%, var(--surface-2, var(--bg)) 0 32%, var(--status-idle) 34%);
 }
-.status-dot[data-status='dnd']::after,
+.presence-dot[data-status='dnd']::after,
 .status-button[data-status='dnd']::after {
   content: '';
   position: absolute;
@@ -12396,7 +12409,7 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
   transform: scale(1.2);
 }
 .status-button[data-status='invisible'],
-.status-dot[data-status='invisible'] {
+.presence-dot[data-status='invisible'] {
   background: var(--surface);
   border-color: var(--status-invisible);
 }
@@ -12474,24 +12487,25 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
   font-size: 0.8em;
 }
 
-/* Somebody is in a voice channel on a server that is not open: a small speaker on the corner of its bubble. */
+/* Somebody is in a voice channel on a server that is not open: a speaker on the corner of its bubble, on a colour of
+   its own so that it reads over any logo, and above everything in the bubble (the picture included, pressed or not). */
 .rail-voice {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 18px;
-  height: 18px;
+  z-index: 3;
+  top: -5px;
+  right: -6px;
+  width: 24px;
+  height: 24px;
   box-sizing: border-box;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--bg);
-  border: 2px solid var(--bg);
+  background: var(--live);
+  border: 3px solid var(--bg);
   color: #fff;
-  font-size: 11px;
   pointer-events: none;
 }
 .rail-voice::before {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }

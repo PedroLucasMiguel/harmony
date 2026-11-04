@@ -281,6 +281,8 @@ const DEFAULTS = {
    */
   sideWidth: null,
   membersWidth: null,
+  // The list of posts beside an open post in a forum.
+  forumListWidth: null,
   // The list of conversations on the private-messages page, dragged wider or narrower.
   dmListWidth: null,
   /*

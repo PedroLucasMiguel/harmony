@@ -1784,4 +1784,7 @@ export default {
   'profile_card.on_server': "On {name}",
   'channel_link.open': "Open #{name}",
   'rail.voice_active': "Somebody is in a voice channel",
+  'app.forum_channel': "Forum channel",
+  'forum.resize_list': "Resize the list of posts",
+  'server.banner_unsupported': "This server is running an older version that cannot keep a banner. Update the server, then try again. The rest was saved.",
 };

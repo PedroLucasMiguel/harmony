@@ -163,7 +163,7 @@ async function run() {
     await sleep(500);
   };
   const memberDot = (name) => page.evaluate(`const row = [...document.querySelectorAll('#member-items .member-row')].find((r) => r.querySelector('.member-name')?.textContent === ${JSON.stringify(name)});
-    return row ? { off: row.hasAttribute('data-off'), dot: row.querySelector('.status-dot')?.dataset.status ?? null } : null;`);
+    return row ? { off: row.hasAttribute('data-off'), dot: row.querySelector('.presence-dot')?.dataset.status ?? null } : null;`);
   const showMembers = async () => {
     if (await page.evaluate("return document.getElementById('member-list').hidden")) await page.evaluate("document.getElementById('channels-members').click(); return true;");
     await sleep(500);
@@ -203,12 +203,12 @@ async function run() {
   check('ana is on the list with a green dot', (await memberDot('ana'))?.dot === 'online' && !(await memberDot('ana')).off, JSON.stringify(await memberDot('ana')));
   await anaOnA.request({ type: 'presence:set', status: 'dnd' });
   await anaOnB.request({ type: 'presence:set', status: 'idle' });
-  await waitFor(page, "[...document.querySelectorAll('#member-items .member-row')].find((r) => r.querySelector('.member-name')?.textContent === 'ana')?.querySelector('.status-dot')?.dataset.status === 'dnd'", { label: 'ana do not disturb on A' });
+  await waitFor(page, "[...document.querySelectorAll('#member-items .member-row')].find((r) => r.querySelector('.member-name')?.textContent === 'ana')?.querySelector('.presence-dot')?.dataset.status === 'dnd'", { label: 'ana do not disturb on A' });
   check('ana is red on A, where she is not to be disturbed', (await memberDot('ana')).dot === 'dnd');
   await shot('2-members');
   await open(PORT_B);
   await showMembers();
-  await waitFor(page, "[...document.querySelectorAll('#member-items .member-row')].find((r) => r.querySelector('.member-name')?.textContent === 'ana')?.querySelector('.status-dot')?.dataset.status === 'idle'", { label: 'ana idle on B', timeoutMs: 15_000 });
+  await waitFor(page, "[...document.querySelectorAll('#member-items .member-row')].find((r) => r.querySelector('.member-name')?.textContent === 'ana')?.querySelector('.presence-dot')?.dataset.status === 'idle'", { label: 'ana idle on B', timeoutMs: 15_000 });
   check('and yellow on B, where she is idle: the same person, a different status on each', (await memberDot('ana')).dot === 'idle');
   await anaOnA.request({ type: 'presence:set', status: 'invisible' });
   await open(PORT_A);
@@ -259,7 +259,7 @@ async function run() {
   // ---- the private messages say nothing of it
   await page.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
   await sleep(800);
-  check('the private messages have no status anywhere', !(await q('#view-dms .status-dot, #view-dms .status-button')));
+  check('the private messages have no status anywhere', !(await q('#view-dms .presence-dot, #view-dms .status-button')));
 }
 
 run()

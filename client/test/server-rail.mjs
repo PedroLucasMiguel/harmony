@@ -229,6 +229,9 @@ async function run() {
   await waitFor(page, `document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]')?.getAttribute('aria-current') === 'true'`, { label: 'opening B', timeoutMs: 20_000 });
   await sleep(1500);
   check('on the server that is open there is no speaker on its bubble', !(await speaker(PORT_B)));
+  const wide = await page.evaluate(`const scroller = [document.getElementById('channel-items')].map((n) => ({ id: n.id, over: n.scrollWidth - n.clientWidth }));
+    return { members: document.querySelectorAll('.channel-member').length, scroller };`);
+  check('the channel list, with somebody in a voice channel, has no sideways scroll', wide.members >= 1 && wide.scroller.every((n) => n.over <= 1), JSON.stringify(wide));
   await page.evaluate(`document.querySelector('#server-rail .rail-item[data-server*="${PORT_A}"]').click(); return true;`);
   await waitFor(page, `document.querySelector('#server-rail .rail-item[data-server*="${PORT_A}"]')?.getAttribute('aria-current') === 'true'`, { label: 'back to A', timeoutMs: 20_000 });
   check('and putting it away again, the speaker is still there for the person who is in the channel', await speaker(PORT_B));
