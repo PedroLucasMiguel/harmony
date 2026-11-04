@@ -275,11 +275,22 @@ async function run() {
 
   // --- a call to the group ----------------------------------------------------------------------------------------
   await click(alice, '#dm-call');
-  await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-channels' && !document.getElementById('voice-active').hidden", { label: 'alice in the call', timeoutMs: 40_000 });
-  check('starting a call takes Alice to the page with its pictures and controls', true, '');
-  await until(alice, "/Ringing/.test(document.getElementById('voice-name').textContent)", { label: 'the ringing label' });
-  const calling = await alice.evaluate("return document.getElementById('voice-name').textContent");
-  check('which says who it is with, and that it is ringing', /Weekend plans/.test(calling) && /Ringing/.test(calling), calling);
+  await until(alice, "!document.getElementById('call-screen').hidden", { label: 'alice\'s call screen', timeoutMs: 40_000 });
+  const screen0 = await alice.evaluate(`const s = document.getElementById('call-screen'); const r = s.getBoundingClientRect(); const log = document.getElementById('dm-log').getBoundingClientRect();
+    return { view: document.querySelector('.view[data-active]')?.id, title: document.getElementById('call-title').textContent, status: document.getElementById('call-status').textContent,
+      buttons: [...document.querySelectorAll('#call-controls .call-btn')].filter((b) => !b.hidden).map((b) => b.id), tiles: document.querySelectorAll('#call-stage .call-tile').length,
+      above: r.bottom <= log.top + 1, bar: !document.getElementById('call-bar').hidden };`);
+  check('starting a call keeps Alice on the conversation, with the call screen over it', screen0.view === 'view-dms' && screen0.above, JSON.stringify(screen0));
+  check('the screen has the group\'s name, and says it is ringing', /Weekend plans/.test(screen0.title) && /Ringing/.test(screen0.status), JSON.stringify(screen0));
+  check('with camera, screen, microphone, headphones and hang up, and a tile for her', ['cs-camera', 'cs-screen', 'cs-mute', 'cs-deafen', 'cs-hangup'].every((id) => screen0.buttons.includes(id)) && screen0.tiles >= 1, JSON.stringify(screen0));
+  check('and no bar saying there is a call, which is what it stands in for', screen0.bar === false, JSON.stringify(screen0));
+  await shot(alice, 'call-screen-ringing');
+  // The controls are the call's: the microphone button mutes her.
+  await alice.evaluate("document.getElementById('cs-mute').click(); return true;");
+  await until(alice, "document.getElementById('cs-mute').hasAttribute('data-on') && document.getElementById('cs-mute').dataset.icon === 'microphone-slash'", { label: 'the microphone button muted' });
+  check('the microphone button mutes her, and shows it', await alice.evaluate("return document.getElementById('voice-mute').hasAttribute('data-on')"), '');
+  await alice.evaluate("document.getElementById('cs-mute').click(); return true;");
+  await until(alice, "!document.getElementById('cs-mute').hasAttribute('data-on')", { label: 'the microphone button unmuted' });
   await until(bob, "document.querySelector('#incoming-calls .incoming-call')", { label: 'bob\'s phone ringing' });
   await until(carol, "document.querySelector('#incoming-calls .incoming-call')", { label: 'carol\'s phone ringing' });
   const ring = await bob.evaluate("return document.querySelector('#incoming-calls .incoming-call strong').textContent");
@@ -293,11 +304,14 @@ async function run() {
   check('Carol turns it down, and it stops ringing for her', true, '');
 
   await click(bob, '#incoming-calls .incoming-call-answer');
-  await until(bob, "!document.getElementById('voice-active').hidden && document.querySelectorAll('#voice-roster li').length === 2", { label: 'bob in the call', timeoutMs: 40_000 });
-  await until(alice, "document.querySelectorAll('#voice-roster li').length === 2", { label: 'alice seeing bob' });
-  check('Bob answers and both are in the call, and see each other in the roster', true, '');
-  const answered = await alice.evaluate("return document.getElementById('voice-name').textContent");
-  check('and it no longer says it is ringing', !/Ringing/.test(answered), answered);
+  await until(bob, "!document.getElementById('call-screen').hidden && document.querySelectorAll('#call-stage .call-tile[data-kind=person]').length === 2", { label: 'bob in the call', timeoutMs: 40_000 });
+  await until(alice, "document.querySelectorAll('#call-stage .call-tile[data-kind=person]').length === 2", { label: 'alice seeing bob' });
+  const bobSees = await bob.evaluate("return { view: document.querySelector('.view[data-active]')?.id, name: document.getElementById('dm-name').textContent, tiles: [...document.querySelectorAll('#call-stage .call-tile[data-kind=person] .call-name')].map((n) => n.textContent) }");
+  check('Bob answers and is brought to the conversation, with both of them on the screen', bobSees.view === 'view-dms' && bobSees.tiles.length === 2 && bobSees.tiles.some((n) => /alice/.test(n)) && bobSees.tiles.some((n) => /bob/.test(n)), JSON.stringify(bobSees));
+  const answered = await alice.evaluate("return document.getElementById('call-status').textContent");
+  check('and it no longer says it is ringing: it counts the time', !/Ringing/.test(answered) && /^\d+:\d\d$/.test(answered), answered);
+  await shot(bob, 'call-screen-two');
+
   check('a call has no soundboard', await alice.evaluate("return document.getElementById('voice-soundboard').hidden"), '');
 
   // --- music in the call --------------------------------------------------------------------------------------------
@@ -318,13 +332,20 @@ async function run() {
   await until(alice, "!document.getElementById('voice-music').hidden", { label: 'the button, for the owner, in the call' });
   check('then the owner has the Music Buddy button in a call', true, '');
   check('and Bob, who may not play, does not', await bob.evaluate("return document.getElementById('voice-music').hidden"), '');
-  await click(alice, '#voice-music');
+  await click(alice, '#cs-music');
+  await until(alice, "!document.getElementById('music-pop').hidden", { label: 'the music panel from the call screen' });
+  const popAt = await alice.evaluate(`const pop = document.getElementById('music-pop').getBoundingClientRect(); const b = document.getElementById('cs-music').getBoundingClientRect();
+    return { pop: { l: Math.round(pop.left), t: Math.round(pop.top), b: Math.round(pop.bottom) }, button: { l: Math.round(b.left), t: Math.round(b.top), b: Math.round(b.bottom) } };`);
+  check('the music button on the call screen opens the panel beside itself, not in a corner of the window', popAt.pop.l <= popAt.button.l + 2 && (popAt.pop.b <= popAt.button.t + 2 || popAt.pop.t >= popAt.button.b - 2), JSON.stringify(popAt));
   await alice.evaluate(`${setInput('music-input', 'podcast')} return true;`);
   await alice.evaluate("document.getElementById('music-find').requestSubmit(); return true;");
   await until(alice, "document.querySelectorAll('#music-results .music-result').length === 3", { label: 'the results' });
   await alice.evaluate("document.querySelector('#music-results .music-result .primary').click(); return true;");
   await until(bob, "!document.getElementById('music-strip').hidden", { label: 'the strip, for Bob', timeoutMs: 30_000 });
   await until(alice, "!document.getElementById('music-strip').hidden", { label: 'the strip, for Alice', timeoutMs: 30_000 });
+  const musicOn = await bob.evaluate(`const strip = document.getElementById('music-strip'); const host = document.getElementById('call-music'); const r = host.getBoundingClientRect(); const ctl = document.getElementById('call-controls').getBoundingClientRect();
+    return { inScreen: Boolean(strip.closest('#call-screen')), hostShown: !host.hidden, above: r.bottom <= ctl.top + 1, title: document.getElementById('music-title').textContent, playing: document.getElementById('cs-music').hasAttribute('data-playing') };`);
+  check('what is playing is shown on Bob\'s call screen, above the controls, with its title', musicOn.inScreen && musicOn.hostShown && musicOn.above && /podcast/.test(musicOn.title), JSON.stringify(musicOn));
   check('what Alice adds shows as playing on the call for Bob too', /^podcast 1$/.test((await strip(bob)).title), JSON.stringify(await strip(bob)));
   await until(bob, "document.getElementById('music-audio') && !document.getElementById('music-audio').paused && document.getElementById('music-audio').currentTime > 0.3", { label: 'Bob hearing it', timeoutMs: 30_000 });
   await until(alice, "document.getElementById('music-audio') && !document.getElementById('music-audio').paused && document.getElementById('music-audio').currentTime > 0.3", { label: 'Alice hearing it', timeoutMs: 30_000 });
@@ -346,10 +367,31 @@ async function run() {
   check('somebody not in it sees that there is a call, with a way to join', await carol.evaluate("return [...document.querySelectorAll('#dm-banner button')].some((b) => b.textContent === 'Join the call')"), '');
 
   // Cameras go over the same paths as a channel's.
-  await click(alice, '#voice-cam');
-  await until(alice, "document.getElementById('voice-cam').textContent === 'Stop camera'", { label: 'alice\'s camera', timeoutMs: 40_000 });
-  await until(bob, "document.querySelectorAll('#channel-video .channel-tile').length > 0", { label: 'bob seeing her camera', timeoutMs: 40_000 });
-  check('Alice turns her camera on and Bob sees it', true, '');
+  // From the call screen's own button: it presses the camera's, and follows it.
+  await click(alice, '#cs-camera');
+  await until(alice, "document.getElementById('voice-cam').textContent === 'Stop camera' && document.getElementById('cs-camera').hasAttribute('data-on')", { label: 'alice\'s camera', timeoutMs: 40_000 });
+  await until(bob, "document.querySelectorAll('#call-video-host #channel-video .channel-tile').length > 0 && !document.getElementById('call-video-host').hidden", { label: 'bob seeing her camera on the screen', timeoutMs: 40_000 });
+  const stageOf = await bob.evaluate(`const r = (n) => { const b = n.getBoundingClientRect(); return { t: Math.round(b.top), h: Math.round(b.height), w: Math.round(b.width) }; };
+    const video = document.getElementById('channel-video'); const people = document.getElementById('call-stage'); const tile = video.querySelector('.channel-tile');
+    return { inScreen: Boolean(video.closest('#call-screen')), video: r(video), tile: tile && r(tile), caption: tile?.querySelector('.tile-name')?.textContent, people: r(people), screenStreams: document.getElementById('call-screen').hasAttribute('data-streams'),
+      persons: document.querySelectorAll('#call-stage .call-tile[data-kind=person]').length, outside: document.querySelectorAll('#channel-stage #channel-video').length };`);
+  check('Alice turns her camera on from the screen, and Bob sees it on the voice channel\'s own stage, inside the call screen', stageOf.inScreen && stageOf.tile && /alice/.test(stageOf.caption ?? '') && stageOf.screenStreams && stageOf.outside === 0, JSON.stringify(stageOf));
+  check('with the people as a row under it, and the stage taking the room above', stageOf.persons === 2 && stageOf.people.t >= stageOf.video.t + stageOf.video.h - 2 && stageOf.video.h > 120, JSON.stringify(stageOf));
+  const controlsOf = await bob.evaluate(`const tile = document.querySelector('#call-video-host .channel-tile'); return { roles: [...tile.querySelectorAll('.tile-btn')].map((b) => b.dataset.role), who: tile.querySelector('.tile-name')?.textContent };`);
+  const ownTile = await alice.evaluate(`const tile = document.querySelector('#call-video-host .channel-tile[data-own]'); return { roles: tile ? [...tile.querySelectorAll('.tile-btn')].map((b) => b.dataset.role) : null };`);
+  check('a camera on the call has the controls it has in a voice channel: full screen for others, a preview switch for its owner', controlsOf.roles.includes('fullscreen') && Array.isArray(ownTile.roles) && ownTile.roles.includes('preview'), JSON.stringify({ controlsOf, ownTile }));
+  // Right-click on somebody: how loudly you hear them, and muting them for yourself, as in a voice channel.
+  await bob.evaluate(`const t = document.querySelector('#call-stage .call-tile[data-kind=person]:not([data-own])'); const r = t.getBoundingClientRect();
+    t.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 20 })); return true;`);
+  await until(bob, "!document.getElementById('peer-menu').hidden", { label: 'the menu on her tile' });
+  const menu = await bob.evaluate("return { name: document.getElementById('peer-menu-name').textContent, volume: Boolean(document.querySelector('#peer-menu .peer-volume')), mute: Boolean(document.querySelector('#peer-menu .peer-mute')) }");
+  check('right-clicking somebody on the call shows their menu, with a volume and a mute for you', /alice/.test(menu.name) && menu.volume && menu.mute, JSON.stringify(menu));
+  await bob.evaluate("document.querySelector('#peer-menu .peer-mute').click(); return true;");
+  await until(bob, "document.querySelector('#call-stage .call-tile[data-kind=person]:not([data-own])').hasAttribute('data-local-muted')", { label: 'her tile greyed' });
+  check('muting her for yourself greys her tile', true, '');
+  await bob.evaluate("document.querySelector('#peer-menu .peer-mute').click(); return true;");
+  await until(bob, "!document.querySelector('#call-stage .call-tile[data-kind=person]:not([data-own])').hasAttribute('data-local-muted')", { label: 'her tile back' });
+  await bob.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true;");
   await shot(bob, 'call-camera');
 
   // Carol changes her mind and joins from the conversation.
@@ -431,16 +473,19 @@ async function run() {
   await click(bob, '#dm-call');
   await until(alice, "document.querySelector('#incoming-calls .incoming-call')", { label: 'alice\'s phone ringing again' });
   await click(alice, '#incoming-calls .incoming-call-answer');
-  await until(alice, "!document.getElementById('voice-active').hidden && document.querySelectorAll('#voice-roster li').length === 2", { label: 'alice in the call', timeoutMs: 40_000 });
-  await until(bob, "document.querySelectorAll('#voice-roster li').length === 2", { label: 'bob in the call', timeoutMs: 40_000 });
-  check('a call of two, answered, has both in it', true, '');
+  await until(alice, "!document.getElementById('call-screen').hidden && document.querySelectorAll('#call-stage .call-tile[data-kind=person]').length === 2", { label: 'alice in the call', timeoutMs: 40_000 });
+  await until(bob, "!document.getElementById('call-screen').hidden && document.querySelectorAll('#call-stage .call-tile[data-kind=person]').length === 2", { label: 'bob in the call', timeoutMs: 40_000 });
+  check('a call of two, answered, has both of them on the screen of each', true, '');
   const bar = await bob.evaluate("return document.getElementById('call-bar').hidden");
   check('the call bar stays out of the way on the page with the call', bar === true, String(bar));
-  await click(bob, '#server-rail .rail-home');
-  await until(bob, "document.querySelector('.view[data-active]')?.id === 'view-dms'", { label: 'bob on the private messages' });
-  const shown = await bob.evaluate("return { hidden: document.getElementById('call-bar').hidden, text: document.getElementById('call-bar-return').textContent }");
-  check('but while reading the private messages it shows the call, to get back to it', !shown.hidden && /bob|alice/.test(shown.text) || !shown.hidden, JSON.stringify(shown));
-  await click(bob, '#call-bar-leave');
+  // Away from the conversation, the bar is how to get back to it.
+  await bob.evaluate("document.getElementById('dm-close').click(); return true;");
+  await until(bob, "document.getElementById('call-screen').hidden && !document.getElementById('call-bar').hidden", { label: 'bob off the conversation, with the bar' });
+  check('but off that conversation (in the list, say) the bar shows the call, to get back to it', true, '');
+  await click(bob, '#call-bar-return');
+  await until(bob, "document.querySelector('.view[data-active]')?.id === 'view-dms' && !document.getElementById('call-screen').hidden", { label: 'bob back on his call' });
+  check('and pressing it comes back to the conversation, and its screen', true, '');
+  await click(bob, '#cs-hangup');
   await until(bob, "document.getElementById('voice-active').hidden", { label: 'bob out' });
   await until(alice, "document.getElementById('voice-active').hidden", { label: 'alice sent out with the last one leaving' });
   check('the one left alone is out when the other hangs up', true, '');

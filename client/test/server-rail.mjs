@@ -224,6 +224,14 @@ async function run() {
   await waitFor(page, `!!document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"] .rail-voice')`, { label: 'the speaker on B', timeoutMs: 1500 });
   check('somebody joins a voice channel on a server that is not open: its bubble shows a speaker', await speaker(PORT_B));
   check('and the open server, which shows that itself, has none', !(await speaker(PORT_A)));
+  // Resting on that bubble: the card says who is in its voice channels.
+  const bubbleAt = await page.evaluate(`const r = document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bubbleAt.x, y: bubbleAt.y });
+  await waitFor(page, "!!document.querySelector('.server-card .server-card-faces')", { label: 'the people in voice on the card', timeoutMs: 4000 });
+  const faces = await page.evaluate("return { label: document.querySelector('.server-card-voice-label')?.textContent, who: [...document.querySelectorAll('.server-card-faces .avatar')].map((a) => a.title) }");
+  check('the card over a server with somebody in a voice channel shows their picture', faces.who.length === 1 && faces.who[0] === 'ana' && /voice/i.test(faces.label), JSON.stringify(faces));
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bubbleAt.x + 400, y: bubbleAt.y + 300 });
+  await sleep(300);
   // Opening that server, and putting it away again: the speaker is not there while it is open, and is back at once.
   await page.evaluate(`document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]').click(); return true;`);
   await waitFor(page, `document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]')?.getAttribute('aria-current') === 'true'`, { label: 'opening B', timeoutMs: 20_000 });
@@ -238,6 +246,10 @@ async function run() {
   anaSocket.send(JSON.stringify({ type: 'voice:leave', channelId: voiceId, rid: 'l' }));
   await waitFor(page, `!document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"] .rail-voice')`, { label: 'the speaker going', timeoutMs: 1500 });
   check('and it goes when the channel is empty again', !(await speaker(PORT_B)));
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bubbleAt.x, y: bubbleAt.y });
+  await waitFor(page, "!!document.querySelector('.server-card')", { label: 'the card again', timeoutMs: 4000 });
+  check('and the card has nobody in voice to show', !(await page.evaluate("return !!document.querySelector('.server-card .server-card-voice')")));
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bubbleAt.x + 400, y: bubbleAt.y + 300 });
   anaSocket.close();
 
   await say('anybody here?');

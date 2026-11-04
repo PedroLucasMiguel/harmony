@@ -14,8 +14,14 @@ const GAP = 10;
  * @param {(node: HTMLElement, spec: object) => void} deps.fillBadge  a server's picture, or its initial
  * @param {(hash: string) => string} deps.pictureUrl  where a cached picture is drawn from
  * @param {HTMLElement} deps.root  the rail: it is when this scrolls that the bubble moves from under the card
+ * @param {(url: string, person: {userId: number, nickname: string}) => HTMLElement} [deps.faceFor]  somebody's picture on that server
+ * @param {(key: string, values?: object) => string} [deps.t]
  */
-export function createServerCard({ fillBadge, pictureUrl, root }) {
+export function createServerCard({
+  fillBadge, pictureUrl, root, faceFor = null, t = (key) => key,
+}) {
+  /** How many faces the card shows before "and N more". */
+  const MAX_FACES = 8;
   /** @type {{url: string, button: HTMLElement, card: HTMLElement}|null} */
   let shown = null;
   let waiting = null;
@@ -48,6 +54,31 @@ export function createServerCard({ fillBadge, pictureUrl, root }) {
     row.className = 'server-card-head';
     row.append(face, name);
     card.append(row);
+    // Who is in a voice channel there: their pictures, so a look at the server says whether anybody is about.
+    if (faceFor && info.voicePeople?.length) {
+      const voice = document.createElement('div');
+      voice.className = 'server-card-voice';
+      const label = document.createElement('span');
+      label.className = 'server-card-voice-label';
+      label.textContent = t('rail.card_in_voice');
+      const faces = document.createElement('div');
+      faces.className = 'server-card-faces';
+      const seen = new Set();
+      const people = info.voicePeople.filter((p) => (seen.has(p.userId) ? false : seen.add(p.userId)));
+      for (const person of people.slice(0, MAX_FACES)) {
+        const picture = faceFor(info.url, person);
+        picture.title = person.nickname ?? '';
+        faces.append(picture);
+      }
+      if (people.length > MAX_FACES) {
+        const more = document.createElement('span');
+        more.className = 'server-card-more';
+        more.textContent = `+${people.length - MAX_FACES}`;
+        faces.append(more);
+      }
+      voice.append(label, faces);
+      card.append(voice);
+    }
     return card;
   }
 

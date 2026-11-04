@@ -19,6 +19,10 @@ import { isCallRoom } from './calls-ui.js';
 /** How often a connection nobody is looking at is touched, so an idle session is not swept as abandoned. */
 export const KEEP_ALIVE_MS = 12 * 60 * 60 * 1000;
 
+/** The people in a voice room, as much of them as a card needs. */
+const peopleOf = (roster) => (Array.isArray(roster) ? roster : [])
+  .map((m) => ({ userId: m.userId, nickname: m.nickname }));
+
 /** What the rail needs to know of one background server. */
 export function newSession(url) {
   return {
@@ -33,6 +37,8 @@ export function newSession(url) {
     counts: new Map(),
     /** voice channelId -> how many people are in it (private calls are not channels, and are not here) */
     voice: new Map(),
+    /** voice channelId -> who is in it ({userId, nickname}), the same channels */
+    rosters: new Map(),
   };
 }
 
@@ -55,6 +61,9 @@ export function applyHello(session, hello) {
   session.voice = new Map(Object.entries(hello.occupancy ?? {})
     .map(([id, count]) => [Number(id), Number(count)])
     .filter(([id, count]) => !isCallRoom(id) && count > 0));
+  session.rosters = new Map(Object.entries(hello.rosters ?? {})
+    .map(([id, roster]) => [Number(id), peopleOf(roster)])
+    .filter(([id, people]) => !isCallRoom(id) && people.length > 0));
   session.counts = new Map();
   for (const entry of hello.unread ?? []) {
     session.counts.set(entry.channelId, { unread: entry.unread, mentions: entry.mentions });
@@ -203,9 +212,14 @@ export function createBackgroundSessions({
         break;
       case 'voice:roster':
         if (!isCallRoom(msg.channelId)) {
-          const count = msg.roster?.length ?? 0;
-          if (count > 0) session.voice.set(msg.channelId, count);
-          else session.voice.delete(msg.channelId);
+          const people = peopleOf(msg.roster);
+          if (people.length > 0) {
+            session.voice.set(msg.channelId, people.length);
+            session.rosters.set(msg.channelId, people);
+          } else {
+            session.voice.delete(msg.channelId);
+            session.rosters.delete(msg.channelId);
+          }
         }
         // Falls out to onChange below: the bubble hears of it with the push itself, not at the rail's next redraw.
         break;
@@ -265,6 +279,11 @@ export function createBackgroundSessions({
     userOf: (url) => find(url)?.user ?? null,
     /** The servers with a connection that is up, by address: where a message to the server can go. */
     urls: () => [...sessions.values()].filter((s) => s.status === 'up').map((s) => s.url),
+    /** Who is in the voice channels of a server kept live, by channel: [{channelId, userId, nickname}]. */
+    voiceMembers(url) {
+      const session = find(url);
+      return session ? [...session.rosters].flatMap(([channelId, people]) => people.map((p) => ({ channelId, ...p }))) : [];
+    },
     /** What the rail shows of one server, or null if it is not kept live. */
     summary(url) {
       const session = find(url);

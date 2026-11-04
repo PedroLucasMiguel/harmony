@@ -12509,3 +12509,279 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
   width: 14px;
   height: 14px;
 }
+
+/* ---------- the call, over a private conversation ---------- */
+
+.call-screen {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: clamp(17rem, 52%, 34rem);
+  min-height: 0;
+  background: #0b0c0f;
+  border-bottom: 1px solid var(--border);
+  color: #fff;
+}
+.call-screen[hidden] {
+  display: none;
+}
+.call-screen[data-streams] {
+  height: clamp(22rem, 64%, 44rem);
+}
+.call-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  padding: 0.55rem 1rem 0;
+  font-size: calc(0.95rem * var(--text-scale, 1));
+}
+.call-status {
+  color: var(--live);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85em;
+}
+.call-status[data-ringing] {
+  color: rgb(255 255 255 / 0.6);
+}
+.call-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.6rem 1rem;
+  justify-content: center;
+  align-content: center;
+  overflow-y: auto;
+}
+/* Everybody the same size, as many to a row as fit; one or two are not stretched across the screen. */
+.call-stage > .call-tile {
+  flex: 1 1 11rem;
+  min-width: 0;
+  max-width: 20rem;
+}
+.call-stage[data-count='1'] > .call-tile {
+  max-width: 28rem;
+}
+/* Everybody the same size, as many to a row as fit; one or two are not stretched across the screen. */
+.call-tile {
+  position: relative;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  min-width: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #1a1c21;
+  cursor: pointer;
+  box-shadow: 0 0 0 0 var(--live);
+  transition: box-shadow 90ms ease-out;
+}
+.call-tile[data-speaking] {
+  box-shadow: 0 0 0 3px var(--live);
+}
+.call-face .avatar.call-avatar {
+  width: 4.6em;
+  height: 4.6em;
+  font-size: 1.3rem;
+  zoom: 1;
+}
+.call-caption {
+  position: absolute;
+  left: 0.5rem;
+  bottom: 0.45rem;
+  max-width: calc(100% - 1rem);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.12rem 0.5rem;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.6);
+  font-size: calc(0.82rem * var(--text-scale, 1));
+}
+.call-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-flags {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+.call-flags[hidden] {
+  display: none;
+}
+.call-controls {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.2rem 1rem 0.75rem;
+}
+.call-btn {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #23262d;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.12s, border-radius 0.12s;
+}
+.call-btn[hidden] {
+  display: none;
+}
+.call-btn[data-icon]::before {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+.call-btn:hover:not(:disabled) {
+  background: #30343d;
+}
+.call-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* On: a camera or a share running, music playing -- and, for the microphone and the headphones, off. */
+.call-btn[data-on],
+.call-btn[data-playing] {
+  background: #fff;
+  color: #111;
+}
+#cs-mute[data-on],
+#cs-deafen[data-on] {
+  background: #fff;
+  color: #d83c3e;
+}
+#cs-deafen[data-on] {
+  position: relative;
+}
+#cs-deafen[data-on]::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  border-top: 2px solid currentColor;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.6);
+  transform: translate(-50%, -50%) rotate(45deg);
+  pointer-events: none;
+}
+.call-hangup {
+  background: #e0454a;
+  width: 3.6rem;
+  border-radius: 999px;
+}
+.call-hangup:hover:not(:disabled) {
+  background: #c93a3f;
+}
+/* The conversation under it takes what is left. */
+#view-dms #dm-active > .call-screen ~ #dm-log {
+  min-height: 6rem;
+}
+
+/* Cameras and shares: a voice channel's stage, in the room that is left over, with the people as a row under it. */
+.call-video-host {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0.4rem 1rem 0;
+}
+.call-video-host[hidden],
+.call-music[hidden] {
+  display: none;
+}
+.call-video-host > .channel-video {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+.call-screen[data-streams] .call-stage {
+  flex: none;
+  flex-wrap: nowrap;
+  justify-content: center;
+  overflow-x: auto;
+  padding-top: 0.4rem;
+}
+.call-screen[data-streams] .call-stage > .call-tile {
+  flex: 0 0 8.5rem;
+  max-width: none;
+}
+.call-screen[data-streams] .call-face .avatar.call-avatar {
+  font-size: 0.6rem;
+}
+/* What is playing, along the foot of the screen: its cover, title, progress and volume, in a strip of its own. */
+.call-music {
+  flex: none;
+  padding: 0 1rem 0.4rem;
+}
+.call-music > .music-strip {
+  max-width: 28rem;
+  margin: 0 auto;
+}
+
+.call-tile[data-local-muted] .call-face {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+/* A phone: tiles smaller and two to a row, so the controls and the conversation are not pushed off the screen. */
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
+  .call-screen {
+    height: clamp(15rem, 46%, 26rem);
+  }
+  .call-stage > .call-tile {
+    flex: 1 1 8rem;
+    max-width: 12rem;
+    aspect-ratio: 4 / 3;
+  }
+  .call-stage[data-count='1'] > .call-tile {
+    max-width: 14rem;
+  }
+  .call-face .avatar.call-avatar {
+    font-size: 0.95rem;
+  }
+}
+
+/* The card over a server: who is in its voice channels. */
+.server-card-voice {
+  padding: 0 0.9rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.server-card[data-banner] .server-card-voice {
+  padding-top: 0;
+}
+.server-card-voice-label {
+  font-size: calc(0.72rem * var(--text-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.server-card-faces {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+.server-card-faces .avatar.tiny {
+  width: 2.2em;
+  height: 2.2em;
+  font-size: 0.7em;
+  margin: 0;
+  vertical-align: baseline;
+}
+.server-card-more {
+  font-size: calc(0.8rem * var(--text-scale, 1));
+  color: var(--muted);
+}

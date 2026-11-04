@@ -1777,4 +1777,10 @@ export default {
   'app.forum_channel': "Canal de fórum",
   'forum.resize_list': "Redimensionar a lista de postagens",
   'server.banner_unsupported': "Este servidor usa uma versão antiga que não consegue guardar um banner. Atualize o servidor e tente de novo. O resto foi salvo.",
+  'call.screen': "Chamada",
+  'call.leave': "Sair da chamada",
+  'call.screen_yours': "Sua tela",
+  'call.screen_of': "Tela de {name}",
+  'call.screen_sharing': "Você está compartilhando sua tela",
+  'rail.card_in_voice': "Em voz",
 };

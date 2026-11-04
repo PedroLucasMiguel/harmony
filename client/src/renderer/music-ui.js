@@ -409,7 +409,7 @@ export function createMusicUi(config) {
    * whenever what is in the panel changes (results arrive, the queue grows), because its height is what decides where
    * it can go; placed once on opening it ran off the bottom of the window as soon as there was something in it.
    */
-  function placePop(anchorEl = button.hidden ? $('music-open') : button) {
+  function placePop(anchorEl = config.anchor?.() ?? (button.hidden ? $('music-open') : button)) {
     // A phone: a sheet along the bottom, drawn by the stylesheet (styles.css, "A phone"), not placed beside a button.
     if (window.matchMedia(PHONE).matches) {
       for (const property of ['left', 'top', 'max-height']) pop.style.removeProperty(property);
@@ -438,6 +438,8 @@ export function createMusicUi(config) {
   document.addEventListener('pointerdown', (event) => {
     if (pop.hidden) return;
     if (pop.contains(event.target) || button.contains(event.target) || $('music-open').contains(event.target)) return;
+    // Its button on the call screen opens it too.
+    if (event.target.closest?.('[data-music-opener]')) return;
     close();
   }, true);
 

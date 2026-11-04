@@ -1787,4 +1787,10 @@ export default {
   'app.forum_channel': "Forum channel",
   'forum.resize_list': "Resize the list of posts",
   'server.banner_unsupported': "This server is running an older version that cannot keep a banner. Update the server, then try again. The rest was saved.",
+  'call.screen': "Call",
+  'call.leave': "Leave the call",
+  'call.screen_yours': "Your screen",
+  'call.screen_of': "{name}'s screen",
+  'call.screen_sharing': "You are sharing your screen",
+  'rail.card_in_voice': "In voice",
 };

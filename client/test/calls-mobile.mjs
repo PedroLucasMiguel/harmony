@@ -232,17 +232,16 @@ async function run() {
   await shot(bob, 'm-call');
   const page = await fits(bob, '#views');
   check('the page of the call fits the phone', page.ok && !page.overflow, JSON.stringify(page));
-  const where = await bob.evaluate(`return { view: document.querySelector('.view[data-active]')?.id,
-    controls: ['voice-mute', 'voice-leave', 'voice-cam'].map((id) => { const e = document.getElementById(id); if (!e) return [id, null]; const r = e.getBoundingClientRect(); return [id, r.width > 0 && r.right <= innerWidth && r.bottom <= innerHeight, Math.round(r.height)]; }) }`);
-  check('and its controls can be reached on the screen', where.controls.every((c) => c[1]), JSON.stringify(where));
+  const where = await bob.evaluate(`return { view: document.querySelector('.view[data-active]')?.id, screen: !document.getElementById('call-screen').hidden,
+    controls: ['cs-mute', 'cs-deafen', 'cs-camera', 'cs-screen', 'cs-hangup'].map((id) => { const e = document.getElementById(id); if (!e) return [id, null]; const r = e.getBoundingClientRect(); return [id, r.width > 0 && r.right <= innerWidth && r.bottom <= innerHeight, Math.round(r.height)]; }) }`);
+  check('the call is on its screen over the conversation, and its controls can be reached', where.view === 'view-dms' && where.screen && where.controls.every((c) => c[1]), JSON.stringify(where));
+  check('each big enough to press', where.controls.every((c) => c[2] >= 40), JSON.stringify(where));
 
   // --- reading the private messages in the call
-  await alice.evaluate("return true;");
-  await bob.evaluate("document.querySelector('#server-rail .rail-home')?.click(); return true;");
-  await sleep(1200);
+  await sleep(500);
   await shot(bob, 'm-dm-with-call');
-  const bar = await bob.evaluate("const b = document.getElementById('call-bar'); const r = b.getBoundingClientRect(); return { hidden: b.hidden, right: Math.round(r.right), w: innerWidth, h: Math.round(r.height), buttons: [...b.querySelectorAll('.call-button')].map((x) => Math.round(x.getBoundingClientRect().width)) }");
-  check('the call bar is on the screen over the private messages, with its buttons', !bar.hidden && bar.right <= bar.w + 1 && bar.buttons.length === 3 && bar.buttons.every((w) => w > 0), JSON.stringify(bar));
+  const fitsScreen = await fits(bob, '#call-screen');
+  check('the call screen fits the phone', fitsScreen.ok && !fitsScreen.overflow, JSON.stringify(fitsScreen));
   const rail = await bob.evaluate("const r = document.getElementById('server-rail'); return { hidden: r.hidden, w: Math.round(r.getBoundingClientRect().width), h: Math.round(r.getBoundingClientRect().height) }");
   console.log('  (rail)', JSON.stringify(rail));
 
@@ -259,7 +258,7 @@ async function run() {
   check('the conversation does not scroll sideways', !cb.overflow, JSON.stringify(cb));
 
   // --- from the phone: calling
-  await click(bob, '#call-bar-leave');
+  await click(bob, '#cs-hangup');
   await until(bob, "document.getElementById('voice-active').hidden", { label: 'bob out' });
   await bob.evaluate("document.querySelector('#server-rail .rail-home')?.click(); return true;").catch(() => {});
   await sleep(800);
@@ -274,8 +273,8 @@ async function run() {
   await until(bob, "!document.getElementById('voice-active').hidden", { label: 'bob calling', timeoutMs: 40_000 });
   await sleep(800);
   await shot(bob, 'm-calling');
-  const calling = await bob.evaluate("return { name: document.getElementById('voice-name').textContent, view: document.querySelector('.view[data-active]')?.id }");
-  check('calling from the phone brings the call forward', calling.view === 'view-channels' && /Ringing/.test(calling.name), JSON.stringify(calling));
+  const calling = await bob.evaluate("return { status: document.getElementById('call-status').textContent, screen: !document.getElementById('call-screen').hidden, view: document.querySelector('.view[data-active]')?.id }");
+  check('calling from the phone puts the call on its screen, ringing, over the conversation', calling.view === 'view-dms' && calling.screen && /Ringing/.test(calling.status), JSON.stringify(calling));
   const again = await fits(bob, '#views');
   check('and fits', again.ok && !again.overflow, JSON.stringify(again));
 }

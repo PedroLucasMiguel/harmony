@@ -1138,6 +1138,30 @@
               <button class="ghost small icon-only" id="dm-close" data-icon="x"
                       title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
             </header>
+            <!--
+              The call, when you are in one with this conversation: everybody in it, a screen share as the big picture, and
+              the controls. Drawn by call-screen.js; its buttons press the voice machinery's own.
+            -->
+            <section class="call-screen" id="call-screen" hidden aria-label="Call" data-i18n-aria-label="call.screen">
+              <header class="call-head">
+                <strong id="call-title"></strong>
+                <span class="call-status" id="call-status"></span>
+              </header>
+              <!-- Cameras and screen shares: the voice channel's own stage (#channel-video) is shown here while the call is. -->
+              <div class="call-video-host" id="call-video-host" hidden></div>
+              <div class="call-stage" id="call-stage"></div>
+              <!-- What is playing: the voice panel's strip (#music-strip) is shown here while the call is. -->
+              <div class="call-music" id="call-music" hidden></div>
+              <div class="call-controls" id="call-controls">
+                <button type="button" class="call-btn" id="cs-camera" data-icon="video-camera"></button>
+                <button type="button" class="call-btn" id="cs-screen" data-icon="screencast"></button>
+                <button type="button" class="call-btn" id="cs-music" data-icon="playlist" hidden></button>
+                <button type="button" class="call-btn" id="cs-mute" data-icon="microphone"></button>
+                <button type="button" class="call-btn" id="cs-deafen" data-icon="headphones"></button>
+                <button type="button" class="call-btn call-hangup" id="cs-hangup" data-icon="phone-disconnect"
+                        title="Leave the call" aria-label="Leave the call" data-i18n-title="call.leave" data-i18n-aria-label="call.leave"></button>
+              </div>
+            </section>
             <div id="dm-banner" class="dm-banner" hidden></div>
             <!-- The message pinned last; all of them are behind the pin in the header. See pins-ui.js. -->
             <div id="dm-pinned" class="pinned-strip" hidden></div>

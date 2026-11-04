@@ -412,6 +412,17 @@ export function createDmUi(deps) {
   const isOpen = () => currentId !== null;
 
   /** Closes the conversation on the stage, if there is one. */
+  /** The conversation on screen, or null: which server it is on and its id. */
+  function current() {
+    return home && currentId !== null && !el.active.hidden ? { server: home.server, key: home.key, id: currentId } : null;
+  }
+
+  /** Open a conversation of a server, whichever it is on (what a call that was answered comes back to). */
+  async function show(server, id) {
+    const from = homeOf(server);
+    if (from) await openConversation(id, from);
+  }
+
   function closeConversation() {
     if (currentId === null) return;
     setEditing(null);
@@ -428,6 +439,7 @@ export function createDmUi(deps) {
     syncPane();
     closeMenu();
     applyStage();
+    deps.onCallView?.();
   }
 
   // ------------------------------------------------------------------ render
@@ -952,6 +964,8 @@ export function createDmUi(deps) {
     el.call.setAttribute('aria-label', el.call.title);
     el.call.dataset.icon = going && !here ? 'phone-call' : 'phone';
     el.call.disabled = !session.ready;
+    // The call on the page, if it is this conversation's.
+    deps.onCallView?.();
   }
 
   /** What stands over the conversation: a changed key, a block, a person who has not set up yet. */
@@ -1976,7 +1990,8 @@ export function createDmUi(deps) {
   });
   el.call?.addEventListener('click', () => {
     const c = session?.conversations.get(currentId);
-    if (c) deps.calls?.start(home, c);
+    // In it already: the screen is right here, and pressing again is not another call.
+    if (c && !deps.calls?.mineIs(home.key, c.id)) deps.calls?.start(home, c);
   });
   el.safety.addEventListener('click', () => {
     const c = session?.conversations.get(currentId);
@@ -2472,6 +2487,7 @@ export function createDmUi(deps) {
 
   return {
     start, startBackground, stop, release, openWith, handleEvent, closeConversation, isOpen, togglePanel,
+    current, show,
     render, refreshAll,
     acceptsFiles, showDrop, dropFiles, bodyOf,
     get session() { return session; },

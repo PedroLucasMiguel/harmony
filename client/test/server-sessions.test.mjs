@@ -84,6 +84,22 @@ describe('voice channels, for the bubble', () => {
     sessions.stopAll();
   });
 
+  it('say who is in them, from the hello and the rosters after it', async () => {
+    const harmony = fakeHarmony();
+    const sessions = createBackgroundSessions({ harmony, onChange: () => {} });
+    const started = sessions.start({ url: 'v.test', token: 't' });
+    await new Promise((r) => setImmediate(r));
+    harmony.answer('v.test', { ...hello(), occupancy: { 4: 1 }, rosters: { 4: [{ userId: 9, nickname: 'ana', mid: 1 }], 100_000_001: [{ userId: 3, nickname: 'x' }] } });
+    await started;
+    assert.deepEqual(sessions.voiceMembers('v.test'), [{ channelId: 4, userId: 9, nickname: 'ana' }]);
+    sessions.handleEvent({ type: 'voice:roster', server: 'http://v.test', channelId: 5, roster: [{ userId: 2, nickname: 'bo' }] });
+    assert.equal(sessions.voiceMembers('v.test').length, 2);
+    sessions.handleEvent({ type: 'voice:roster', server: 'http://v.test', channelId: 4, roster: [] });
+    assert.deepEqual(sessions.voiceMembers('v.test').map((m) => m.nickname), ['bo']);
+    assert.deepEqual(sessions.voiceMembers('nowhere.test'), []);
+    sessions.stopAll();
+  });
+
   it('do not count a private call: it is not a channel, and not the server\'s', async () => {
     const sessions = await live({ 100_000_007: 2 });
     assert.equal(sessions.summary('v.test').voice, false);

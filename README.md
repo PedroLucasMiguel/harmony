@@ -56,6 +56,11 @@ A [five-minute tour](media/harmony-demo.mp4) of everything below, recorded from 
 - **#channel links**: write `#release-notes` in a message to point at a channel (its name in lower case, spaces as
   dashes); pressed, it opens that text channel or forum. Typing `#` offers the channels to complete, as `@` does for
   people. A `#word` that is no channel you can see stays plain text.
+- **Private calls, on a screen of their own**: a call stays on its conversation, over the messages: a tile for each
+  person (a ring when they talk, their camera's picture on the stage), the voice channel's own stage for cameras and
+  screen shares (the same controls: full screen, volume, a preview of your own), what Music Buddy is playing, and one
+  bar of controls -- camera, screen, music, microphone, headphones, hang up. Right-click somebody for how loudly you
+  hear them and to mute them for yourself.
 - **Profiles from the private messages**: click somebody's picture or name in a conversation (or the heading) to see
   their profile on the server the conversation is on -- banner, badges and roles of that server, with its name on the
   card -- whichever server is open. Read-only, and with no status. The same from a group, on a member's picture or

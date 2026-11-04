@@ -31,6 +31,7 @@ const count = (n) => (n > 99 ? '99+' : String(n));
  * @param {(key: string, params?: object) => string} deps.t
  * @param {(node: HTMLElement, spec: object) => void} deps.fillBadge  a server's picture, or its initial
  * @param {(hash: string) => string} [deps.pictureUrl]  where a cached picture (a banner) is drawn from
+ * @param {(url: string, person: object) => HTMLElement} [deps.faceFor]  somebody's picture on a server, for its card
  * @param {(url: string) => void} deps.onSelect  a server was chosen
  * @param {() => void} deps.onHome  private messages were chosen
  * @param {() => void} deps.onAdd  the "+" was pressed
@@ -38,10 +39,12 @@ const count = (n) => (n > 99 ? '99+' : String(n));
  * @param {(from: string, to: string, after: boolean) => void} [deps.onMove]  a server was dragged to a new place
  */
 export function createServerRail({
-  root, t, fillBadge, pictureUrl = () => '', onSelect, onHome, onAdd, onMenu = () => {}, onMove = () => {},
+  root, t, fillBadge, pictureUrl = () => '', faceFor = null, onSelect, onHome, onAdd, onMenu = () => {}, onMove = () => {},
 }) {
   // What is shown when the pointer rests on a server, in place of the browser's own tooltip.
-  const card = createServerCard({ fillBadge, pictureUrl, root });
+  const card = createServerCard({
+    fillBadge, pictureUrl, root, faceFor, t,
+  });
   /** The server being dragged, by address. */
   let dragging = null;
 
@@ -121,7 +124,9 @@ export function createServerRail({
         button.append(lock);
       }
       button.addEventListener('click', () => onSelect(server.url));
-      const info = { url: server.url, name: server.name, logo: server.logo, banner: server.banner ?? null };
+      const info = {
+        url: server.url, name: server.name, logo: server.logo, banner: server.banner ?? null, voicePeople: server.voicePeople ?? [],
+      };
       card.attach(button, info);
       cards.set(server.url, { button, info });
       button.addEventListener('contextmenu', (event) => {

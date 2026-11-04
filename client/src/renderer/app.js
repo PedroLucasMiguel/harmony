@@ -18,6 +18,7 @@ import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
 import { createCalls, isCallRoom } from './calls-ui.js';
+import { createCallScreen } from './call-screen.js';
 import { createTyping } from './typing-ui.js';
 import { messageTime } from './message-time.js';
 import { createPollUi } from './poll-ui.js';
@@ -1683,6 +1684,23 @@ const RAIL_HIDDEN_VIEWS = new Set(['view-broadcast', 'view-watch', 'view-mosaic'
 
 let serverRail = null;
 
+/** Who is in the open server's voice channels (private calls are not channels, and are not here). */
+function ownVoicePeople() {
+  return Object.entries(state.channels.rosters ?? {})
+    .filter(([id]) => !isCallRoom(Number(id)))
+    .flatMap(([channelId, roster]) => (roster ?? []).map((m) => ({ channelId: Number(channelId), userId: m.userId, nickname: m.nickname })));
+}
+
+/** A person's picture for a server's card: drawn from that server's own people, which are not the open server's. */
+function cardFace(url, person) {
+  const key = serverKey(url);
+  const people = key === openServerKey() ? state.users : backgroundUsers.get(key);
+  return inServer(
+    { users: () => people ?? new Map(), server: url },
+    () => avatarEl(faceOf(person.userId, person.nickname), 'tiny'),
+  );
+}
+
 function renderServerRail() {
   if (!el.serverRail) return;
   renderCallBar();
@@ -1697,6 +1715,7 @@ function renderServerRail() {
     t,
     fillBadge: fillServerBadge,
     pictureUrl: logoUrl,
+    faceFor: cardFace,
     onSelect: (url) => resumeServer(url),
     onHome: () => openPrivateMessages(),
     onAdd: () => addServerFromRail(),
@@ -1730,6 +1749,9 @@ function renderServerRail() {
         mentions: live?.mentions ?? 0,
         // The server's own connection once it is up; until then (just put away, or still connecting) what was seen.
         voice: live?.status === 'up' ? live.voice : Boolean(voiceSeen.get(key) ?? live?.voice),
+        // Their pictures on the card over the bubble: from this client's own lists for the open server, from the
+        // connection kept behind it for another.
+        voicePeople: key === open ? ownVoicePeople() : backgrounds.voiceMembers(p.url),
         inCall: Boolean(state.voice.channelId && state.voiceServer && serverKey(state.voiceServer) === key),
       };
     }),
@@ -1876,6 +1898,7 @@ function voiceBackgroundEvent(msg) {
     case 'voice:roster':
       if (msg.channelId !== state.voice.channelId) break;
       state.voiceCtx.roster = msg.roster;
+      syncCallScreen();
       state.voice.syncPeers(msg.roster).catch(() => { /* retried next push */ });
       state.voice.syncVideo(msg.roster).catch(() => { /* the reconcile timer comes back */ });
       break;
@@ -1913,7 +1936,8 @@ function voiceBackgroundEvent(msg) {
 function renderCallBar() {
   const ctx = state.voiceCtx;
   // On another server, or on this one but looking at the private messages, where the call's controls are not.
-  const show = Boolean(state.voice.channelId && ctx && (!voiceHere() || activeViewId() === 'view-dms'));
+  // Not over the conversation the call is in: its own screen has the controls.
+  const show = Boolean(state.voice.channelId && ctx && (!voiceHere() || activeViewId() === 'view-dms') && !callScreen?.visible);
   el.callBar.hidden = !show;
   if (!show) return;
   const server = serverNames.get(serverKey(ctx.server)) || ctx.serverName || serverHost(ctx.server);
@@ -1930,7 +1954,15 @@ function renderCallBar() {
 }
 
 el.callBarReturn.addEventListener('click', () => {
-  if (state.voiceCtx) resumeServer(state.voiceCtx.server);
+  const ctx = state.voiceCtx;
+  if (!ctx) return;
+  // A private call comes back to its conversation, where its screen is.
+  if (ctx.call && dmUi) {
+    showDmView({ refresh: false });
+    dmUi.show(ctx.server, ctx.call.conversationId);
+    return;
+  }
+  resumeServer(ctx.server);
 });
 // The same controls as the strip at the bottom of the channel list: one set of behaviour.
 el.callBarMute.addEventListener('click', () => el.voiceMute.click());
@@ -3154,6 +3186,8 @@ function inServer(home, fn) {
  * every use here asks with `?.`.
  */
 let dmUi = null;
+/** The call on the page over a private conversation (call-screen.js): made once the page has what it draws from. */
+let callScreen = null;
 /** Private calls: who is ringing, and which conversations have a call (calls-ui.js). Made with the private messages. */
 let callsCtl = null;
 
@@ -5638,9 +5672,8 @@ async function joinVoice(channel, password, { cued = false, call = null } = {}) 
     // voice channel is the only way back from a text channel, so leaving the
     // chat up here would make the stage a one-way door again.
     closeChat();
-    // The call's pictures and controls are on the page with the channels; a call begun from the private messages
-    // brings that page forward, and the conversation stays one press away on the rail.
-    if (call && activeViewId() === 'view-dms') showView('view-channels');
+    // A call's pictures and controls are on the call screen over its conversation (call-screen.js), which is where a
+    // call begun from the private messages stays; startPrivateCall brings it forward when it was answered elsewhere.
 
     el.voiceName.textContent = channel.name;
     el.voiceIdle.hidden = true;
@@ -5937,6 +5970,7 @@ async function leaveVoice({ silent = false, quiet = false } = {}) {
   state.voiceCtx = null;
   callsCtl?.setMine(null, null);
   state.channels.roster = [];
+  syncCallScreen();
   // The music is the call's: it stops with it.
   musicPlayer?.stop();
   musicUi?.reset();
@@ -6343,6 +6377,7 @@ function openPeerMenu(channelId, mid, event) {
       if (!now && state.voice.peerGain(userId) === 0) state.voice.setPeerGain(userId, 1);
       paint();
       renderVoiceRoster(state.channels.roster);
+      syncCallScreen();
     });
     volume.addEventListener('input', () => {
       const percent = Number(volume.value);
@@ -6592,6 +6627,7 @@ function renderVoiceRoster(roster) {
   // An open menu follows the person it was opened on. Leaving it showing a
   // force-mute for somebody who has left is how an admin mutes a stranger.
   if (peerMenuOpen && !roster.some((m) => m.mid === peerMenuOpen.mid)) closePeerMenu();
+  syncCallScreen();
 }
 
 /**
@@ -6606,6 +6642,7 @@ function renderSpeaking() {
   if (!state.voice.channelId) return;
   const speaking = state.voice.speakingMids();
   if (speaking.has(state.voice.mid)) selfSpokeAt = performance.now();
+  callScreen?.renderSpeaking(speaking);
   syncVoiceTray();
   // The rest is drawn from the server on screen: a call on another has no roster here.
   if (!voiceHere()) return;
@@ -8831,6 +8868,7 @@ function renderChannelVideo() {
   // After the children exist, not before: applyStage counts them to decide
   // whether there is a stage at all.
   applyStage();
+  syncCallScreen();
 }
 
 // ---------------------------------------------------------------------------
@@ -12625,6 +12663,8 @@ function initMusic() {
     // Who may play: the permission, and the owner's switch -- and only on the server the call is on.
     // The same in a private call as in a channel: the owner's switch, and the permission.
     canControl: () => voiceHere() && serverInfo.musicEnabled === true && can('music.control'),
+    // Beside whichever button is on screen: the call screen's, over a private conversation.
+    anchor: () => (callScreen?.visible ? callScreen.musicAnchor : null),
     view: () => musicPlayer.view(),
     position: () => musicPlayer.positionMs(),
     channelId: () => (voiceHere() ? state.voice.channelId : null),
@@ -16306,6 +16346,11 @@ async function startPrivateCall(server, conversation, { join = false } = {}) {
       conversationId: conversation.id, join, title, group: conversation.kind === 'group',
     },
   });
+  // In it: its screen is over the conversation, which is where to be (a ring answered from elsewhere comes here).
+  if (state.voiceCtx?.call?.conversationId === conversation.id && dmUi) {
+    showDmView({ refresh: false });
+    await dmUi.show(server, conversation.id);
+  }
 }
 
 callsCtl = createCalls({
@@ -16326,7 +16371,7 @@ callsCtl = createCalls({
   changed: () => {
     dmUi?.render();
     syncCallHeader();
-    renderCallBar();
+    syncCallScreen();
   },
   hangUp: () => {
     // Over, or you were taken out of its group: the server has already let go of you.
@@ -16370,7 +16415,59 @@ dmUi = createDmUi({
   serverName: serverLabel,
   listDocked: () => document.querySelector('.view[data-active]')?.id === 'view-dms',
   showConversation: () => showDmView({ refresh: false }),
+  // A conversation was opened, changed or put away: its call screen follows.
+  onCallView: () => syncCallScreen(),
 });
+
+/*
+ * The call screen over a private conversation (call-screen.js): what there is to draw, from the voice machinery's own
+ * state. Null -- hidden -- unless the page is a conversation, and the call you are in is its.
+ */
+function callScreenView() {
+  const ctx = state.voiceCtx;
+  const open = dmUi?.current();
+  if (!ctx?.call || !state.voice.channelId || !open || activeViewId() !== 'view-dms') return null;
+  if (serverKey(ctx.server) !== open.key || ctx.call.conversationId !== open.id) return null;
+  const going = callsCtl?.stateOf(ctx.server, ctx.call.conversationId);
+  const here = voiceHere();
+  const streams = here
+    ? [
+      ...ownChannelTiles().map((s) => ({ key: `me:${s.kind}`, mid: s.mid, kind: s.kind, stream: s.stream, own: true })),
+      ...state.voice.videoTiles.map((s) => ({ key: s.key, mid: s.mid, kind: s.kind, stream: s.stream, own: false })),
+    ]
+    : [];
+  return {
+    title: ctx.channelName,
+    since: going?.answeredAt ?? null,
+    ringing: Boolean(going && going.answeredAt === null && going.participants.length <= 1),
+    connected: ctx.connected !== false,
+    meMid: state.voice.mid,
+    roster: here ? state.channels.roster : (ctx.roster ?? []),
+    streams,
+    speaking: state.voice.speakingMids(),
+  };
+}
+
+callScreen = createCallScreen({
+  t,
+  avatarEl,
+  faceOf,
+  displayOf,
+  renderStatus,
+  view: callScreenView,
+  hangUp: () => leaveVoice(),
+  peerMenu: (mid, event) => openPeerMenu(state.voice.channelId, mid, event),
+  peerMuted: (userId) => state.voice.peerMuted(userId),
+});
+
+// Debugging and tests: what the call screen draws, and a way to hand it something else to draw.
+window.__harmonyCallScreen = { render: (view) => callScreen?.render(view) };
+
+/** Draw the call screen again (and the bar that stands in for it when it is not on screen). */
+function syncCallScreen() {
+  callScreen?.render();
+  renderCallBar();
+}
 
 securityUi = createSecurityUi({
   harmony,
