@@ -28,6 +28,9 @@ import { keepEnd } from './chat-follow.js';
 import { expiring } from './expiring.js';
 import { firstLink, linkEmbed } from './link-embed.js';
 
+/** How many people a group holds, as the server limits it (and as a call can carry). */
+const MAX_GROUP = 16;
+
 /** How close together two messages from the same person stay one block. */
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
@@ -40,12 +43,23 @@ const JUMP_MAX_PAGES = 200;
 /** How long the log stays at its end while what is in it (a picture, a link's card) arrives and grows. */
 const HOLD_MS = 4000;
 
-/** The message from `session` for a `code` the page can say in its own words. */
-function words(t, error) {
+/**
+ * The message from `session` for a `code` the page can say in its own words. `nameOf` says who an error that is
+ * about somebody in a group is about.
+ */
+function words(t, error, nameOf = () => '') {
+  const who = error?.userId != null ? nameOf(error.userId) : '';
   switch (error?.code) {
     case 'no_key': return t('dm.error.no_key');
-    case 'peer_has_no_key': return t('dm.error.peer_has_no_key');
-    case 'key_not_confirmed': return t('dm.error.key_not_confirmed');
+    case 'peer_has_no_key': return who ? t('dm.error.member_no_key', { name: who }) : t('dm.error.peer_has_no_key');
+    case 'key_not_confirmed': return who ? t('dm.error.member_key_not_confirmed', { name: who }) : t('dm.error.key_not_confirmed');
+    case 'forbidden': return t('dm.error.forbidden');
+    case 'bad_title': return t('dm.error.bad_title');
+    case 'too_few': return t('dm.error.too_few');
+    case 'too_many': return t('dm.error.too_many');
+    case 'already_members': return t('dm.error.already_members');
+    case 'not_a_member': return t('dm.error.not_a_member');
+    case 'no_such_user': return t('dm.error.no_such_user');
     case 'blocked': return t('dm.error.blocked');
     case 'too_long': return t('dm.error.too_long', { max: MAX_BODY });
     case 'file_too_large': return t('dm.error.file_too_large');
@@ -62,7 +76,7 @@ function words(t, error) {
 export function createDmUi(deps) {
   const {
     state, harmony, t, stars,
-    openEmojiPicker, closeEmojiPicker, askConfirm, formatBytes, playCue, applyStage,
+    openEmojiPicker, closeEmojiPicker, ask, askConfirm, formatBytes, playCue, applyStage,
     closeChat, showError,
   } = deps;
 
@@ -78,7 +92,12 @@ export function createDmUi(deps) {
     headAvatar: $('dm-head-avatar'),
     name: $('dm-name'),
     verified: $('dm-verified'),
+    count: $('dm-count'),
+    lock: $('dm-lock'),
     safety: $('dm-safety'),
+    call: $('dm-call'),
+    members: $('dm-members'),
+    newGroup: $('dm-new-group'),
     menuButton: $('dm-menu-button'),
     close: $('dm-close'),
     banner: $('dm-banner'),
@@ -197,6 +216,19 @@ export function createDmUi(deps) {
   const renderBody = (...args) => within(() => deps.renderBody(...args));
   const appendEmoji = (...args) => within(() => deps.appendEmoji(...args));
   const peerName = (id) => displayOf(id, 'someone');
+  const isGroup = (c) => c?.kind === 'group';
+  /** What a conversation is called: a group's name, or the other person's. */
+  const conversationName = (c) => (isGroup(c) ? (c.title || t('dm.group.untitled')) : peerName(c.peer));
+  /** The words for a refusal, naming whoever it is about. */
+  const sayError = (error) => words(t, error, peerName);
+  /** A group's picture: the same round avatar, with the people glyph in it. */
+  const groupAvatar = (size) => {
+    const span = document.createElement('span');
+    span.className = `avatar dm-group-avatar${size ? ` ${size}` : ''}`;
+    span.dataset.icon = 'users-three';
+    return span;
+  };
+  const faceFor = (c, size) => (isGroup(c) ? groupAvatar(size) : avatarEl(faceOf(c.peer, ''), size));
 
   const homeOf = (server) => homes.get(serverKeyOf(server)) ?? null;
   /** The home of the server that is open on screen. */
@@ -417,6 +449,7 @@ export function createDmUi(deps) {
       .flatMap((h) => (h.session.ready ? h.session.list().map((c) => ({ h, c })) : []))
       .sort((a, b) => b.c.lastAt - a.c.lastAt);
     el.empty.hidden = rows.length > 0 || !all.some((h) => h.session.ready);
+    if (el.newGroup) el.newGroup.hidden = !all.some((h) => h.session.ready);
     el.list.replaceChildren(...rows.map(({ h, c }) => {
       scope = h;
       try {
@@ -435,7 +468,7 @@ export function createDmUi(deps) {
     if (c.unread) li.setAttribute('data-unread', '');
     if (c.id === currentId && h === home) li.setAttribute('data-current', '');
 
-    li.append(avatarEl(faceOf(c.peer, ''), 'tiny'));
+    li.append(faceFor(c, 'tiny'));
 
     const body = document.createElement('div');
     body.className = 'dm-row-body';
@@ -443,8 +476,8 @@ export function createDmUi(deps) {
     top.className = 'dm-row-top';
     const name = document.createElement('span');
     name.className = 'dm-row-name';
-    name.textContent = peerName(c.peer);
-    nameFont(name, c.peer);
+    name.textContent = conversationName(c);
+    if (!isGroup(c)) nameFont(name, c.peer);
     const time = document.createElement('span');
     time.className = 'dm-row-time';
     time.textContent = c.lastAt ? when(c.lastAt) : '';
@@ -465,10 +498,13 @@ export function createDmUi(deps) {
     text.className = 'dm-row-text';
     if (preview?.unreadable) text.textContent = t('dm.unreadable_short');
     else if (preview?.call) text.textContent = callLine(preview.call, c.last.userId === me());
+    else if (preview?.group) text.textContent = groupLine(preview.group);
     else if (preview) {
       // A voice message is not called by its file name.
       const said = isVoiceNote(preview.text, 'audio') ? t('voice.preview') : preview.text;
-      text.textContent = c.last.userId === me() ? t('dm.you_prefix', { text: said }) : said;
+      if (c.last.userId === me()) text.textContent = t('dm.you_prefix', { text: said });
+      // In a group, who said it: the line is of everybody.
+      else text.textContent = isGroup(c) ? t('dm.group.sender_prefix', { name: peerName(c.last.userId), text: said }) : said;
     }
     line.append(text);
     if (c.unread) {
@@ -492,6 +528,23 @@ export function createDmUi(deps) {
       }
       case 'declined': return mine ? t('dm.call_declined_by_them') : t('dm.call_declined');
       default: return mine ? t('dm.call_unanswered') : t('dm.call_missed');
+    }
+  }
+
+  /** What the server wrote when something happened to a group, in the page's words. */
+  function groupLine(meta) {
+    const names = (ids) => (ids ?? []).map(peerName).join(', ');
+    const by = peerName(meta.by);
+    switch (meta.event) {
+      case 'created': return t('dm.group.line.created', { by, users: names(meta.users) });
+      case 'added': return t('dm.group.line.added', { by, users: names(meta.users) });
+      case 'removed': return t('dm.group.line.removed', { by, users: names(meta.users) });
+      case 'left':
+        return meta.owner != null
+          ? t('dm.group.line.left_owner', { by, owner: peerName(meta.owner) })
+          : t('dm.group.line.left', { by });
+      case 'renamed': return t('dm.group.line.renamed', { by, title: meta.title ?? '' });
+      default: return '';
     }
   }
 
@@ -531,7 +584,7 @@ export function createDmUi(deps) {
     try {
       await session.load(id);
     } catch (err) {
-      el.note.textContent = words(t, err);
+      el.note.textContent = sayError(err);
       return;
     }
     if (currentId !== id) return;
@@ -556,7 +609,7 @@ export function createDmUi(deps) {
       const id = await session.open(userId);
       await openConversation(id);
     } catch (err) {
-      showError(words(t, err));
+      showError(sayError(err));
     }
   }
 
@@ -610,7 +663,7 @@ export function createDmUi(deps) {
   }
 
   /** Whether a message can be rewritten: yours, and a message and not a call or something that could not be opened. */
-  const editable = (m) => m.userId === me() && !m.private?.unreadable && !m.private?.call;
+  const editable = (m) => m.userId === me() && !m.private?.unreadable && !m.private?.call && !m.private?.group;
 
   /** The message Up would edit: your latest in this conversation, as far as it is loaded. */
   function lastOwnMessage() {
@@ -650,16 +703,32 @@ export function createDmUi(deps) {
       closeConversation();
       return;
     }
-    el.headAvatar.replaceChildren(...avatarEl(faceOf(c.peer, '')).childNodes);
+    if (isGroup(c)) {
+      // The people glyph, as the generic icon rule draws it, in place of a face.
+      el.headAvatar.replaceChildren();
+      el.headAvatar.dataset.icon = 'users-three';
+    } else {
+      delete el.headAvatar.dataset.icon;
+      el.headAvatar.replaceChildren(...avatarEl(faceOf(c.peer, '')).childNodes);
+    }
     // The name is drawn in a span: a name font sizes itself against what it sits in
     // (fonts.css), and the heading's own size would otherwise override that.
     const label = document.createElement('span');
-    label.textContent = peerName(c.peer);
-    nameFont(label, c.peer);
+    label.textContent = conversationName(c);
+    if (!isGroup(c)) nameFont(label, c.peer);
     el.name.replaceChildren(label);
-    const verified = session.verified(c.peer);
+    const group = isGroup(c);
+    const verified = !group && session.verified(c.peer);
     el.verified.hidden = !verified;
     el.safety.toggleAttribute('data-verified', Boolean(verified));
+    // A pair has a safety number to compare; a group has people to see.
+    el.safety.hidden = group;
+    el.members.hidden = !group;
+    el.count.hidden = !group;
+    if (group) el.count.textContent = t('dm.group.count', { count: c.userIds.length });
+    el.lock.title = group ? t('dm.group.encrypted') : t('dm.encrypted');
+    el.call.hidden = !deps.calls;
+    syncCall(c);
     renderBanner(c);
     pins.draw();
 
@@ -698,8 +767,9 @@ export function createDmUi(deps) {
     }
     paintToBottom();
 
-    const blocked = session.blocked.has(c.peer);
-    const noKey = !session.vault.peerHasKey(c.peer);
+    // A group has nobody to have blocked, and every one of its people has a key: it is the sender's own that counts.
+    const blocked = !group && session.blocked.has(c.peer);
+    const noKey = group ? false : !session.vault.peerHasKey(c.peer);
     el.input.disabled = blocked || noKey;
     el.send.disabled = blocked || noKey;
     el.record.disabled = blocked || noKey;
@@ -707,9 +777,22 @@ export function createDmUi(deps) {
     syncRecord();
   }
 
+  /** The call button says whether there is a call to start, one to join, or that you are in it. */
+  function syncCall(c) {
+    if (!deps.calls || !home) return;
+    const here = deps.calls.mineIs(home.key, c.id);
+    const going = deps.calls.stateOf(home.key, c.id);
+    el.call.toggleAttribute('data-on', here);
+    el.call.title = t(here ? 'dm.call.in_it' : going ? 'dm.call.join' : 'dm.call.start');
+    el.call.setAttribute('aria-label', el.call.title);
+    el.call.dataset.icon = going && !here ? 'phone-call' : 'phone';
+    el.call.disabled = !session.ready;
+  }
+
   /** What stands over the conversation: a changed key, a block, a person who has not set up yet. */
   function renderBanner(c) {
-    const name = peerName(c.peer);
+    const group = isGroup(c);
+    const name = group ? conversationName(c) : peerName(c.peer);
     const rows = [];
     const add = (text, ...actions) => {
       const div = document.createElement('div');
@@ -719,16 +802,35 @@ export function createDmUi(deps) {
       div.append(span, ...actions);
       rows.push(div);
     };
-    if (session.blocked.has(c.peer)) {
+    if (group) {
+      // Anybody whose key changed holds back what is sealed to the group, so each is said, with a way through.
+      for (const id of c.userIds.filter((u) => u !== me() && session.keyChangedFor(u))) {
+        add(
+          t('dm.banner.key_changed', { name: peerName(id) }),
+          button(t('dm.banner.compare'), () => showSafety(c, id)),
+          button(t('dm.banner.accept'), () => session.acceptKey(id), 'primary small'),
+        );
+      }
+    } else if (session.blocked.has(c.peer)) {
       add(t('dm.banner.blocked', { name }), button(t('dm.menu.unblock', { name }), () => block(c, false)));
     }
-    if (!session.vault.peerHasKey(c.peer)) {
-      add(t('dm.banner.no_key', { name }));
-    } else if (session.keyChangedFor(c.peer)) {
+    if (!group) {
+      if (!session.vault.peerHasKey(c.peer)) {
+        add(t('dm.banner.no_key', { name }));
+      } else if (session.keyChangedFor(c.peer)) {
+        add(
+          t('dm.banner.key_changed', { name }),
+          button(t('dm.banner.compare'), () => showSafety(c)),
+          button(t('dm.banner.accept'), () => session.acceptKey(c.peer), 'primary small'),
+        );
+      }
+    }
+    // A call going on that you are not in: one press to join it.
+    const call = deps.calls?.stateOf(home.key, c.id);
+    if (call && !deps.calls.mineIs(home.key, c.id)) {
       add(
-        t('dm.banner.key_changed', { name }),
-        button(t('dm.banner.compare'), () => showSafety(c)),
-        button(t('dm.banner.accept'), () => session.acceptKey(c.peer), 'primary small'),
+        t('dm.call.in_progress', { count: call.participants.length }),
+        button(t('dm.call.join'), () => deps.calls.join(home, c), 'primary small'),
       );
     }
     el.banner.hidden = rows.length === 0;
@@ -757,6 +859,9 @@ export function createDmUi(deps) {
     } else if (marks.call) {
       text.classList.add('dm-call');
       text.append(document.createTextNode(callLine(marks.call, mine)));
+    } else if (marks.group) {
+      text.classList.add('dm-call');
+      text.append(document.createTextNode(groupLine(marks.group)));
     } else {
       emojiOnly = Boolean(renderBody(text, message.body));
       if (message.editedAt) {
@@ -834,7 +939,7 @@ export function createDmUi(deps) {
       b.addEventListener('click', run);
       return b;
     };
-    const readable = !marks.unreadable && !marks.call;
+    const readable = !marks.unreadable && !marks.call && !marks.group;
     if (readable) {
       tools.append(tool('arrow-bend-up-left', t('app.reply'), () => setReply(message)));
       const react = tool('smiley', t('app.react'), () => openEmojiPicker(react, (value) => {
@@ -855,7 +960,7 @@ export function createDmUi(deps) {
       if (message.attachmentHash && marks.file) tools.append(tool('download-simple', t('app.download'), () => saveFile(message)));
       if (mine) tools.append(tool('pencil-simple', t('app.edit_2'), () => setEditing(message)));
     }
-    if (mine && !marks.call) tools.append(tool('trash', t('app.delete_2'), () => removeMessage(message), true));
+    if (mine && !marks.call && !marks.group) tools.append(tool('trash', t('app.delete_2'), () => removeMessage(message), true));
 
     const gutter = grouped ? time : avatarEl(faceOf(message.userId, ''), 'msg-avatar');
     if (grouped) time.classList.add('when-gutter');
@@ -1050,7 +1155,7 @@ export function createDmUi(deps) {
       a.click();
       a.remove();
     } catch (err) {
-      el.note.textContent = words(t, err);
+      el.note.textContent = sayError(err);
     }
   }
 
@@ -1062,7 +1167,7 @@ export function createDmUi(deps) {
       el.note.textContent = '';
       return true;
     } catch (err) {
-      el.note.textContent = words(t, err);
+      el.note.textContent = sayError(err);
       return false;
     }
   }
@@ -1079,7 +1184,7 @@ export function createDmUi(deps) {
   }
 
   async function clearConversation(c) {
-    const name = peerName(c.peer);
+    const name = conversationName(c);
     if (!await askConfirm(t('dm.clear.title'), { okLabel: t('dm.clear.ok'), text: t('dm.clear.text', { name }) })) return;
     if (await attempt(() => session.clear(c.id))) closeConversation();
   }
@@ -1132,7 +1237,7 @@ export function createDmUi(deps) {
     if (menu) return closeMenu();
     const c = session?.conversations.get(currentId);
     if (!c) return undefined;
-    const name = peerName(c.peer);
+    const name = conversationName(c);
     menu = document.createElement('div');
     menu.className = 'peer-menu dm-menu';
     const item = (label, run, danger = false) => {
@@ -1143,11 +1248,20 @@ export function createDmUi(deps) {
       b.addEventListener('click', () => { closeMenu(); run(); });
       return b;
     };
-    menu.append(
-      item(t('dm.safety.menu'), () => showSafety(c)),
-      item(session.blocked.has(c.peer) ? t('dm.menu.unblock', { name }) : t('dm.menu.block', { name }), () => block(c, !session.blocked.has(c.peer))),
-      item(t('dm.menu.clear'), () => clearConversation(c), true),
-    );
+    if (isGroup(c)) {
+      menu.append(
+        item(t('dm.group.members'), () => showMembers(c)),
+        ...(c.ownerId === me() ? [item(t('dm.group.rename'), () => renameGroup(c))] : []),
+        item(t('dm.menu.clear'), () => clearConversation(c), true),
+        item(t('dm.group.leave'), () => leaveGroup(c), true),
+      );
+    } else {
+      menu.append(
+        item(t('dm.safety.menu'), () => showSafety(c)),
+        item(session.blocked.has(c.peer) ? t('dm.menu.unblock', { name }) : t('dm.menu.block', { name }), () => block(c, !session.blocked.has(c.peer))),
+        item(t('dm.menu.clear'), () => clearConversation(c), true),
+      );
+    }
     const box = el.menuButton.getBoundingClientRect();
     menu.style.top = `${box.bottom + 4}px`;
     menu.style.right = `${Math.max(8, window.innerWidth - box.right)}px`;
@@ -1196,7 +1310,7 @@ export function createDmUi(deps) {
       try {
         shown = await session.newRecoveryKey();
       } catch (err) {
-        showError(words(t, err));
+        showError(sayError(err));
         return;
       }
     }
@@ -1275,17 +1389,17 @@ export function createDmUi(deps) {
   }
 
   /** The number to read out loud: the same on both screens exactly when nobody is in between. */
-  function showSafety(c) {
-    const name = peerName(c.peer);
-    const number = session.safetyNumber(c.peer);
+  function showSafety(c, person = c.peer) {
+    const name = peerName(person);
+    const number = session.safetyNumber(person);
     if (!number) return;
     const box = document.createElement('div');
     box.className = 'dm-recovery dm-safety-number';
     box.textContent = number;
-    const verified = session.verified(c.peer);
+    const verified = session.verified(person);
     const toggle = button(
       verified ? t('dm.safety.unverify') : t('dm.safety.verify'),
-      () => { session.setVerified(c.peer, !verified); keysDialog.close(); },
+      () => { session.setVerified(person, !verified); keysDialog.close(); },
       verified ? 'ghost' : 'primary',
     );
     const close = button(t('dm.close'), () => keysDialog.close(), 'ghost');
@@ -1293,6 +1407,231 @@ export function createDmUi(deps) {
     row.className = 'ask-buttons';
     row.append(close, toggle);
     section(heading(t('dm.safety.title', { name })), paragraph(t('dm.safety.text', { name })), box, row);
+  }
+
+  // --------------------------------------------------------------------- groups
+
+  /**
+   * Choose people from this server's: a box to filter them, a tick each, and a button when enough are chosen. Those
+   * who cannot be in a group yet (they have not set up private messages) are shown and cannot be ticked, so that
+   * it is clear why they are not on offer.
+   *
+   * @param {object} options
+   * @param {string} options.title
+   * @param {string} options.confirm  the button's label
+   * @param {number[]} [options.exclude]  people already in, who are not offered
+   * @param {number} options.room  how many more can be chosen
+   * @param {boolean} [options.named]  ask for a name too
+   * @param {(picked: number[], name: string) => Promise<void>} options.run
+   */
+  function pickPeople({
+    title, confirm, exclude = [], room, named = false, run,
+  }) {
+    const known = (home?.users?.() ?? new Map());
+    const people = [...known.values()]
+      .filter((u) => u.id !== me() && !exclude.includes(u.id))
+      .sort((a, b) => peerName(a.id).localeCompare(peerName(b.id)));
+    const picked = new Set();
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'dm-group-name';
+    nameInput.id = 'dm-group-name';
+    nameInput.maxLength = 40;
+    nameInput.placeholder = t('dm.group.name_placeholder');
+    nameInput.autocomplete = 'off';
+    nameInput.setAttribute('aria-label', t('dm.group.name'));
+
+    const filter = document.createElement('input');
+    filter.type = 'search';
+    filter.className = 'dm-group-filter';
+    filter.id = 'dm-group-filter';
+    filter.placeholder = t('dm.group.search');
+    filter.autocomplete = 'off';
+    filter.setAttribute('aria-label', t('dm.group.search'));
+
+    const list = document.createElement('ul');
+    list.className = 'dm-picker';
+    const counter = paragraph('', 'muted dm-picker-count');
+    const error = paragraph('', 'error');
+    error.hidden = true;
+
+    const go = button(confirm, async () => {
+      error.hidden = true;
+      go.disabled = true;
+      try {
+        await run([...picked], nameInput.value);
+        keysDialog.close();
+      } catch (err) {
+        error.textContent = sayError(err);
+        error.hidden = false;
+      } finally {
+        go.disabled = false;
+      }
+    }, 'primary');
+    go.id = 'dm-group-go';
+    const cancel = button(t('ask_cancel.cancel'), () => keysDialog.close(), 'ghost');
+
+    const sync = () => {
+      counter.textContent = t('dm.group.selected', { count: picked.size, max: room });
+      go.disabled = picked.size === 0 || (named && !nameInput.value.trim());
+    };
+
+    const draw = () => {
+      const needle = filter.value.trim().toLowerCase();
+      list.replaceChildren(...people
+        .filter((u) => !needle || peerName(u.id).toLowerCase().includes(needle))
+        .map((u) => {
+          const ready = home.session.vault.peerHasKey(u.id);
+          const li = document.createElement('li');
+          const label = document.createElement('label');
+          label.className = 'dm-picker-row';
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.value = String(u.id);
+          box.checked = picked.has(u.id);
+          box.disabled = !ready || (!picked.has(u.id) && picked.size >= room);
+          box.addEventListener('change', () => {
+            if (box.checked) picked.add(u.id);
+            else picked.delete(u.id);
+            draw();
+            sync();
+          });
+          const name = document.createElement('span');
+          name.className = 'dm-picker-name';
+          name.textContent = peerName(u.id);
+          label.append(box, avatarEl(faceOf(u.id, ''), 'tiny'), name);
+          if (!ready) {
+            const why = document.createElement('small');
+            why.className = 'muted';
+            why.textContent = t('dm.group.no_key');
+            label.append(why);
+          }
+          li.append(label);
+          return li;
+        }));
+      if (!list.children.length) {
+        const none = document.createElement('li');
+        none.className = 'muted dm-picker-none';
+        none.textContent = t('dm.group.none_left');
+        list.append(none);
+      }
+    };
+    filter.addEventListener('input', draw);
+    nameInput.addEventListener('input', sync);
+
+    const row = document.createElement('div');
+    row.className = 'ask-buttons';
+    row.append(cancel, go);
+    section(
+      heading(title),
+      ...(named ? [nameInput] : []),
+      filter,
+      list,
+      counter,
+      error,
+      row,
+    );
+    draw();
+    sync();
+    (named ? nameInput : filter).focus();
+  }
+
+  /** Make a group: a name, and the people to put in it. */
+  function newGroup() {
+    const mine = openHome() ?? home;
+    if (!mine) return;
+    bind(mine);
+    if (!session?.ready) return;
+    pickPeople({
+      title: t('dm.group.new_title'),
+      confirm: t('dm.group.create'),
+      room: MAX_GROUP - 1,
+      named: true,
+      run: async (ids, name) => {
+        const id = await session.createGroup(name, ids);
+        await openConversation(id);
+      },
+    });
+  }
+
+  /** Put more people in a group you run. */
+  function addPeople(c) {
+    pickPeople({
+      title: t('dm.group.add_title', { title: conversationName(c) }),
+      confirm: t('dm.group.add'),
+      exclude: c.userIds,
+      room: MAX_GROUP - c.userIds.length,
+      run: (ids) => session.addMembers(c.id, ids),
+    });
+  }
+
+  async function renameGroup(c) {
+    const answer = await ask({
+      title: t('dm.group.rename_title'),
+      okLabel: t('dm.group.rename'),
+      fields: [{ name: 'title', label: t('dm.group.name'), type: 'text', required: true, value: c.title ?? '' }],
+    });
+    if (answer?.title) await attempt(() => session.rename(c.id, answer.title));
+  }
+
+  async function leaveGroup(c) {
+    const title = conversationName(c);
+    if (!await askConfirm(t('dm.group.leave_title', { title }), { okLabel: t('dm.group.leave'), text: t('dm.group.leave_text') })) return;
+    if (await attempt(() => session.leave(c.id))) closeConversation();
+  }
+
+  /** Who is in a group, with what the one who runs it can do. Drawn again as the group changes. */
+  function showMembers(c) {
+    const draw = () => {
+      const now = session.conversations.get(c.id);
+      if (!now) {
+        keysDialog?.close();
+        return;
+      }
+      const runs = now.ownerId === me();
+      const list = document.createElement('ul');
+      list.className = 'dm-picker dm-members-list';
+      for (const id of now.userIds) {
+        const li = document.createElement('li');
+        const row = document.createElement('div');
+        row.className = 'dm-picker-row';
+        const name = document.createElement('span');
+        name.className = 'dm-picker-name';
+        name.textContent = id === me() ? `${peerName(id)} (${t('dm.group.you')})` : peerName(id);
+        row.append(avatarEl(faceOf(id, ''), 'tiny'), name);
+        if (id === now.ownerId) {
+          const badge = document.createElement('small');
+          badge.className = 'dm-owner-badge';
+          badge.textContent = t('dm.group.owner');
+          row.append(badge);
+        } else if (runs) {
+          const remove = button(t('dm.group.remove'), async () => {
+            if (!await askConfirm(t('dm.group.remove_confirm_title', { name: peerName(id) }), {
+              okLabel: t('dm.group.remove'), text: t('dm.group.remove_confirm_text', { name: peerName(id) }),
+            })) return;
+            await attempt(() => session.removeMember(c.id, id));
+            draw();
+          }, 'ghost small danger');
+          remove.dataset.userId = String(id);
+          row.append(remove);
+        }
+        li.append(row);
+        list.append(li);
+      }
+      const row = document.createElement('div');
+      row.className = 'ask-buttons';
+      const close = button(t('dm.close'), () => keysDialog.close(), 'ghost');
+      row.append(close);
+      if (runs && now.userIds.length < MAX_GROUP) row.append(button(t('dm.group.add_people'), () => addPeople(now), 'primary'));
+      section(
+        heading(t('dm.group.members_title', { title: conversationName(now) })),
+        paragraph(runs ? t('dm.group.count', { count: now.userIds.length }) : t('dm.group.only_owner')),
+        list,
+        row,
+      );
+    };
+    draw();
   }
 
   // --------------------------------------------------------------------- events
@@ -1389,6 +1728,15 @@ export function createDmUi(deps) {
   });
   el.close.addEventListener('click', closeConversation);
   el.menuButton.addEventListener('click', openMenu);
+  el.newGroup?.addEventListener('click', newGroup);
+  el.members?.addEventListener('click', () => {
+    const c = session?.conversations.get(currentId);
+    if (c) showMembers(c);
+  });
+  el.call?.addEventListener('click', () => {
+    const c = session?.conversations.get(currentId);
+    if (c) deps.calls?.start(home, c);
+  });
   el.safety.addEventListener('click', () => {
     const c = session?.conversations.get(currentId);
     if (c) showSafety(c);
@@ -1477,7 +1825,7 @@ export function createDmUi(deps) {
     }
     if (!el.drop.hidden) return;
     const c = session?.conversations.get(currentId);
-    el.dropTitle.textContent = t('dm.drop_title', { name: c ? peerName(c.peer) : '' });
+    el.dropTitle.textContent = t('dm.drop_title', { name: c ? conversationName(c) : '' });
     el.drop.hidden = false;
   }
 
@@ -1652,7 +2000,7 @@ export function createDmUi(deps) {
     },
     jump: jumpToMessage,
     unpin: (m) => session.pin(m.id, false),
-    onError: (err) => { el.note.textContent = words(t, err); },
+    onError: (err) => { el.note.textContent = sayError(err); },
   });
 
   // ---------------------------------------------------------------- starred messages
@@ -1696,7 +2044,7 @@ export function createDmUi(deps) {
       }
       el.note.textContent = '';
     } catch (err) {
-      el.note.textContent = err instanceof StarError && err.code === 'too_many' ? t('stars.too_many') : words(t, err);
+      el.note.textContent = err instanceof StarError && err.code === 'too_many' ? t('stars.too_many') : sayError(err);
     }
   }
 
@@ -1743,7 +2091,9 @@ export function createDmUi(deps) {
         scope = h;
         try {
           const message = openStar(h, entry);
-          const peer = entry.peer != null ? peerName(entry.peer) : '';
+          const peer = entry.peer != null
+            ? peerName(entry.peer)
+            : (h.session.conversations.get(entry.conversationId)?.title ?? '');
           const where = several ? `${peer} · ${serverLabel(h.server)}` : peer;
           const author = message ? peerName(message.userId) : peer;
           out.push({
@@ -1846,17 +2196,18 @@ export function createDmUi(deps) {
     faceOf,
     avatarEl,
     nameFont,
-    // The two of them.
+    // The two of them, or the people of the group.
     people: () => {
-      const peer = conversationOpen()?.peer;
-      return [...new Set([me(), peer].filter((id) => id != null))].map((id) => ({ id, nickname: peerName(id), label: peerName(id) }));
+      const open = conversationOpen();
+      const ids = open && isGroup(open) ? open.userIds : [me(), open?.peer];
+      return [...new Set(ids.filter((id) => id != null))].map((id) => ({ id, nickname: peerName(id), label: peerName(id) }));
     },
     search: searchConversation,
     messageContent,
     historyKey: () => `${home?.key ?? ''}#dm`,
     placeholder: () => {
       const open = conversationOpen();
-      return open ? t('search.placeholder_in', { name: peerName(open.peer) }) : t('search.placeholder');
+      return open ? t('search.placeholder_in', { name: conversationName(open) }) : t('search.placeholder');
     },
     host: () => el.active,
     jump: jumpToMessage,

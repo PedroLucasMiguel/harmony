@@ -928,13 +928,15 @@
       <div class="dm-panel" id="dm-panel" hidden role="dialog" aria-label="Private messages" data-i18n-aria-label="dm.title">
         <div class="dm-panel-head">
           <h2 data-i18n="dm.title">Private messages</h2>
+          <button class="ghost small icon-only" id="dm-new-group" data-icon="users-three" hidden
+                  title="New group" aria-label="New group" data-i18n-title="dm.group.new" data-i18n-aria-label="dm.group.new"></button>
           <button class="ghost small icon-only" id="dm-panel-close" data-icon="x"
                   title="Close" aria-label="Close" data-i18n-title="dm.close" data-i18n-aria-label="dm.close"></button>
         </div>
         <p class="muted dm-panel-note" id="dm-panel-note" hidden></p>
         <div class="dm-panel-actions" id="dm-panel-actions" hidden></div>
         <ul class="dm-list" id="dm-list"></ul>
-        <p class="muted dm-empty" id="dm-empty" hidden data-i18n="dm.empty">No private conversations yet. Right-click someone in the member list and choose &ldquo;Send a private message&rdquo;.</p>
+        <p class="muted dm-empty" id="dm-empty" hidden data-i18n="dm.empty">No private conversations yet. Right-click someone in the member list and choose &ldquo;Send a private message&rdquo;, or make a group with the button above.</p>
       </div>
         </aside>
         <div class="dms-pane">
@@ -956,8 +958,9 @@
             <header class="voice-head dm-head">
               <span class="avatar dm-head-avatar" id="dm-head-avatar"></span>
               <h2 id="dm-name"></h2>
-              <span class="dm-lock" data-icon="lock-simple" title="End-to-end encrypted: only the two of you can read this."
+              <span class="dm-lock" id="dm-lock" data-icon="lock-simple" title="End-to-end encrypted: only the two of you can read this."
                     data-i18n-title="dm.encrypted"></span>
+              <span class="dm-count muted" id="dm-count" hidden></span>
               <span class="dm-verified" id="dm-verified" hidden data-i18n="dm.verified">Verified</span>
               <!--
                 Searches this conversation, looked through on this computer (what the server holds of it is sealed).
@@ -979,6 +982,10 @@
               <button type="button" class="ghost small icon-only" id="dm-stars" data-icon="star"
                       title="Starred messages" aria-label="Starred messages" aria-haspopup="true" aria-expanded="false"
                       data-i18n-title="stars.title" data-i18n-aria-label="stars.title"></button>
+              <button class="ghost small icon-only" id="dm-call" data-icon="phone" hidden
+                      title="Start a call" aria-label="Start a call" data-i18n-title="dm.call.start" data-i18n-aria-label="dm.call.start"></button>
+              <button class="ghost small icon-only" id="dm-members" data-icon="users-three" hidden
+                      title="People" aria-label="People" data-i18n-title="dm.group.members" data-i18n-aria-label="dm.group.members"></button>
               <button class="ghost small icon-only" id="dm-safety" data-icon="shield-check"
                       title="Safety number" aria-label="Safety number" data-i18n-title="dm.safety.menu" data-i18n-aria-label="dm.safety.menu"></button>
               <button class="ghost small icon-only" id="dm-menu-button" data-icon="dots-three-outline-vertical"

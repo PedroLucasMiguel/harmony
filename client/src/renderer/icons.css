@@ -57,6 +57,12 @@
 [data-icon='arrow-left'] { --icon: url('icons/arrow-left.svg'); }
 [data-icon='dots-three-outline-vertical'] { --icon: url('icons/dots-three-outline-vertical.svg'); }
 [data-icon='prohibit'] { --icon: url('icons/prohibit.svg'); }
+[data-icon='phone'] { --icon: url('icons/phone.svg'); }
+[data-icon='phone-call'] { --icon: url('icons/phone-call.svg'); }
+[data-icon='user-plus'] { --icon: url('icons/user-plus.svg'); }
+[data-icon='users-three'] { --icon: url('icons/users-three.svg'); }
+[data-icon='user-minus'] { --icon: url('icons/user-minus.svg'); }
+[data-icon='pencil-simple-line'] { --icon: url('icons/pencil-simple-line.svg'); }
 [data-icon='caret-left'] { --icon: url('icons/caret-left.svg'); }
 [data-icon='caret-right'] { --icon: url('icons/caret-right.svg'); }
 [data-icon='picture-in-picture'] { --icon: url('icons/picture-in-picture.svg'); }

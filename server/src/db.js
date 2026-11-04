@@ -761,6 +761,62 @@ const MIGRATIONS = [
       ALTER TABLE music_tracks ADD COLUMN loudness_at INTEGER;
     `);
   },
+  /*
+   * v28: private groups.
+   *
+   * A conversation used to be exactly two people, spelled into the row (user_a < user_b, one row per pair). A group
+   * has any number of them, so the two columns stop being required and `kind` says which is which: a 'pair' keeps
+   * both and its CHECK, a 'group' has neither and its people are in dm_members. SQLite cannot drop a NOT NULL from
+   * a column, so the table is made again -- with foreign keys off for the duration (see `rebuilds`), because
+   * dropping the old table with them on would cascade through every message in it.
+   *
+   * title is the group's name and is NOT sealed: the server already knows who is in a conversation, and a name it
+   * cannot read would be one it cannot show on the page it serves. owner_id is who may add and remove people; it
+   * is a plain number, not a foreign key, because removing an account moves it to somebody else (accounts.js)
+   * instead of taking the group with it.
+   *
+   * dm_members.joined_at is when the person came in. What was said before that is theirs to never see: their
+   * cleared mark (dm_reads) is set to the newest message at that moment, the same mark "delete for me" uses.
+   *
+   * A message to a group is sealed once PER PERSON in it, each copy under the key that person shares with the
+   * sender (nothing new in the cryptography: it is the pair seal, repeated). The copies travel and are stored as
+   * one JSON object in `sealed` -- {"<user id>": {"k": <their key id>, "s": "<sealed>"}} -- which can never be
+   * mistaken for a pair's single base64url text, since `{` is not in that alphabet. The server hands each person
+   * only their own copy. Reactions and earlier versions of an edit are kept the same way.
+   */
+  Object.assign((db) => {
+    db.exec(`
+      CREATE TABLE dm_conversations_new (
+        id         INTEGER PRIMARY KEY,
+        kind       TEXT    NOT NULL DEFAULT 'pair',
+        user_a     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        user_b     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title      TEXT,
+        owner_id   INTEGER,
+        created_at INTEGER NOT NULL,
+        last_at    INTEGER NOT NULL,
+        CHECK (
+          (kind = 'pair' AND user_a IS NOT NULL AND user_b IS NOT NULL AND user_a < user_b)
+          OR (kind = 'group' AND user_a IS NULL AND user_b IS NULL)
+        ),
+        UNIQUE (user_a, user_b)
+      );
+      INSERT INTO dm_conversations_new (id, kind, user_a, user_b, created_at, last_at)
+        SELECT id, 'pair', user_a, user_b, created_at, last_at FROM dm_conversations;
+      DROP TABLE dm_conversations;
+      ALTER TABLE dm_conversations_new RENAME TO dm_conversations;
+      CREATE INDEX dm_conversations_b ON dm_conversations(user_b);
+
+      CREATE TABLE dm_members (
+        conversation_id INTEGER NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+        user_id         INTEGER NOT NULL REFERENCES users(id)            ON DELETE CASCADE,
+        added_by        INTEGER,
+        joined_at       INTEGER NOT NULL,
+        PRIMARY KEY (conversation_id, user_id)
+      );
+      CREATE INDEX dm_members_user ON dm_members(user_id);
+    `);
+  }, { rebuilds: true }),
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -865,8 +921,12 @@ export function openDatabase({ dataDir, file = 'harmony.db' }) {
   return db;
 }
 
-/** Run any migrations this database has not seen yet. */
-export function migrate(db) {
+/**
+ * Run any migrations this database has not seen yet.
+ * @param {DatabaseSync} db
+ * @param {number} [upTo]  stop at this schema version: for the tests that need a database as it used to be
+ */
+export function migrate(db, upTo = MIGRATIONS.length) {
   const [{ user_version: current }] = db.prepare('PRAGMA user_version').all();
 
   if (current > MIGRATIONS.length) {
@@ -876,13 +936,23 @@ export function migrate(db) {
     );
   }
 
-  for (let v = current; v < MIGRATIONS.length; v += 1) {
+  for (let v = current; v < upTo; v += 1) {
+    // A migration that makes a table again (SQLite cannot change a column's constraints any other way) is run
+    // the way SQLite's own documentation says to: foreign keys off around the transaction -- the pragma does
+    // nothing inside one -- so that dropping the old table does not cascade through its children, then checked
+    // before it is committed, then on again.
+    const rebuilds = Boolean(MIGRATIONS[v].rebuilds);
+    if (rebuilds) db.exec('PRAGMA foreign_keys = OFF');
     // Each migration is its own transaction: a failure half way leaves the
     // version untouched, so the next boot retries cleanly rather than starting
     // from a half-applied schema.
     db.exec('BEGIN');
     try {
       MIGRATIONS[v](db);
+      if (rebuilds) {
+        const broken = db.prepare('PRAGMA foreign_key_check').all();
+        if (broken.length) throw new Error(`${broken.length} rows no longer match their parent`);
+      }
       // Not a bound parameter: PRAGMA does not accept one. v is a loop index
       // over a literal array, so there is nothing user-controlled here.
       db.exec(`PRAGMA user_version = ${v + 1}`);
@@ -891,6 +961,8 @@ export function migrate(db) {
     } catch (err) {
       db.exec('ROLLBACK');
       throw new Error(`migration to v${v + 1} failed: ${err.message}`);
+    } finally {
+      if (rebuilds) db.exec('PRAGMA foreign_keys = ON');
     }
   }
 }

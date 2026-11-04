@@ -52,9 +52,11 @@ const decoder = new TextDecoder('utf-8', { fatal: true });
 
 /** A sealed thing refused for a reason the caller can name. */
 export class SealFailed extends Error {
-  constructor(code) {
+  /** @param {string} code  @param {number} [userId]  in a group: whose key it is about */
+  constructor(code, userId) {
     super(code);
     this.code = code;
+    this.userId = userId;
   }
 }
 
@@ -303,11 +305,16 @@ export class Vault {
     return k ? publicKey(k.publicKey) : null;
   }
 
-  #pair(conversation, mine, peer, theirs) {
+  /**
+   * `group`: the conversation is a group's. There each message is sealed once for every person in it, yourself
+   * included -- the copy you read back on another computer -- so the "other" half may be your own key. In a pair it
+   * may not, for the reason below.
+   */
+  #pair(conversation, mine, peer, theirs, group = false) {
     // Their half has to be a key listed as theirs. Otherwise any key the server
     // published, under any id, would open as the other person's (or, paired
     // with yours, as your own words).
-    if (peer === this.#me || this.#owner(theirs) !== peer) return null;
+    if ((peer === this.#me && !group) || this.#owner(theirs) !== peer) return null;
     const cached = this.#pairs.get(`${conversation}:${mine}:${theirs}`);
     if (cached) return cached;
     const pub = this.#publicOf(theirs);
@@ -366,9 +373,11 @@ export class Vault {
    * Opens something sealed between you and `peer`; `fromMe` says which of the
    * two keys is yours. Also says whether their key is one accepted for them here.
    */
-  #open(conversation, peer, [senderKey, recipientKey], fromMe, aadText, sealed) {
+  #open(conversation, peer, [senderKey, recipientKey], fromMe, aadText, sealed, group = false) {
     const [mine, theirs] = fromMe ? [senderKey, recipientKey] : [recipientKey, senderKey];
-    const plain = this.#pair(conversation, mine, peer, theirs)?.open(aadText, sealed);
+    const plain = this.#pair(conversation, mine, peer, theirs, group)?.open(aadText, sealed);
+    // Your own copy of what you wrote needs no confirming: nobody's key is in question.
+    if (plain && peer === this.#me) return { plain, confirmed: true };
     return plain ? { plain, confirmed: this.#confirm(peer, theirs) } : null;
   }
 
@@ -395,14 +404,7 @@ export class Vault {
    * @throws {SealFailed}
    */
   sealMessage(conversation, peer, payload) {
-    const out = { body: payload.body ?? '' };
-    if (payload.file) out.file = payload.file;
-    if (payload.reply) out.reply = payload.reply;
-    out.mid = payload.mid ?? b64(random(16));
-    if (payload.rev) out.rev = payload.rev;
-    if (payload.of !== undefined && payload.of !== null) out.of = payload.of;
-    const json = pad(encoder.encode(JSON.stringify(out)));
-    return this.#sealConfirmed(conversation, peer, aad.message(conversation, this.#me), json);
+    return this.#sealConfirmed(conversation, peer, aad.message(conversation, this.#me), messageJson(payload));
   }
 
   /** @throws {SealFailed} */
@@ -412,22 +414,71 @@ export class Vault {
   }
 
   /**
+   * Seals something for every person of a group: one copy each, under the key you share with them, and one for
+   * yourself. The same refusals as for a pair, about whoever is the first they apply to -- `userId` on the error
+   * says who -- because a message that skipped somebody whose key is in doubt would be a message they never get.
+   *
+   * @param {number} conversation
+   * @param {number[]} members  everybody in the group, you included
+   * @returns {{copies: Object<string, {k: number, s: string}>, senderKey: number}}
+   * @throws {SealFailed}
+   */
+  #sealGroup(conversation, members, aadText, plain) {
+    if (!this.ready || this.myKey === null) throw new SealFailed(SealError.NoKey);
+    const mine = this.myKey;
+    const copies = {};
+    for (const id of members) {
+      let theirs;
+      if (id === this.#me) {
+        theirs = mine;
+      } else {
+        this.pin(id);
+        theirs = this.#current.get(id);
+        if (theirs === undefined) throw new SealFailed(SealError.PeerHasNoKey, id);
+        if (!this.#isAccepted(id, theirs)) throw new SealFailed(SealError.KeyNotConfirmed, id);
+      }
+      const key = this.#pair(conversation, mine, id, theirs, true);
+      if (!key) throw new SealFailed(SealError.PeerHasNoKey, id);
+      copies[id] = { k: theirs, s: key.seal(aadText, plain) };
+    }
+    return { copies, senderKey: mine };
+  }
+
+  /** sealMessage, for a group. */
+  sealGroupMessage(conversation, members, payload) {
+    return this.#sealGroup(conversation, members, aad.message(conversation, this.#me), messageJson(payload));
+  }
+
+  /** sealReactions, for a group. */
+  sealGroupReactions(conversation, members, message, emoji) {
+    const json = pad(encoder.encode(JSON.stringify(emoji)));
+    return this.#sealGroup(conversation, members, aad.reaction(conversation, message, this.#me), json);
+  }
+
+  /**
    * A sealed message as the chat draws it. One that doesn't open here still
    * shows, saying so.
    */
-  openMessage(m, peer) {
+  openMessage(m, peerOrNull) {
     const fromMe = m.userId === this.#me;
-    const view = { file: null, call: null, unreadable: false, outOfPlace: false, unconfirmed: false, mid: null, rev: 0 };
+    // In a group nobody is "the other person": what is opened is between you and whoever wrote it.
+    const group = peerOrNull === null;
+    const peer = group ? m.userId : peerOrNull;
+    const view = {
+      file: null, call: null, group: null, unreadable: false, outOfPlace: false, unconfirmed: false, mid: null, rev: 0,
+    };
     let body = '';
     let reply = null;
     let current = false;
     if (m.kind === 'call') {
       view.call = m.meta ?? null;
+    } else if (m.kind === 'group') {
+      view.group = m.meta ?? null;
     } else {
       let opened = null;
       if (m.senderKey != null && m.recipientKey != null && m.sealed) {
         const got = this.#open(
-          m.conversationId, peer, [m.senderKey, m.recipientKey], fromMe, aad.message(m.conversationId, m.userId), m.sealed,
+          m.conversationId, peer, [m.senderKey, m.recipientKey], fromMe, aad.message(m.conversationId, m.userId), m.sealed, group,
         );
         const payload = got && parsePayload(got.plain);
         if (payload) opened = { payload, confirmed: got.confirmed, sealed: m.sealed };
@@ -437,7 +488,7 @@ export class Vault {
         const placed = this.#place(m, sealed, p);
         const shown = this.#texts.get(m.id)?.shown;
         if (placed === Placement.Superseded && shown) {
-          return { ...shown, reactions: this.openReactions(m.conversationId, peer, m.id, m.reactions ?? []) };
+          return { ...shown, reactions: this.openReactions(m.conversationId, peerOrNull, m.id, m.reactions ?? []) };
         }
         if (placed === Placement.Refused) {
           view.unreadable = true;
@@ -466,7 +517,7 @@ export class Vault {
       mediaType: view.file ? mediaTypeOf(view.file.mime) : null,
       editedAt: m.editedAt ?? null,
       reply,
-      reactions: this.openReactions(m.conversationId, peer, m.id, m.reactions ?? []),
+      reactions: this.openReactions(m.conversationId, peerOrNull, m.id, m.reactions ?? []),
       createdAt: m.createdAt,
       pinned: Boolean(m.pinned),
       private: view,
@@ -537,11 +588,13 @@ export class Vault {
   }
 
   /** An earlier text of `m`: null if it doesn't open here, or is not one of `m`'s. Seen, it can't be put back as the current one later. */
-  openVersion(m, peer, v) {
+  openVersion(m, peerOrNull, v) {
     const conversation = m.conversationId;
     const author = m.userId;
+    const group = peerOrNull === null;
     const got = this.#open(
-      conversation, peer, [v.senderKey, v.recipientKey], author === this.#me, aad.message(conversation, author), v.sealed,
+      conversation, group ? author : peerOrNull, [v.senderKey, v.recipientKey], author === this.#me,
+      aad.message(conversation, author), v.sealed, group,
     );
     const p = got && parsePayload(got.plain);
     const nonce = nonceOf(v.sealed);
@@ -561,12 +614,13 @@ export class Vault {
   }
 
   /** Everybody's sealed reactions to a message, opened and counted as a channel's are. */
-  openReactions(conversation, peer, message, sealed) {
+  openReactions(conversation, peerOrNull, message, sealed) {
     const out = [];
+    const group = peerOrNull === null;
     for (const r of sealed) {
       const got = this.#open(
-        conversation, peer, [r.senderKey, r.recipientKey], r.userId === this.#me,
-        aad.reaction(conversation, message, r.userId), r.sealed,
+        conversation, group ? r.userId : peerOrNull, [r.senderKey, r.recipientKey], r.userId === this.#me,
+        aad.reaction(conversation, message, r.userId), r.sealed, group,
       );
       if (!got) continue;
       let emoji;
@@ -698,6 +752,17 @@ export class Vault {
 }
 
 /** The payload inside a sealed message, or null if it is not one. Trailing spaces are the padding. */
+/** What a message says, as the JSON that is sealed: padded, with an id of its own unless it is an edit's. */
+function messageJson(payload) {
+  const out = { body: payload.body ?? '' };
+  if (payload.file) out.file = payload.file;
+  if (payload.reply) out.reply = payload.reply;
+  out.mid = payload.mid ?? b64(random(16));
+  if (payload.rev) out.rev = payload.rev;
+  if (payload.of !== undefined && payload.of !== null) out.of = payload.of;
+  return pad(encoder.encode(JSON.stringify(out)));
+}
+
 function parsePayload(plain) {
   try {
     const p = JSON.parse(decoder.decode(plain));

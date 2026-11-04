@@ -17,6 +17,7 @@ import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
 import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
+import { createCalls, isCallRoom } from './calls-ui.js';
 import { fileCard, iconFor, textCard, previewsAsText, readHead } from './attachment-card.js';
 import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
 import { firstLink, linkEmbed } from './link-embed.js';
@@ -921,6 +922,12 @@ function showView(id) {
   // it here means none of them can leave it open over the result.
   if (el.picker.open) el.picker.close();
   renderServerRail();
+  renderCallBar();
+}
+
+/** The id of the page on screen. */
+function activeViewId() {
+  return document.querySelector('.view[data-active]')?.id ?? null;
 }
 
 /** Open the source picker over whatever is on screen. */
@@ -1720,6 +1727,8 @@ async function reattachVoice() {
     state.channels.rosters = rosters ?? {};
     setOccupied(occupiedFor);
   } catch { /* the hello's lists will do */ }
+  // A private call is not in the list of channels, and goes on whatever the list says.
+  if (isCallRoom(state.voice.channelId)) return;
   const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
   if (!channel) {
     // The channel is gone: so is the call.
@@ -1795,7 +1804,8 @@ function voiceBackgroundEvent(msg) {
       endDetachedCall(t('app.disconnected_you', { by: msg.by }));
       break;
     case 'channels':
-      if (!(msg.channels ?? []).some((c) => c.id === state.voice.channelId)) endDetachedCall(t('rail.call_interrupted'));
+      if (!isCallRoom(state.voice.channelId)
+        && !(msg.channels ?? []).some((c) => c.id === state.voice.channelId)) endDetachedCall(t('rail.call_interrupted'));
       break;
     case 'realtime:down':
       state.voiceCtx.connected = false;
@@ -1817,7 +1827,8 @@ function voiceBackgroundEvent(msg) {
 /** The bar above everything while a call is on a server that is not the one on screen. */
 function renderCallBar() {
   const ctx = state.voiceCtx;
-  const show = Boolean(state.voice.channelId && ctx && !voiceHere());
+  // On another server, or on this one but looking at the private messages, where the call's controls are not.
+  const show = Boolean(state.voice.channelId && ctx && (!voiceHere() || activeViewId() === 'view-dms'));
   el.callBar.hidden = !show;
   if (!show) return;
   const server = serverNames.get(serverKey(ctx.server)) || ctx.serverName || serverHost(ctx.server);
@@ -1941,6 +1952,7 @@ async function signOutServer(url) {
   if (state.voiceServer && serverKey(state.voiceServer) === serverKey(url)) await leaveVoice({ silent: true }).catch(() => {});
   backgrounds.stop(url);
   dmUi?.stop(url);
+  callsCtl?.forget(url);
   await harmony.api.setCredentials(url, { password: profile.password ?? '', token: profile.sessionToken ?? '' });
   await harmony.api.logout(url).catch(() => {});
   await patchProfile(url, { sessionToken: '' });
@@ -1960,6 +1972,7 @@ async function forgetServerFromRail(url) {
   if (state.voiceServer && serverKey(state.voiceServer) === serverKey(url)) await leaveVoice({ silent: true }).catch(() => {});
   if (wasOpen) {
     dmUi?.stop(url);
+  callsCtl?.forget(url);
     await harmony.realtime.disconnect(url);
     state.auth.user = null;
   }
@@ -1970,6 +1983,7 @@ async function forgetServerFromRail(url) {
   }
   backgrounds.stop(url);
   dmUi?.stop(url);
+  callsCtl?.forget(url);
   await forgetServer(url);
   if (wasOpen) {
     // Nothing is open any more: the connect screen, on the form for a new address if nothing is left.
@@ -2951,6 +2965,8 @@ function inServer(home, fn) {
  * every use here asks with `?.`.
  */
 let dmUi = null;
+/** Private calls: who is ringing, and which conversations have a call (calls-ui.js). Made with the private messages. */
+let callsCtl = null;
 let securityUi = null;
 /** The Roles, Members and Channels pages of the server dialog; see server-admin.js. */
 let serverAdmin = null;
@@ -5202,7 +5218,15 @@ function voiceRt(type, payload) {
   return rt(type, payload, state.voiceServer ?? state.server);
 }
 
-async function joinVoice(channel, password, { cued = false } = {}) {
+/**
+ * @param {object} channel  the channel to join -- or, for a private call, a stand-in with the call's name
+ * @param {string} [password]
+ * @param {object} [options]
+ * @param {boolean} [options.cued]  the arriving sound was already made
+ * @param {{conversationId: number, join: boolean, title: string, group: boolean}} [options.call]  a private call:
+ *   begin the conversation's call (or join it, when `join`), which is a voice room of its own id on the same machinery
+ */
+async function joinVoice(channel, password, { cued = false, call = null } = {}) {
   if (state.channels.joining) return;
   state.channels.joining = true;
   showChannelsError('');
@@ -5231,12 +5255,23 @@ async function joinVoice(channel, password, { cued = false } = {}) {
     // quiet: a move from one room to another makes one sound, the one for arriving.
     if (state.voice.channelId) await leaveVoice({ silent: voiceHere(), quiet: true });
 
-    const reply = await requestAgain('voice:join', {
-      channelId: channel.id,
-      ...(password ? { password } : {}),
-    });
+    const reply = call
+      ? await requestAgain(call.join ? 'call:join' : 'call:start', { conversationId: call.conversationId })
+      : await requestAgain('voice:join', {
+        channelId: channel.id,
+        ...(password ? { password } : {}),
+      });
 
-    if (reply.type !== 'voice:joined') {
+    if (call && reply.type === 'call:joined') {
+      // The room's id is the one the server made for the conversation.
+      channel = { id: reply.channelId, name: call.title, kind: 'call' };
+    } else if (call) {
+      undone();
+      return showChannelsError(t(`call.error.${reply.error}`) !== `call.error.${reply.error}`
+        ? t(`call.error.${reply.error}`) : t('call.error.generic'));
+    }
+
+    if (reply.type !== 'voice:joined' && !call) {
       if (reply.error === 'password_required' || reply.error === 'bad_password') {
         state.channels.joining = false;
         const answer = await ask({
@@ -5279,15 +5314,24 @@ async function joinVoice(channel, password, { cued = false } = {}) {
       serverName: serverInfo.name || serverNames.get(serverKey(state.server)) || '',
       connected: true,
       roster: reply.roster ?? [],
+      // A private call: which conversation, so that what the conversation says of it can be told from here.
+      ...(call ? { call: { conversationId: call.conversationId, group: call.group } } : {}),
     };
-    // Joined in the middle of a song: the music is already where it is.
-    musicPlayer?.apply(reply.music ?? null);
-    startMusicClock();
+    if (call) {
+      callsCtl?.setMine(state.server, call.conversationId);
+    } else {
+      // Joined in the middle of a song: the music is already where it is.
+      musicPlayer?.apply(reply.music ?? null);
+      startMusicClock();
+    }
 
     // Joining a voice channel puts the streams back on the stage. Clicking a
     // voice channel is the only way back from a text channel, so leaving the
     // chat up here would make the stage a one-way door again.
     closeChat();
+    // The call's pictures and controls are on the page with the channels; a call begun from the private messages
+    // brings that page forward, and the conversation stays one press away on the rail.
+    if (call && activeViewId() === 'view-dms') showView('view-channels');
 
     el.voiceName.textContent = channel.name;
     el.voiceIdle.hidden = true;
@@ -5320,11 +5364,12 @@ async function joinVoice(channel, password, { cued = false } = {}) {
     // off. After the microphone, not before -- Android refuses a microphone
     // service to an app that has not been granted the microphone yet, and
     // startMic is what asks. A no-op everywhere else.
-    harmony.voiceService.start(`In ${channel.name}`, serverInfo.name || 'Harmony');
+    harmony.voiceService.start(call ? channel.name : `In ${channel.name}`, serverInfo.name || 'Harmony');
     // Tell the server the path is live, so other members know to subscribe.
     await requestAgain('voice:publishing', {
       channelId: channel.id, kind: 'v', on: true,
     });
+    syncCallHeader();
 
     /*
      * Carry mute and deafen into the new channel.
@@ -5581,6 +5626,7 @@ async function leaveVoice({ silent = false, quiet = false } = {}) {
   const callServer = state.voiceServer;
   state.voiceServer = null;
   state.voiceCtx = null;
+  callsCtl?.setMine(null, null);
   state.channels.roster = [];
   // The music is the call's: it stops with it.
   musicPlayer?.stop();
@@ -5661,6 +5707,8 @@ function applyVoiceButtons() {
 
   el.voiceSoundboard.toggleAttribute('data-on', !el.soundpad.hidden);
   el.voiceSoundboard.disabled = !state.voice.channelId;
+  // The soundpad and the music are a channel's; a private call has neither.
+  el.voiceSoundboard.hidden = isCallRoom(state.voice.channelId);
   // Deafened silences the music too, and un-deafening brings it back at its own volume.
   applyMusicVolume();
 
@@ -11632,7 +11680,8 @@ function initMusic() {
     resolve: (input) => harmony.api.musicResolve(state.voiceServer ?? state.server, input),
     send: (type, payload) => voiceRt(type, payload),
     // Who may play: the permission, and the owner's switch -- and only on the server the call is on.
-    canControl: () => voiceHere() && serverInfo.musicEnabled === true && can('music.control'),
+    canControl: () => voiceHere() && !isCallRoom(state.voice.channelId)
+      && serverInfo.musicEnabled === true && can('music.control'),
     view: () => musicPlayer.view(),
     position: () => musicPlayer.positionMs(),
     channelId: () => (voiceHere() ? state.voice.channelId : null),
@@ -12737,6 +12786,9 @@ function onRealtimeEvent(msg) {
    */
   // Private conversations and their keys are dm-ui's, on whichever server they arrive.
   if (dmUi?.handleEvent(msg)) return;
+  // Calls ring, and are told of, on every server that is signed in to.
+  if (msg.type === 'realtime:up' && msg.calls) callsCtl?.seed(msg.server ?? state.server, msg.calls);
+  if (callsCtl?.handleEvent(msg)) return;
   if (msg.server && msg.server !== (openServerKey() ? serverKeyOf(state.server) : null)) {
     // A call goes on over its own server's connection, whatever is on screen.
     if (state.voiceServer && serverKeyOf(msg.server) === serverKeyOf(state.voiceServer)) voiceBackgroundEvent(msg);
@@ -12785,9 +12837,11 @@ function onRealtimeEvent(msg) {
       // Kept for EVERY channel, not just ours: this is what the sidebar
       // draws, and it is the only way to see who is in a channel before
       // deciding whether to join it.
-      state.channels.rosters[msg.channelId] = msg.roster;
-      state.channels.occupancy[msg.channelId] = msg.roster.length;
-      setOccupied({ [msg.channelId]: msg.occupiedFor ?? null }, { merge: true });
+      if (!isCallRoom(msg.channelId)) {
+        state.channels.rosters[msg.channelId] = msg.roster;
+        state.channels.occupancy[msg.channelId] = msg.roster.length;
+        setOccupied({ [msg.channelId]: msg.occupiedFor ?? null }, { merge: true });
+      }
       if (!voiceHere() || msg.channelId !== state.voice.channelId) {
         renderChannels();
         break;
@@ -13040,7 +13094,15 @@ function onRealtimeEvent(msg) {
       // overwritten by the hello's own, so it arrived as 'hello-ok' and fell
       // through to default. A client that dropped came back connected but
       // silently out of its voice channel, still showing "Reconnecting...".
-      if (voiceHere()) {
+      if (voiceHere() && isCallRoom(state.voice.channelId)) {
+        // A call: back into it if it is still going on (the server forgot us, not the call).
+        const ctx = state.voiceCtx;
+        if (ctx?.call) {
+          joinVoice({ id: 0, name: ctx.channelName, kind: 'call' }, null, {
+            call: { conversationId: ctx.call.conversationId, join: true, title: ctx.channelName, group: ctx.call.group },
+          });
+        }
+      } else if (voiceHere()) {
         const channel = state.channels.list.find((c) => c.id === state.voice.channelId);
         if (channel) joinVoice(channel);
       }
@@ -13139,7 +13201,7 @@ async function shareScreenHere() {
   state.share.target = {
     channelId: state.voice.channelId,
     url: state.voice.publishUrls.screen,
-    name: channel?.name ?? 'this channel',
+    name: state.voiceCtx?.channelName ?? channel?.name ?? 'this channel',
   };
   await enterPicker();
   return undefined;
@@ -15207,8 +15269,88 @@ el.continue.addEventListener('click', startSession);
 
 // --- channels and voice ---------------------------------------------------
 
+// ---------------------------------------------------------------- private calls
+//
+// A call is a voice room that belongs to a conversation (see calls-ui.js and the server's calls.js), joined through
+// joinVoice like a channel's: what is here is only how one begins, and what the conversations say about them.
+
+/** A person's name on a server: the open one's people are known, another's only when it has been seen. */
+function nameOnServer(server, userId) {
+  const people = serverKey(server) === openServerKey() ? state.users : backgroundUsers.get(serverKey(server));
+  const user = people?.get(userId);
+  return user?.displayName || user?.nickname || '';
+}
+
+/** What a call is called: a group's name, or the other person's. */
+function callTitle(conversation) {
+  return conversation.kind === 'group'
+    ? (conversation.title || t('dm.group.untitled'))
+    : displayOf(conversation.peer, 'someone');
+}
+
+/** The heading over the call's roster says whether anybody has picked up yet. */
+function syncCallHeader() {
+  const ctx = state.voiceCtx;
+  if (!ctx?.call) return;
+  const call = callsCtl?.stateOf(ctx.server, ctx.call.conversationId);
+  const waiting = call && call.answeredAt === null && call.participants.length <= 1;
+  el.voiceName.textContent = waiting ? `${ctx.channelName} · ${t('call.ringing')}` : ctx.channelName;
+}
+
+/**
+ * Begin a conversation's call, or join the one that is going on. On a server that is not the open one, that server
+ * is opened first: the call's pictures and controls are on the page of the server it is on.
+ */
+async function startPrivateCall(server, conversation, { join = false } = {}) {
+  if (state.channels.joining) return;
+  if (serverKey(server) !== openServerKey()) {
+    await resumeServer(server);
+    if (serverKey(server) !== openServerKey()) return;
+  }
+  const title = callTitle(conversation);
+  await joinVoice({ id: 0, name: title, kind: 'call' }, null, {
+    call: {
+      conversationId: conversation.id, join, title, group: conversation.kind === 'group',
+    },
+  });
+}
+
+callsCtl = createCalls({
+  state,
+  t,
+  playCue,
+  nameOf: nameOnServer,
+  faceFor: (server, userId) => (serverKey(server) === openServerKey() ? avatarEl(faceOf(userId, '')) : null),
+  serverLabel: (server) => serverNames.get(serverKey(server)) || serverHost(server),
+  isOpen: (server) => serverKey(server) === openServerKey(),
+  answer: (ring) => startPrivateCall(ring.server, {
+    id: ring.conversationId,
+    kind: ring.group ? 'group' : 'pair',
+    title: ring.title,
+    peer: ring.from.id,
+  }, { join: true }),
+  decline: (ring) => rt('call:decline', { conversationId: ring.conversationId }, ring.server),
+  changed: () => {
+    dmUi?.render();
+    syncCallHeader();
+    renderCallBar();
+  },
+  hangUp: () => {
+    // Over, or you were taken out of its group: the server has already let go of you.
+    voiceCue('disconnect');
+    leaveVoice({ silent: true, quiet: true }).catch(() => {});
+    toast(t('call.over'));
+  },
+});
+
 dmUi = createDmUi({
   stars,
+  calls: {
+    stateOf: (key, id) => callsCtl.stateOf(key, id),
+    mineIs: (key, id) => callsCtl.mineIs(key, id),
+    start: (home, c) => startPrivateCall(home.server, c),
+    join: (home, c) => startPrivateCall(home.server, c, { join: true }),
+  },
   state,
   harmony,
   t,

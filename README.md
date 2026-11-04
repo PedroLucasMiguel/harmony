@@ -49,6 +49,19 @@ A [five-minute tour](media/harmony-demo.mp4) of everything below, recorded from 
   forwards ciphertext and never holds a key that opens it. A recovery key brings
   your history to another computer, and a safety number tells you when
   somebody's key has changed. Compatible with [Ciranda](#credits).
+- **Private groups**: anybody can make a group of up to 16 people from the
+  private messages, and runs it: they add and remove people, rename it, and
+  hand it on when they leave. The people they add can only leave. A message to
+  a group is sealed once for each person in it, so the server still holds
+  nothing it can read (it does see a group's name and who is in it), and somebody
+  added later reads from the day they came in, not before.
+- **Private calls**: call the person, or the whole group, from a conversation.
+  It rings on every server you are signed in to, with the sound on and a card on
+  screen; answer or turn it down. A call has the voice channel's microphone,
+  camera and screen share, up to 16 people, and leaves a line in the
+  conversation ("Call · 12 min", "Missed call"). It goes through the server's
+  relay like a voice channel, so unlike the messages it is not end-to-end
+  encrypted.
 - **Picture in picture** (Settings, Voice & video; off by default): a channel's
   streams in one small window that floats over the app, so you can keep
   chatting while you watch. Step between streams with the arrows; when someone

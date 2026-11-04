@@ -255,6 +255,43 @@ export class Accounts {
         )
       `),
       dropConversations: db.prepare('DELETE FROM dm_conversations WHERE user_a = ? OR user_b = ?'),
+      // A group they were in carries on without them, so only what THEY wrote goes (their rows cascade with the
+      // account), and the files of those are let go the same way. Whoever has been in longest runs it instead.
+      releaseGroupAttachments: db.prepare(`
+        UPDATE uploads SET refs = MAX(0, refs - (
+          SELECT COUNT(*) FROM dm_messages m JOIN dm_conversations c ON c.id = m.conversation_id
+          WHERE c.kind = 'group' AND m.user_id = :user AND m.attachment_hash = uploads.hash
+        ))
+        WHERE hash IN (
+          SELECT m.attachment_hash FROM dm_messages m JOIN dm_conversations c ON c.id = m.conversation_id
+          WHERE c.kind = 'group' AND m.user_id = :user AND m.attachment_hash IS NOT NULL
+        )
+      `),
+      handOverGroups: db.prepare(`
+        UPDATE dm_conversations SET owner_id = (
+          SELECT user_id FROM dm_members
+          WHERE conversation_id = dm_conversations.id AND user_id != :user ORDER BY joined_at, user_id LIMIT 1
+        )
+        WHERE kind = 'group' AND owner_id = :user
+      `),
+      // After the account is gone: a group down to one person is over, files and all.
+      releaseSmallGroupFiles: db.prepare(`
+        UPDATE uploads SET refs = MAX(0, refs - (
+          SELECT COUNT(*) FROM dm_messages m
+          WHERE m.attachment_hash = uploads.hash AND m.conversation_id IN (
+            SELECT id FROM dm_conversations c WHERE c.kind = 'group'
+              AND (SELECT COUNT(*) FROM dm_members WHERE conversation_id = c.id) < 2)
+        ))
+        WHERE hash IN (
+          SELECT m.attachment_hash FROM dm_messages m WHERE m.attachment_hash IS NOT NULL AND m.conversation_id IN (
+            SELECT id FROM dm_conversations c WHERE c.kind = 'group'
+              AND (SELECT COUNT(*) FROM dm_members WHERE conversation_id = c.id) < 2)
+        )
+      `),
+      dropSmallGroups: db.prepare(`
+        DELETE FROM dm_conversations WHERE kind = 'group'
+          AND (SELECT COUNT(*) FROM dm_members WHERE conversation_id = dm_conversations.id) < 2
+      `),
       releaseAvatar: db.prepare('UPDATE uploads SET refs = MAX(0, refs - 1) WHERE hash = ?'),
       // The clip and the emoji stay. They are server-wide things other
       // people are using; only the credit for them goes.
@@ -503,12 +540,16 @@ export class Accounts {
       this.#q.dropMessages.run(userId);
       this.#q.releaseDmAttachments.run({ user: userId });
       this.#q.dropConversations.run(userId, userId);
+      this.#q.releaseGroupAttachments.run({ user: userId });
+      this.#q.handOverGroups.run({ user: userId });
       if (user.avatar_hash) this.#q.releaseAvatar.run(user.avatar_hash);
       if (user.banner_hash) this.#q.releaseAvatar.run(user.banner_hash);
       if (user.join_sound_hash) this.#q.releaseAvatar.run(user.join_sound_hash);
       this.#q.disownClips.run(userId);
       this.#q.disownEmojis.run(userId);
       this.#q.dropUser.run(userId);
+      this.#q.releaseSmallGroupFiles.run();
+      this.#q.dropSmallGroups.run();
       this.#db.exec('COMMIT');
     } catch (err) {
       this.#db.exec('ROLLBACK');

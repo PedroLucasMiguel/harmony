@@ -18,6 +18,8 @@ import { publicUser } from './accounts.js';
 import { Throttle } from './throttle.js';
 import { publicBadge } from './badges.js';
 import { channelViewFor, publicRole } from './roles.js';
+import { publicDmMessage } from './dms.js';
+import { isCallRoom, roomOf } from './calls.js';
 
 /** A socket that has not answered a ping in this long is assumed dead. */
 const HEARTBEAT_MS = 15_000;
@@ -30,6 +32,8 @@ export class Realtime {
   #timer = null;
   /** Music Buddy's controls, per person: pressing them is cheap to do and not cheap to serve (a track is fetched). */
   #musicThrottle = new Throttle({ burst: 60, perSecond: 5 });
+  /** Ringing somebody: a person pressing it again and again is not calling, they are ringing a bell. */
+  #callThrottle = new Throttle({ burst: 10, perSecond: 0.5 });
 
   /**
    * @param {object} deps
@@ -127,6 +131,7 @@ export class Realtime {
     for (const { channelId } of this.#deps.voice.leaveAll(client.user.id)) {
       this.#broadcastRoster(channelId);
     }
+    this.#deps.calls?.leaveAll(client.user.id);
     // After leaveAll, so a client redrawing on this gets a roster that has
     // already lost them rather than one that still has them in a channel.
     this.broadcastPresence();
@@ -219,6 +224,9 @@ export class Realtime {
         badges: this.#deps.badges.list().map(publicBadge),
         // What is new in each channel, so a client that was away starts from the truth.
         unread: this.#deps.unreadFor?.(user) ?? [],
+        // The calls going on in the conversations they are in, so a call somebody is being rung for is not missed
+        // for having been away when it began.
+        calls: this.#deps.calls?.activeFor(user.id) ?? [],
       });
     }
 
@@ -245,6 +253,9 @@ export class Realtime {
       'voice:mute': this.#voiceMute,
       'voice:publishing': this.#voicePublishing,
       'voice:refresh': this.#voiceRefresh,
+      'call:start': this.#callStart,
+      'call:join': this.#callJoin,
+      'call:decline': this.#callDecline,
       'soundpad:play': this.#soundpadPlay,
       'soundpad:stop': this.#soundpadStop,
       'music:add': this.#musicAdd,
@@ -272,10 +283,11 @@ export class Realtime {
     if (verdict !== 'ok') return { type: 'voice:error', error: verdict };
 
     // Leaving the previous channel first keeps "one voice channel at a time"
-    // true without the client having to sequence two requests.
+    // true without the client having to sequence two requests. A call is one too.
     for (const { channelId: left } of this.#deps.voice.leaveAll(user.id)) {
       if (left !== channelId) this.#broadcastRoster(left);
     }
+    this.#deps.calls?.leaveAll(user.id);
 
     const joined = this.#deps.voice.join(channelId, user);
     if (!joined.ok) {
@@ -294,17 +306,27 @@ export class Realtime {
     };
   }
 
+  /**
+   * The rooms a room id lives in. A private call's is not a channel's, and is kept apart so that nothing that lists
+   * channels ever meets it -- but muting, publishing and leaving it are the same requests, with its id.
+   */
+  #roomsFor(roomId) {
+    return isCallRoom(roomId) ? this.#deps.calls?.rooms : this.#deps.voice;
+  }
+
   #voiceLeave(user, msg) {
     const channelId = Number(msg.channelId);
-    const mid = this.#deps.voice.leave(channelId, user.id);
-    if (mid === false) return { type: 'voice:error', error: 'not_in_channel' };
+    const mid = isCallRoom(channelId)
+      ? this.#deps.calls?.leave(channelId, user.id)
+      : this.#deps.voice.leave(channelId, user.id);
+    if (mid === false || mid === undefined) return { type: 'voice:error', error: 'not_in_channel' };
     this.#broadcastRoster(channelId);
     return { type: 'voice:left', channelId };
   }
 
   #voiceMute(user, msg) {
     const channelId = Number(msg.channelId);
-    if (!this.#deps.voice.setMuted(channelId, user.id, msg.muted, msg.deafened)) {
+    if (!this.#roomsFor(channelId)?.setMuted(channelId, user.id, msg.muted, msg.deafened)) {
       return { type: 'voice:error', error: 'not_in_channel' };
     }
     this.#broadcastRoster(channelId);
@@ -314,9 +336,10 @@ export class Realtime {
   /** The client telling us which of its paths are actually publishing. */
   #voicePublishing(user, msg) {
     const channelId = Number(msg.channelId);
-    const found = this.#deps.voice.find(channelId, user.id);
+    const rooms = this.#roomsFor(channelId);
+    const found = rooms?.find(channelId, user.id);
     if (!found) return { type: 'voice:error', error: 'not_in_channel' };
-    this.#deps.voice.trackPublish(channelId, found.mid, String(msg.kind), Boolean(msg.on));
+    rooms.trackPublish(channelId, found.mid, String(msg.kind), Boolean(msg.on));
     this.#broadcastRoster(channelId);
     return { type: 'voice:ok' };
   }
@@ -331,13 +354,119 @@ export class Realtime {
    */
   #voiceRefresh(user, msg) {
     const channelId = Number(msg.channelId);
-    const found = this.#deps.voice.find(channelId, user.id);
+    const found = this.#roomsFor(channelId)?.find(channelId, user.id);
     if (!found) return { type: 'voice:error', error: 'not_in_channel' };
     return {
       type: 'voice:tokens',
       channelId,
       ...this.#deps.issueTokens(channelId, user.id, found.mid),
     };
+  }
+
+  // ------------------------------------------------------------- calls
+
+  /**
+   * Everything a call request has to clear: the conversation is theirs, and they are not ringing it like a bell.
+   * @returns {{conversation: object}|{error: object}}
+   */
+  #callGate(user, msg, { throttled = false } = {}) {
+    const conversation = this.#deps.dms?.forUser(user.id, Number(msg.conversationId));
+    if (!conversation || !this.#deps.calls) return { error: { type: 'call:error', error: 'no_such_conversation' } };
+    if (throttled && !this.#callThrottle.take(user.id).allowed) return { error: { type: 'call:error', error: 'slow_down' } };
+    return { conversation };
+  }
+
+  /** Put somebody in a call: out of every other room they are in, then in this, and the answer a client needs. */
+  #enterCall(user, conversation, joined) {
+    if (!joined.ok) return { type: 'call:error', error: joined.error, cap: VOICE_HARD_CAP };
+    return {
+      type: 'call:joined',
+      conversationId: conversation.id,
+      channelId: joined.roomId,
+      mid: joined.mid,
+      ...this.#deps.issueTokens(joined.roomId, user.id, joined.mid),
+      roster: this.#deps.calls.rooms.roster(joined.roomId),
+      call: this.#deps.calls.state(conversation.id),
+    };
+  }
+
+  /** One room at a time: a channel they are in, and any other call, are left first. */
+  #leaveOtherRooms(user, keepRoom) {
+    for (const { channelId } of this.#deps.voice.leaveAll(user.id)) this.#broadcastRoster(channelId);
+    this.#deps.calls.leaveAll(user.id, keepRoom);
+  }
+
+  /** Call the people of a conversation -- or, if there is a call going, join it. */
+  #callStart(user, msg) {
+    const gate = this.#callGate(user, msg, { throttled: true });
+    if (gate.error) return gate.error;
+    const { conversation } = gate;
+    this.#leaveOtherRooms(user, roomOf(conversation.id));
+    const joined = this.#deps.calls.start(conversation, user);
+    if (joined.ok && joined.started) {
+      const state = this.#deps.calls.state(conversation.id);
+      for (const id of state.ringing) {
+        this.toUser(id, {
+          type: 'call:ring',
+          conversationId: conversation.id,
+          roomId: state.roomId,
+          from: { id: user.id, nickname: user.nickname },
+          title: conversation.title ?? null,
+          group: conversation.kind === 'group',
+          startedAt: state.startedAt,
+        });
+      }
+    }
+    return this.#enterCall(user, conversation, joined);
+  }
+
+  #callJoin(user, msg) {
+    const gate = this.#callGate(user, msg);
+    if (gate.error) return gate.error;
+    const { conversation } = gate;
+    this.#leaveOtherRooms(user, roomOf(conversation.id));
+    return this.#enterCall(user, conversation, this.#deps.calls.join(conversation, user));
+  }
+
+  /** Turn down a call that is ringing. The ring stops on every one of their windows. */
+  #callDecline(user, msg) {
+    const gate = this.#callGate(user, msg);
+    if (gate.error) return gate.error;
+    this.#deps.calls.decline(gate.conversation, user.id);
+    this.toUser(user.id, { type: 'call:ring-stopped', conversationId: gate.conversation.id });
+    return { type: 'voice:ok' };
+  }
+
+  /**
+   * Something about a conversation's call changed: everybody in the conversation is told how it stands (who is in
+   * it, who is being rung), and those in it have their roster.
+   */
+  callChanged(conversationId) {
+    const calls = this.#deps.calls;
+    const conversation = this.#deps.dms.get(conversationId);
+    if (!calls || !conversation) return;
+    const call = calls.state(conversationId);
+    for (const id of this.#deps.dms.members(conversation)) {
+      this.toUser(id, { type: 'call:state', conversationId, call });
+    }
+    if (call) this.#broadcastRoster(call.roomId);
+  }
+
+  /**
+   * A call is over. The line it left in the conversation goes to the conversation, as a message does; those who
+   * were still in it are told to hang up, and everybody that it is not going on any more.
+   */
+  callEnded(conversation, line, stillIn = []) {
+    const dms = this.#deps.dms;
+    const view = dms.view(conversation);
+    for (const id of dms.members(conversation)) {
+      this.toUser(id, { type: 'call:state', conversationId: conversation.id, call: null });
+      this.toUser(id, { type: 'call:ring-stopped', conversationId: conversation.id });
+      this.toUser(id, { type: 'dm:message', message: publicDmMessage(line, [], id), conversation: view });
+    }
+    for (const id of stillIn) {
+      this.toUser(id, { type: 'call:ended', conversationId: conversation.id, roomId: roomOf(conversation.id) });
+    }
   }
 
   // --------------------------------------------------------- soundpad
@@ -573,6 +702,12 @@ export class Realtime {
    * who is talking in a room is as much a part of its existence as its name.
    */
   #broadcastRoster(channelId) {
+    // A call's roster is for the people on the call, and for nobody who merely has the conversation open.
+    if (isCallRoom(channelId)) {
+      const roster = this.#deps.calls?.rooms.roster(channelId) ?? [];
+      for (const member of roster) this.toUser(member.userId, { type: 'voice:roster', channelId, roster, occupiedFor: null });
+      return undefined;
+    }
     const channel = this.#deps.channels.get(channelId);
     const roster = this.#deps.voice.roster(channelId);
     // The last person leaving ends the music, and lets go of its files.

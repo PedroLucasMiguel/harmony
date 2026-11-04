@@ -153,7 +153,7 @@ async function requestJson(serverUrl, pathname, {
  */
 const DM_PATH = new RegExp(
   '^/api/(keys(/wrap|/lookup)?|inbox'
-  + '|dms(/blocks|/\\d+(/(messages|read|clear))?)?'
+  + '|dms(/blocks|/groups|/\\d+(/(messages|read|clear|members|members/remove|leave|rename))?)?'
   + '|dm-messages/\\d+/(edit|edits|delete|react|pin))(\\?[A-Za-z0-9=&,._-]*)?$',
 );
 

@@ -34,7 +34,8 @@ export const MEDIA_KINDS = { voice: 'v', cam: 'c', screen: 's' };
 export const channelPath = (cid, mid, kind) =>
   `vc-${cid.toString(36)}-${mid.toString(36)}-${MEDIA_KINDS[kind] ?? kind}`;
 
-const CHANNEL_PATH_RE = /^vc-([0-9a-z]{1,4})-([0-9a-z]{1,4})-([vcs])$/;
+// Six characters for the room: a private call's id is a hundred million and more (see calls.js).
+const CHANNEL_PATH_RE = /^vc-([0-9a-z]{1,6})-([0-9a-z]{1,4})-([vcs])$/;
 
 /**
  * Parse a MediaMTX path back into its parts, or null.

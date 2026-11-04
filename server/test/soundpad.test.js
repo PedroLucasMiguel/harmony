@@ -351,6 +351,10 @@ describe('playing a clip', () => {
       'the hash is what lets each client play its own cached copy');
     assert.equal(event.by, 'boss');
 
+    // Leave, and not only hang up: a closed socket is noticed a moment later, and the next test needs the member
+    // to be out of the channel by the time it asks.
+    await a.request({ type: 'voice:leave', channelId: voiceChannelId });
+    await b.request({ type: 'voice:leave', channelId: voiceChannelId });
     a.ws.close();
     b.ws.close();
   });
@@ -397,6 +401,8 @@ describe('stopping a clip', () => {
     const refused = await b.request({ type: 'soundpad:stop', channelId: voiceChannelId });
     assert.equal(refused.error, 'forbidden');
 
+    await a.request({ type: 'voice:leave', channelId: voiceChannelId });
+    await b.request({ type: 'voice:leave', channelId: voiceChannelId });
     a.ws.close();
     b.ws.close();
   });

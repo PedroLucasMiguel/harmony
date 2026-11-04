@@ -590,6 +590,10 @@ const CUES = {
   // (three notes going up) or for anything about the call.
   dm: { voice: 'bell', notes: [[N.E6, 0], [N.E6, 0.13]], length: 0.3, level: 0.8 },
 
+  // A private call is ringing for you: two pairs of notes, a fourth apart, played again for as long as it rings.
+  // Louder and longer than any other, because a call is the one thing here that cannot wait.
+  ring: { voice: 'bell', notes: [[N.E6, 0], [N.A5 * 2, 0.16], [N.E6, 0.5], [N.A5 * 2, 0.66]], length: 0.55, level: 1.1 },
+
   // Somebody wrote your name. The one cue that asks for something rather than reporting it.
   mention: { voice: 'bell', notes: [[N.A5, 0], [N.D6, 0.08], [N.G6, 0.16]], length: 0.34, level: 0.9 },
 };

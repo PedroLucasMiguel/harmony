@@ -88,6 +88,8 @@ export const config = {
    * stale a URL may be when it is first used.
    */
   channelTokenTtlMs: num(process.env.HARMONY_CHANNEL_TOKEN_TTL_MS, 10 * 60 * 1000),
+  // How long a private call rings, and so waits for somebody to answer, before it is over.
+  callRingMs: num(process.env.HARMONY_CALL_RING_MS, 45_000),
 
   // Where accounts, channels and uploads live. The one writable path Harmony
   // needs; see db.js for what happens when it is not writable.

@@ -32,15 +32,18 @@ const INLINE = new Set([
 
 /** A refusal in the page's words: a code the UI can translate, and the server's own sentence if it sent one. */
 export class DmError extends Error {
-  constructor(code, message = code) {
+  /** @param {string} code  @param {string} [message]  @param {number} [userId]  in a group: whom a refusal is about */
+  constructor(code, message = code, userId = undefined) {
     super(message);
     this.code = code;
+    this.userId = userId;
   }
 }
 
 /** The line a message shows in a conversation's row, without opening anything the row should not show. */
 export function previewOf(message) {
   if (message.private?.call) return { call: message.private.call, text: '' };
+  if (message.private?.group) return { group: message.private.group, text: '' };
   if (message.private?.unreadable) return { text: '', unreadable: true };
   const line = (message.body ?? '').split('\n').find((l) => l.trim()) ?? '';
   const text = [...line.trim()].slice(0, PREVIEW).join('');
@@ -68,7 +71,11 @@ export class DmSession {
   /** What is waiting, when this computer cannot read it: the server says how many, in the clear. */
   #lockedUnread = 0;
 
-  /** Conversation id -> {id, peer, createdAt, lastAt, unread, lastReadId, last: message|null}. */
+  /**
+   * Conversation id -> {id, kind, peer, userIds, title, ownerId, createdAt, lastAt, unread, lastReadId, last}.
+   * `peer` is the other person of a pair and null in a group, which has `userIds`, a `title` and an `ownerId`
+   * instead (a pair has them too, as its two people, with no title and nobody running it).
+   */
   conversations = new Map();
 
   /** Conversation id -> {messages: opened[], more: boolean, loaded: boolean}. */
@@ -234,15 +241,26 @@ export class DmSession {
 
   // ----------------------------------------------------------- conversations
 
+  /** The other person of a pair; null for a group, which has everybody and so nobody in particular. */
   peerOf(conversation) {
+    if (conversation.kind === 'group') return null;
     return conversation.userIds.find((id) => id !== this.#me.id) ?? this.#me.id;
+  }
+
+  /** Whether a conversation is a group's. */
+  static isGroup(c) {
+    return c?.kind === 'group';
   }
 
   #conversationRow(c, extra = {}) {
     const known = this.conversations.get(c.id);
     return {
       id: c.id,
+      kind: c.kind ?? 'pair',
       peer: this.peerOf(c),
+      userIds: c.userIds ?? known?.userIds ?? [],
+      title: c.title ?? known?.title ?? null,
+      ownerId: c.ownerId ?? known?.ownerId ?? null,
       createdAt: c.createdAt ?? known?.createdAt ?? 0,
       lastAt: c.lastAt ?? known?.lastAt ?? 0,
       unread: known?.unread ?? 0,
@@ -284,6 +302,15 @@ export class DmSession {
     let n = 0;
     for (const c of this.conversations.values()) n += c.unread;
     return n;
+  }
+
+  /** Takes what the server now says of a conversation's people, name and who runs it. */
+  #adopt(c, view) {
+    if (!view) return;
+    c.userIds = view.userIds ?? c.userIds;
+    c.title = view.title ?? null;
+    c.ownerId = view.ownerId ?? null;
+    c.lastAt = view.lastAt ?? c.lastAt;
   }
 
   /** Opens (making it if there is none) the conversation with somebody. */
@@ -431,18 +458,23 @@ export class DmSession {
    * Seals and sends, and once more if the server says a key has changed since:
    * the keys it names come with the refusal, so the second try is to the right ones.
    */
-  async #sealAndSend(seal, send) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+  async #sealAndSend(seal, send, group = null) {
+    // A group has two things that can have moved under it -- somebody's key, and who is in it -- so it is tried
+    // a third time.
+    for (let attempt = 0; attempt < (group ? 3 : 2); attempt += 1) {
       let sealed;
       try {
         sealed = seal();
       } catch (err) {
-        if (err instanceof SealFailed) throw new DmError(err.code, DmSession.#sealWords(err.code));
+        if (err instanceof SealFailed) throw new DmError(err.code, DmSession.#sealWords(err.code), err.userId);
         throw err;
       }
       const res = await send(sealed);
-      if (res.status === 409 && res.body?.error === 'stale_key' && attempt === 0) {
+      const error = res.status === 409 ? res.body?.error : null;
+      if ((error === 'stale_key' || error === 'stale_members') && attempt < (group ? 2 : 1)) {
         for (const k of res.body.keys ?? []) this.#vault.keyChanged(k);
+        // Who is in the group now, as the server says: what is sealed next is sealed for them.
+        if (group && Array.isArray(res.body.members)) group.userIds = res.body.members;
         continue;
       }
       return res;
@@ -488,11 +520,19 @@ export class DmSession {
       ...(reply.attachmentName ? { attachmentName: reply.attachmentName } : {}),
     } : undefined;
 
+    const payload = { body, file: attachment?.file, reply: quote };
+    const group = DmSession.isGroup(c);
     const res = await this.#sealAndSend(
-      () => this.#vault.sealMessage(conversationId, c.peer, { body, file: attachment?.file, reply: quote }),
+      () => (group
+        ? this.#vault.sealGroupMessage(conversationId, c.userIds, payload)
+        : this.#vault.sealMessage(conversationId, c.peer, payload)),
       (s) => this.#req('POST', `/api/dms/${conversationId}/messages`, {
-        sealed: s.text, senderKey: s.senderKey, recipientKey: s.recipientKey, attachmentHash: attachment?.hash ?? null,
+        ...(group
+          ? { copies: s.copies, senderKey: s.senderKey }
+          : { sealed: s.text, senderKey: s.senderKey, recipientKey: s.recipientKey }),
+        attachmentHash: attachment?.hash ?? null,
       }),
+      group ? c : null,
     );
     if (res.status !== 201) throw DmSession.#refused(res);
     // The message is drawn when the echo arrives; this adds it at once if the
@@ -515,11 +555,15 @@ export class DmSession {
       rev: message.private.rev + 1,
       of: message.id,
     };
+    const group = DmSession.isGroup(conversation);
     const res = await this.#sealAndSend(
-      () => this.#vault.sealMessage(conversation.id, conversation.peer, payload),
-      (s) => this.#req('POST', `/api/dm-messages/${messageId}/edit`, {
-        sealed: s.text, senderKey: s.senderKey, recipientKey: s.recipientKey,
-      }),
+      () => (group
+        ? this.#vault.sealGroupMessage(conversation.id, conversation.userIds, payload)
+        : this.#vault.sealMessage(conversation.id, conversation.peer, payload)),
+      (s) => this.#req('POST', `/api/dm-messages/${messageId}/edit`, group
+        ? { copies: s.copies, senderKey: s.senderKey }
+        : { sealed: s.text, senderKey: s.senderKey, recipientKey: s.recipientKey }),
+      group ? conversation : null,
     );
     if (res.status !== 200) throw DmSession.#refused(res);
     await this.#update(res.body.message);
@@ -546,15 +590,68 @@ export class DmSession {
     if (!next.length) {
       res = await this.#req('POST', `/api/dm-messages/${messageId}/react`, { sealed: null });
     } else {
+      const group = DmSession.isGroup(conversation);
       res = await this.#sealAndSend(
-        () => this.#vault.sealReactions(conversation.id, conversation.peer, messageId, next),
-        (s) => this.#req('POST', `/api/dm-messages/${messageId}/react`, {
-          sealed: s.text, senderKey: s.senderKey, recipientKey: s.recipientKey,
-        }),
+        () => (group
+          ? this.#vault.sealGroupReactions(conversation.id, conversation.userIds, messageId, next)
+          : this.#vault.sealReactions(conversation.id, conversation.peer, messageId, next)),
+        (s) => this.#req('POST', `/api/dm-messages/${messageId}/react`, group
+          ? { copies: s.copies, senderKey: s.senderKey }
+          : { sealed: s.text, senderKey: s.senderKey, recipientKey: s.recipientKey }),
+        group ? conversation : null,
       );
     }
     if (res.status !== 200) throw DmSession.#refused(res);
     this.#setReactions(messageId, res.body.reactions ?? []);
+  }
+
+  // ------------------------------------------------------------------- groups
+
+  /** The server's refusal of a group request, with whom it was about when it says. */
+  static #groupRefused(res) {
+    return new DmError(res.body?.error ?? 'unreachable', res.body?.message ?? 'Could not reach the server.', res.body?.userId);
+  }
+
+  /** Makes a group of these people (you are in it, and run it). Resolves with its conversation id. */
+  async createGroup(title, userIds) {
+    const res = await this.#req('POST', '/api/dms/groups', { title, userIds });
+    if (res.status !== 201) throw DmSession.#groupRefused(res);
+    const c = res.body.conversation;
+    this.conversations.set(c.id, this.#conversationRow(c));
+    this.#changed();
+    return c.id;
+  }
+
+  async #groupAction(conversationId, path, body, expected = 200) {
+    const res = await this.#req('POST', `/api/dms/${conversationId}/${path}`, body);
+    if (res.status !== expected) throw DmSession.#groupRefused(res);
+    const c = this.conversations.get(conversationId);
+    if (c && res.body?.conversation) {
+      this.#adopt(c, res.body.conversation);
+      this.#changed();
+    }
+  }
+
+  /** Puts people in a group you run. They see what is said from then on. */
+  addMembers(conversationId, userIds) {
+    return this.#groupAction(conversationId, 'members', { userIds });
+  }
+
+  /** Takes somebody out of a group you run. */
+  removeMember(conversationId, userId) {
+    return this.#groupAction(conversationId, 'members/remove', { userId });
+  }
+
+  /** Renames a group you run. */
+  rename(conversationId, title) {
+    return this.#groupAction(conversationId, 'rename', { title });
+  }
+
+  /** Goes out of a group. It leaves your list at once. */
+  async leave(conversationId) {
+    const res = await this.#req('POST', `/api/dms/${conversationId}/leave`, {});
+    if (res.status !== 200) throw DmSession.#groupRefused(res);
+    this.#forget(conversationId);
   }
 
   // ------------------------------------------------------------ read, clear, block
@@ -671,7 +768,8 @@ export class DmSession {
       }
       case 'dm:message': {
         const c = this.conversations.get(msg.conversation.id) ?? this.#conversationRow(msg.conversation);
-        c.lastAt = msg.conversation.lastAt ?? c.lastAt;
+        // A group's people, name and who runs it may have changed: the line that says so carries the new ones.
+        this.#adopt(c, msg.conversation);
         this.conversations.set(c.id, c);
         const message = await this.#addMessage(msg.message, c);
         const mine = msg.message.userId === this.#me.id;
@@ -702,6 +800,10 @@ export class DmSession {
       case 'dm:cleared':
         this.#forget(msg.conversationId);
         return {};
+      case 'dm:left':
+        // Taken out of a group, or it ended: it is gone from here.
+        this.#forget(msg.conversationId);
+        return { left: msg.conversationId };
       case 'dm:blocks':
         this.blocked = new Set(msg.blocked ?? []);
         this.#changed();

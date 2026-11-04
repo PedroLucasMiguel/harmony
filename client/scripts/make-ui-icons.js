@@ -38,6 +38,8 @@ const ICONS = [
   // private conversations
   'chat-circle-dots', 'lock-simple', 'shield-check', 'shield-warning', 'key', 'copy', 'arrow-left',
   'dots-three-outline-vertical', 'prohibit',
+  // private groups and calls
+  'phone', 'phone-call', 'user-plus', 'users-three', 'user-minus', 'pencil-simple-line',
   // the floating stream window
   'caret-left', 'caret-right', 'picture-in-picture', 'arrow-square-out', 'arrow-square-in',
   // the chat

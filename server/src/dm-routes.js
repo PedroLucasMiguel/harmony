@@ -11,9 +11,10 @@
 import express from 'express';
 
 import {
-  DirectMessages, ownKey, publicConversation, publicDmMessage, publicKey,
+  DirectMessages, ownKey, publicDmMessage, publicKey,
 } from './dms.js';
 import { Throttle } from './throttle.js';
+import { roomOf } from './calls.js';
 
 /**
  * Mount the routes.
@@ -27,13 +28,17 @@ import { Throttle } from './throttle.js';
  * @param {(userIds: number[], payload: object) => void} deps.push
  * @param {(payload: object) => void} deps.broadcast
  */
-export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, push, broadcast }) {
+export function mountDirectMessages(app, {
+  requireLogin, dms, calls, chat, accounts, push, broadcast,
+}) {
   // Generous for a person, tight for a script. Separate buckets, so a burst
   // of reactions does not stop somebody replying.
   const sending = new Throttle({ burst: 20, perSecond: 2 });
   const reacting = new Throttle({ burst: 30, perSecond: 3 });
   const uploading = new Throttle({ burst: 10, perSecond: 0.2 });
   const rekeying = new Throttle({ burst: 5, perSecond: 1 / 60 });
+  // Making and changing groups: a few at once is ordinary, a script making hundreds is not.
+  const grouping = new Throttle({ burst: 30, perSecond: 0.5 });
 
   const slowDown = (res, gate) => {
     res.set('Retry-After', String(gate.retryAfterSec));
@@ -74,7 +79,11 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
       no_key: 409,
       peer_has_no_key: 409,
       blocked: 403,
+      forbidden: 403,
       no_such_message: 404,
+      no_such_user: 404,
+      not_a_member: 404,
+      stale_members: 409,
       too_many_pins: 400,
     }[result.error] ?? 400;
     const messages = {
@@ -86,19 +95,32 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
       bad_key: 'That is not a key.',
       no_such_message: 'No such message.',
       too_many_pins: 'Fifty messages are pinned already. Unpin one first.',
+      stale_members: 'Somebody joined or left the group. Seal it again for who is in it now.',
+      forbidden: 'Only the one who runs the group can do that.',
+      bad_title: 'Give the group a name.',
+      too_few: 'A group needs somebody besides you.',
+      too_many: 'That is more people than a group holds.',
+      not_a_group: 'That is not a group.',
+      already_members: 'They are in the group already.',
+      use_leave: 'To go out of the group yourself, leave it.',
+      not_a_member: 'They are not in the group.',
+      no_such_user: 'No such person.',
     };
     return res.status(status).json({
       error: result.error,
       message: messages[result.error],
-      ...(result.keys ? { keys: result.keys.map(publicKey) } : {}),
+      ...(result.userId !== undefined ? { userId: result.userId } : {}),
+      ...(result.max !== undefined ? { max: result.max } : {}),
+      ...(result.keys ? { keys: result.keys.filter(Boolean).map(publicKey) } : {}),
+      ...(result.members ? { members: result.members } : {}),
     });
   };
 
-  /** Messages for a client, with their reactions and every key needed to open them. */
-  const forClient = (messages) => {
+  /** Messages for `viewer`, with their reactions and every key needed to open them. */
+  const forClient = (messages, viewer) => {
     const list = [].concat(messages).filter(Boolean);
-    const reactions = dms.reactionsFor(list.map((m) => m.id));
-    const out = list.map((m) => publicDmMessage(m, reactions.get(m.id) ?? []));
+    const reactions = dms.reactionsFor(list.map((m) => m.id), viewer);
+    const out = list.map((m) => publicDmMessage(m, reactions.get(m.id) ?? [], viewer));
     const keyIds = new Set();
     for (const m of out) {
       if (m.senderKey) keyIds.add(m.senderKey);
@@ -108,9 +130,13 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
     return { messages: out, keys: dms.keysByIds([...keyIds]).map(publicKey) };
   };
 
-  const members = (c) => DirectMessages.members(c);
+  const members = (c) => dms.members(c);
   /** Who is told about a change to `m`: not somebody who deleted it for themselves. */
   const seeing = (c, m) => members(c).filter((id) => dms.visibleTo(m, id));
+  /** Tell each of `ids` what `make` says for them: a group's messages are a different copy for every person. */
+  const pushEach = (ids, make) => { for (const id of ids) push([id], make(id)); };
+  /** What a conversation's blocks look like: only a pair has a person on the other side to have blocked. */
+  const blockedIn = (c, userId) => c.kind !== 'group' && dms.isBlocked(userId, DirectMessages.peerOf(c, userId));
 
   // ------------------------------------------------------------------ keys
 
@@ -165,7 +191,7 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
     }
     res.json({
       conversations: rows.map((r) => ({
-        ...publicConversation(r.conversation),
+        ...dms.view(r.conversation),
         unread: r.unread,
         lastReadId: r.lastReadId,
         last: r.last,
@@ -183,7 +209,74 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
     }
     if (!accounts.byId(peerId)) return res.status(404).json({ error: 'no_such_user' });
     const { conversation: c, created } = dms.open(req.user.id, peerId);
-    return res.status(created ? 201 : 200).json({ conversation: publicConversation(c) });
+    return res.status(created ? 201 : 200).json({ conversation: dms.view(c) });
+  });
+
+  // ------------------------------------------------------------------ groups
+
+  /**
+   * What a change to a group looks like to the people in it: the line the server wrote about it, as a message
+   * (so it is drawn where it happened), with the group as it is now.
+   */
+  const announce = (c, line) => {
+    const view = dms.view(dms.get(c.id));
+    pushEach(members(c), (id) => ({
+      type: 'dm:message', message: publicDmMessage(line, [], id), conversation: view,
+    }));
+    return view;
+  };
+
+  /** Make a group: anybody may, and runs it. */
+  app.post('/api/dms/groups', requireLogin, throttled(grouping), (req, res) => {
+    const ids = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const result = dms.createGroup(req.user.id, req.body?.title, ids);
+    if (!result.ok) return refuse(res, result);
+    const view = announce(result.conversation, result.line);
+    return res.status(201).json({ conversation: view });
+  });
+
+  /** Put people in a group you run. */
+  app.post('/api/dms/:id/members', requireLogin, conversation, throttled(grouping), (req, res) => {
+    const ids = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const result = dms.addMembers(req.conversation, req.user.id, ids);
+    if (!result.ok) return refuse(res, result);
+    return res.json({ conversation: announce(req.conversation, result.line) });
+  });
+
+  /** Take somebody out of a group you run. They are told, and it leaves their list. */
+  app.post('/api/dms/:id/members/remove', requireLogin, conversation, throttled(grouping), (req, res) => {
+    const target = Number.parseInt(req.body?.userId, 10);
+    const result = dms.removeMember(req.conversation, req.user.id, target);
+    if (!result.ok) return refuse(res, result);
+    push([target], { type: 'dm:left', conversationId: req.conversation.id });
+    // Out of the group is out of its call, at once.
+    if (calls?.leave(roomOf(req.conversation.id), target)) {
+      push([target], { type: 'call:ended', conversationId: req.conversation.id, roomId: roomOf(req.conversation.id) });
+    }
+    return res.json({ conversation: announce(req.conversation, result.line) });
+  });
+
+  /** Go out of a group. What is left of it carries on, or ends if it is down to one. */
+  app.post('/api/dms/:id/leave', requireLogin, conversation, (req, res) => {
+    const result = dms.leave(req.conversation, req.user.id);
+    if (!result.ok) return refuse(res, result);
+    push([req.user.id], { type: 'dm:left', conversationId: req.conversation.id });
+    calls?.leave(roomOf(req.conversation.id), req.user.id);
+    if (result.deleted) {
+      calls?.forget(req.conversation.id);
+      pushEach(result.remaining, () => ({ type: 'dm:left', conversationId: req.conversation.id }));
+    } else {
+      announce(req.conversation, result.line);
+    }
+    return res.json({ ok: true });
+  });
+
+  /** Rename a group you run. */
+  app.post('/api/dms/:id/rename', requireLogin, conversation, throttled(grouping), (req, res) => {
+    const result = dms.rename(req.conversation, req.user.id, req.body?.title);
+    if (!result.ok) return refuse(res, result);
+    const view = result.line ? announce(req.conversation, result.line) : dms.view(dms.get(req.conversation.id));
+    return res.json({ conversation: view });
   });
 
   /** Block or unblock somebody. Either way round, nothing passes between you while it holds. */
@@ -198,7 +291,7 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
   });
 
   app.get('/api/dms/:id', requireLogin, conversation, (req, res) => {
-    res.json({ conversation: publicConversation(req.conversation) });
+    res.json({ conversation: dms.view(req.conversation) });
   });
 
   app.get('/api/dms/:id/messages', requireLogin, conversation, (req, res) => {
@@ -208,7 +301,7 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
     });
     // The first page comes with what is pinned, as a channel's does; an older page does not need it again.
     const pins = Number.isFinite(before) ? [] : dms.pinned(req.conversation.id, req.user.id);
-    const sent = forClient([...page, ...pins]);
+    const sent = forClient([...page, ...pins], req.user.id);
     res.json({
       messages: sent.messages.slice(0, page.length),
       ...(Number.isFinite(before) ? {} : { pinned: sent.messages.slice(page.length) }),
@@ -229,9 +322,7 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
 
   app.post('/api/dms/:id/messages', requireLogin, conversation, throttled(sending), (req, res) => {
     const c = req.conversation;
-    if (dms.isBlocked(req.user.id, DirectMessages.peerOf(c, req.user.id))) {
-      return refuse(res, { error: 'blocked' });
-    }
+    if (blockedIn(c, req.user.id)) return refuse(res, { error: 'blocked' });
 
     const hash = req.body?.attachmentHash ?? null;
     if (hash !== null && !(/^[0-9a-f]{64}$/.test(String(hash)) && chat.isSealed(String(hash)))) {
@@ -244,15 +335,18 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
       sealed: req.body?.sealed,
       senderKey: req.body?.senderKey,
       recipientKey: req.body?.recipientKey,
+      copies: req.body?.copies,
       attachmentHash: hash,
     });
     if (!result.ok) return refuse(res, result);
 
     // Writing is reading: your own message moves your mark past everything before it.
     dms.markRead(c.id, req.user.id, result.message.id);
-    const message = publicDmMessage(result.message);
-    push(members(c), { type: 'dm:message', message, conversation: publicConversation(dms.get(c.id)) });
-    return res.status(201).json({ message });
+    const view = dms.view(dms.get(c.id));
+    pushEach(members(c), (id) => ({
+      type: 'dm:message', message: publicDmMessage(result.message, [], id), conversation: view,
+    }));
+    return res.status(201).json({ message: publicDmMessage(result.message, [], req.user.id) });
   });
 
   /**
@@ -346,11 +440,13 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
       sealed: req.body?.sealed,
       senderKey: req.body?.senderKey,
       recipientKey: req.body?.recipientKey,
+      copies: req.body?.copies,
     });
     if (!result.ok) return refuse(res, result);
-    const { messages: [message] } = forClient(result.message);
-    push(seeing(req.conversation, m), { type: 'dm:updated', message });
-    return res.json({ message });
+    pushEach(seeing(req.conversation, m), (id) => ({
+      type: 'dm:updated', message: forClient(result.message, id).messages[0],
+    }));
+    return res.json({ message: forClient(result.message, req.user.id).messages[0] });
   });
 
   /**
@@ -360,19 +456,18 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
   app.post('/api/dm-messages/:id/pin', requireLogin, dmMessage, throttled(reacting), (req, res) => {
     const c = req.conversation;
     const pinned = req.body?.pinned !== false;
-    if (pinned && dms.isBlocked(req.user.id, DirectMessages.peerOf(c, req.user.id))) {
-      return refuse(res, { error: 'blocked' });
-    }
+    if (pinned && blockedIn(c, req.user.id)) return refuse(res, { error: 'blocked' });
     const result = dms.setPinned(req.dmMessage, req.user.id, pinned);
     if (!result.ok) return refuse(res, result);
-    const { messages: [message] } = forClient(result.message);
-    push(seeing(c, req.dmMessage), { type: 'dm:updated', message });
-    return res.json({ message });
+    pushEach(seeing(c, req.dmMessage), (id) => ({
+      type: 'dm:updated', message: forClient(result.message, id).messages[0],
+    }));
+    return res.json({ message: forClient(result.message, req.user.id).messages[0] });
   });
 
   /** What a message said before each edit, sealed as it was; the client opens them. */
   app.get('/api/dm-messages/:id/edits', requireLogin, dmMessage, (req, res) => {
-    res.json({ versions: dms.versions(req.dmMessage) });
+    res.json({ versions: dms.versions(req.dmMessage, req.user.id) });
   });
 
   /** Your own only -- unlike a channel, an admin has no say over somebody's private words. */
@@ -395,7 +490,8 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
   app.post('/api/dm-messages/:id/react', requireLogin, dmMessage, throttled(reacting), (req, res) => {
     const c = req.conversation;
     const sealed = req.body?.sealed ?? null;
-    if (sealed !== null && dms.isBlocked(req.user.id, DirectMessages.peerOf(c, req.user.id))) {
+    const copies = req.body?.copies ?? null;
+    if ((sealed !== null || copies !== null) && blockedIn(c, req.user.id)) {
       return refuse(res, { error: 'blocked' });
     }
     const result = dms.setReaction({
@@ -403,14 +499,15 @@ export function mountDirectMessages(app, { requireLogin, dms, chat, accounts, pu
       conversation: c,
       userId: req.user.id,
       sealed,
+      copies,
       senderKey: req.body?.senderKey,
       recipientKey: req.body?.recipientKey,
     });
     if (!result.ok) return refuse(res, result);
-    const reactions = dms.reactionsFor([req.dmMessage.id]).get(req.dmMessage.id) ?? [];
-    push(seeing(c, req.dmMessage), {
-      type: 'dm:reactions', id: req.dmMessage.id, conversationId: c.id, reactions,
-    });
-    return res.json({ reactions });
+    const reactionsOf = (id) => dms.reactionsFor([req.dmMessage.id], id).get(req.dmMessage.id) ?? [];
+    pushEach(seeing(c, req.dmMessage), (id) => ({
+      type: 'dm:reactions', id: req.dmMessage.id, conversationId: c.id, reactions: reactionsOf(id),
+    }));
+    return res.json({ reactions: reactionsOf(req.user.id) });
   });
 }

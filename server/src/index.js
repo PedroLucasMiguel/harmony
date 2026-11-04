@@ -50,6 +50,7 @@ import { Music } from './music/service.js';
 import { classify } from './music/classify.js';
 import { Spotify } from './music/spotify.js';
 import { DirectMessages } from './dms.js';
+import { PrivateCalls, isCallRoom } from './calls.js';
 import { ChannelReads } from './reads.js';
 import { mountDirectMessages } from './dm-routes.js';
 import { Recovery, mountRecovery } from './recovery.js';
@@ -129,6 +130,13 @@ const uploads = new UploadSessions(chat);
 const soundpad = new Soundpad(db);
 const emojis = new Emojis(db);
 const dms = new DirectMessages(db);
+// `realtime` is made further down; by the time anything here is called it exists.
+const calls = new PrivateCalls({
+  dms,
+  ringMs: config.callRingMs,
+  onChange: (conversationId) => realtime?.callChanged(conversationId),
+  onEnded: (conversation, line, stillIn) => realtime?.callEnded(conversation, line, stillIn),
+});
 const reads = new ChannelReads(db);
 const recovery = new Recovery(db);
 /*
@@ -1995,6 +2003,7 @@ app.get('/api/uploads/:hash', requireLogin, (req, res) => sendUpload(req, res));
 mountDirectMessages(app, {
   requireLogin,
   dms,
+  calls,
   chat,
   accounts,
   push: (userIds, payload) => { for (const id of userIds) realtime?.toUser(id, payload); },
@@ -2010,7 +2019,7 @@ mountDirectMessages(app, {
  * in Harmony, so nobody is ringing and nobody is in one.
  */
 app.get('/api/inbox', requireLogin, (req, res) => {
-  res.json({ latest: dms.latest(req.user.id), ringing: false, inCall: false });
+  res.json({ latest: dms.latest(req.user.id), ringing: calls.ringingFor(req.user.id), inCall: calls.inCall(req.user.id) });
 });
 
 /** A key for loading uploads without headers. See GET /api/media/:hash. */
@@ -2204,6 +2213,13 @@ app.post('/mediamtx/auth', (req, res) => {
       return res.sendStatus(401);
     }
 
+    // A private call lets in only whoever is IN it. Its token is good for ten minutes, but somebody taken out of the
+    // group, or who has left the call, must not go on opening new paths for that long: their slot is gone.
+    if (isCallRoom(channelTarget.cid) && !calls.rooms.slot(channelTarget.cid, claim.mid)) {
+      console.warn(`[auth] call ${action} REJECTED for "${path}" (not in the call)`);
+      return res.sendStatus(401);
+    }
+
     if (action === 'read' || action === 'playback') {
       // Membership of the channel is the whole check: any member may watch any
       // other member. The hook never consults live presence, which keeps it
@@ -2349,6 +2365,8 @@ realtime = new Realtime({
   accounts,
   channels,
   voice,
+  calls,
+  dms,
   roles,
   badges,
   soundpad,
