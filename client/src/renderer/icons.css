@@ -31,6 +31,14 @@
 [data-icon='star'] { --icon: url('icons/star.svg'); }
 [data-icon='trash'] { --icon: url('icons/trash.svg'); }
 [data-icon='arrow-bend-up-left'] { --icon: url('icons/arrow-bend-up-left.svg'); }
+[data-icon='chart-bar-horizontal'] { --icon: url('icons/chart-bar-horizontal.svg'); }
+[data-icon='chats-teardrop'] { --icon: url('icons/chats-teardrop.svg'); }
+[data-icon='image-square'] { --icon: url('icons/image-square.svg'); }
+[data-icon='arrows-down-up'] { --icon: url('icons/arrows-down-up.svg'); }
+[data-icon='chat-teardrop'] { --icon: url('icons/chat-teardrop.svg'); }
+[data-icon='at'] { --icon: url('icons/at.svg'); }
+[data-icon='arrow-right'] { --icon: url('icons/arrow-right.svg'); }
+[data-icon='info'] { --icon: url('icons/info.svg'); }
 [data-icon='playlist'] { --icon: url('icons/playlist.svg'); }
 [data-icon='skip-back'] { --icon: url('icons/skip-back.svg'); }
 [data-icon='skip-forward'] { --icon: url('icons/skip-forward.svg'); }

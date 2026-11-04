@@ -5,6 +5,8 @@
 // wait on another -- is app.js's to say, and clicking one calls back; nothing
 // here talks to a server.
 
+import { createServerCard } from './server-card.js';
+
 const SVG = 'http://www.w3.org/2000/svg';
 
 /** A speech bubble, for private messages. */
@@ -28,6 +30,7 @@ const count = (n) => (n > 99 ? '99+' : String(n));
  * @param {HTMLElement} deps.root
  * @param {(key: string, params?: object) => string} deps.t
  * @param {(node: HTMLElement, spec: object) => void} deps.fillBadge  a server's picture, or its initial
+ * @param {(hash: string) => string} [deps.pictureUrl]  where a cached picture (a banner) is drawn from
  * @param {(url: string) => void} deps.onSelect  a server was chosen
  * @param {() => void} deps.onHome  private messages were chosen
  * @param {() => void} deps.onAdd  the "+" was pressed
@@ -35,8 +38,10 @@ const count = (n) => (n > 99 ? '99+' : String(n));
  * @param {(from: string, to: string, after: boolean) => void} [deps.onMove]  a server was dragged to a new place
  */
 export function createServerRail({
-  root, t, fillBadge, onSelect, onHome, onAdd, onMenu = () => {}, onMove = () => {},
+  root, t, fillBadge, pictureUrl = () => '', onSelect, onHome, onAdd, onMenu = () => {}, onMove = () => {},
 }) {
+  // What is shown when the pointer rests on a server, in place of the browser's own tooltip.
+  const card = createServerCard({ fillBadge, pictureUrl, root });
   /** The server being dragged, by address. */
   let dragging = null;
 
@@ -45,9 +50,9 @@ export function createServerRail({
    * @param {boolean} view.homeCurrent
    * @param {number} view.homeUnread
    * @param {boolean} view.homeAvailable  private messages can be opened (a server is signed in)
-   * @param {{url: string, name: string, logo: string|null, current: boolean,
+   * @param {{url: string, name: string, logo: string|null, banner: string|null, current: boolean,
    *   state: 'up'|'offline'|'locked'|'connecting', unread: number, mentions: number,
-   *   inCall: boolean}[]} view.servers
+   *   inCall: boolean, voice: boolean}[]} view.servers  `voice`: somebody is in one of its voice channels
    */
   function render({
     homeCurrent = false, homeUnread = 0, homeAvailable = true, servers = [],
@@ -75,17 +80,28 @@ export function createServerRail({
     separator.className = 'rail-separator';
     separator.setAttribute('role', 'separator');
 
+    /** @type {Map<string, {button: HTMLElement, info: object}>} */
+    const cards = new Map();
     const items = servers.map((server) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'rail-item';
       button.dataset.server = server.url;
       button.dataset.state = server.state;
-      button.title = server.name;
+      // No `title`: the card says it, and a browser tooltip beside it would say it twice.
       button.setAttribute('aria-label', server.name);
       if (server.current) button.setAttribute('aria-current', 'true');
       if (server.unread && !server.current) button.dataset.unread = '';
       if (server.inCall) button.dataset.inCall = '';
+      // Somebody is talking on a server you are neither looking at nor in a call on.
+      if (server.voice && !server.current && !server.inCall) {
+        const voice = document.createElement('span');
+        voice.className = 'rail-voice';
+        voice.dataset.icon = 'speaker-high';
+        voice.title = t('rail.voice_active');
+        voice.setAttribute('aria-hidden', 'true');
+        button.append(voice);
+      }
 
       const face = document.createElement('span');
       face.className = 'server-badge';
@@ -105,6 +121,9 @@ export function createServerRail({
         button.append(lock);
       }
       button.addEventListener('click', () => onSelect(server.url));
+      const info = { url: server.url, name: server.name, logo: server.logo, banner: server.banner ?? null };
+      card.attach(button, info);
+      cards.set(server.url, { button, info });
       button.addEventListener('contextmenu', (event) => {
         event.preventDefault();
         onMenu(server.url, event);
@@ -155,6 +174,7 @@ export function createServerRail({
     add.addEventListener('click', () => onAdd());
 
     root.replaceChildren(home, separator, ...items, add);
+    card.sync(cards);
   }
 
   return { render };

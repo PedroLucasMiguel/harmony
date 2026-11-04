@@ -299,8 +299,35 @@ function windowBackground() {
   return THEME_BACKGROUNDS[theme] ?? THEME_BACKGROUNDS.midnight;
 }
 
+/*
+ * The title bar is Harmony's own: a slim bar across the top, drawn by the page in the palette in use, with the system's
+ * window buttons over it -- the traffic lights on a Mac, the minimise, maximise and close buttons on Windows and Linux
+ * (an overlay Electron draws and the page colours: see window:titlebar). HARMONY_NATIVE_FRAME=1 keeps the system's own
+ * frame instead, which is what the tests run with so that their measurements start where they always did.
+ */
+const TITLEBAR_HEIGHT = 32;
+const customTitleBar = process.env.HARMONY_NATIVE_FRAME !== '1';
+
+/** Light symbols on a dark bar, dark on a light one. */
+function symbolOn(color) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color ?? '');
+  if (!m) return '#e6e8ee';
+  const [r, g, b] = [m[1], m[2], m[3]].map((h) => parseInt(h, 16));
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#1f2329' : '#e6e8ee';
+}
+
+function titleBarOptions() {
+  if (!customTitleBar) return {};
+  if (process.platform === 'darwin') {
+    return { titleBarStyle: 'hidden', trafficLightPosition: { x: 14, y: Math.round((TITLEBAR_HEIGHT - 12) / 2) } };
+  }
+  const color = windowBackground();
+  return { titleBarStyle: 'hidden', titleBarOverlay: { color, symbolColor: symbolOn(color), height: TITLEBAR_HEIGHT } };
+}
+
 function createWindow() {
   win = new BrowserWindow({
+    ...titleBarOptions(),
     width: 1180,
     height: 800,
     // Small enough to sit in a corner of a second monitor. The layout has
@@ -324,8 +351,12 @@ function createWindow() {
       // per-window form of the same thing.
       backgroundThrottling: false,
       sandbox: true,
+      // Tells the page whether it is to draw the title bar (see preload).
+      additionalArguments: customTitleBar ? ['--harmony-titlebar'] : [],
     },
   });
+  win.on('enter-full-screen', () => win.webContents.send('window:fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('window:fullscreen', false));
 
   /*
    * The zoom, applied on every load rather than once.
@@ -656,9 +687,9 @@ handle('api:probe', (_e, s, serverPassword) => api.probe(s, serverPassword));
  * checked against the hash /api/health reported, so what is cached under a
  * hash is always what that hash names.
  */
-handle('logos:ensure', async (_e, server, serverPassword, hash) => {
+handle('logos:ensure', async (_e, server, serverPassword, hash, kind) => {
   if (!logoCache || !HASH_RE.test(String(hash))) return null;
-  await logoCache.get(hash, () => api.fetchServerLogo(server, serverPassword));
+  await logoCache.get(hash, () => api.fetchServerLogo(server, serverPassword, kind === 'banner' ? 'banner' : 'logo'));
   return `harmony://app/server-logo/${hash}`;
 });
 handle('api:session-token', (_e, value, server) => api.setSessionToken(value, server));
@@ -774,6 +805,19 @@ function applyScale(percent) {
 }
 
 handle('app:scale', (_e, percent) => applyScale(percent));
+
+/** The title bar's colours, as the page has them in the palette it is showing: the window buttons are drawn over it. */
+handle('window:titlebar', (_e, { color, symbolColor } = {}) => {
+  if (!customTitleBar || process.platform === 'darwin' || !win || win.isDestroyed()) return false;
+  const hex = /^#[0-9a-f]{6}$/i;
+  if (!hex.test(color ?? '')) return false;
+  win.setTitleBarOverlay({
+    color, symbolColor: hex.test(symbolColor ?? '') ? symbolColor : symbolOn(color), height: TITLEBAR_HEIGHT,
+  });
+  win.setBackgroundColor(color);
+  return true;
+});
+handle('window:is-fullscreen', () => Boolean(win && !win.isDestroyed() && win.isFullScreen()));
 
 /** The size changed from the keyboard: applied, kept, and told to the page so that the slider shows it. */
 function nudgeScale(direction) {
@@ -942,7 +986,8 @@ handle('media:upload-chunk', (_e, server, id, offset, bytes) => api.uploadChunk(
 handle('media:upload-finish', (_e, server, id) => api.uploadFinish(server, id));
 handle('media:upload-cancel', (_e, server, id) => api.uploadCancel(server, id));
 
-handle('api:messages', (_e, s, id, before, until) => api.messages(s, id, before, until));
+handle('api:messages', (_e, s, id, before, until, thread) => api.messages(s, id, before, until, thread));
+handle('api:forum-posts', (_e, s, id, params) => api.forumPosts(s, id, params));
 handle('api:mark-read', (_e, s, id, upTo) => api.markRead(s, id, upTo));
 handle('api:unread', (_e, s) => api.unread(s));
 handle('api:dm-request', (_e, s, method, path, body) => api.dmRequest(s, method, path, body));
@@ -950,6 +995,8 @@ handle('api:dm-upload', (_e, s, id, bytes) => api.dmUpload(s, id, bytes));
 handle('api:dm-download', (_e, s, id, hash) => api.dmDownload(s, id, hash));
 handle('api:post-message', (_e, s, id, body) => api.postMessage(s, id, body));
 handle('api:pin-message', (_e, s, id, pinned) => api.pinMessage(s, id, pinned));
+handle('api:post-pin', (_e, s, id, pinned) => api.postPin(s, id, pinned));
+handle('api:vote-message', (_e, s, id, options) => api.voteMessage(s, id, options));
 handle('api:delete-message', (_e, s, id) => api.deleteMessage(s, id));
 handle('api:edit-message', (_e, s, id, body) => api.editMessage(s, id, body));
 handle('api:set-attachment', (_e, s, id, body) => api.setAttachment(s, id, body));

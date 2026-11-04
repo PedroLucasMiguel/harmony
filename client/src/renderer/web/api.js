@@ -427,10 +427,19 @@ export const api = {
     method: 'POST', body: upTo === undefined ? {} : { upTo: Number(upTo) },
   }),
   unread: (s) => requestJson(s, '/api/unread'),
-  messages: (s, id, before, until) =>
-    requestJson(s, `/api/channels/${id}/messages${before ? `?before=${Number(before)}` : until ? `?until=${Number(until)}` : ''}`),
+  messages: (s, id, before, until, thread) => {
+    const query = new URLSearchParams();
+    if (before) query.set('before', String(Number(before)));
+    else if (until) query.set('until', String(Number(until)));
+    if (thread) query.set('thread', String(Number(thread)));
+    const text = query.toString();
+    return requestJson(s, `/api/channels/${id}/messages${text ? `?${text}` : ''}`);
+  },
+  forumPosts: (s, id, params) => requestJson(s, `/api/channels/${id}/posts?${new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, String(v)]))}`),
   postMessage: (s, id, body) => requestJson(s, `/api/channels/${id}/messages`, { method: 'POST', body }),
   pinMessage: (s, id, pinned) => requestJson(s, `/api/messages/${id}/pin`, { method: 'POST', body: { pinned } }),
+  postPin: (s, id, pinned) => requestJson(s, `/api/messages/${id}/post-pin`, { method: 'POST', body: { pinned } }),
+  voteMessage: (s, id, options) => requestJson(s, `/api/messages/${id}/vote`, { method: 'POST', body: { options } }),
   deleteMessage: (s, id) => requestJson(s, `/api/messages/${id}/delete`, { method: 'POST' }),
   editMessage: (s, id, body) => requestJson(s, `/api/messages/${id}/edit`, { method: 'POST', body: { body } }),
   setAttachment: (s, id, body) => requestJson(s, `/api/messages/${id}/attachment`, { method: 'POST', body }),

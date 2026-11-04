@@ -213,10 +213,10 @@ async function warmLogos() {
   }
 }
 
-async function ensureLogo(server, serverPassword, hash) {
+async function ensureLogo(server, serverPassword, hash, kind = 'logo') {
   if (!/^[0-9a-f]{64}$/.test(String(hash))) return null;
   if (logoUrls.has(hash)) return logoUrls.get(hash);
-  const blob = await fetchBytes(server, '/api/server/logo', { serverPassword: serverPassword ?? '' });
+  const blob = await fetchBytes(server, `/api/server/${kind === 'banner' ? 'banner' : 'logo'}`, { serverPassword: serverPassword ?? '' });
   try {
     const cache = globalThis.caches ? await caches.open(LOGO_CACHE) : null;
     await cache?.put(logoKey(hash), new Response(blob, { headers: { 'Content-Type': blob.type } }));
@@ -323,6 +323,11 @@ await warmLogos();
 
 export const harmony = {
   platform: NATIVE ? 'android' : 'web',
+  // The browser and the phone have their own frame.
+  titleBar: false,
+  setTitleBar: async () => false,
+  isFullScreen: async () => false,
+  onFullScreen: () => () => {},
 
   /*
    * What this build can do. The desktop answers true to all of it; here the
@@ -376,7 +381,7 @@ export const harmony = {
   scaleDefault: PLATFORM_DEFAULTS.uiScale,
 
   logos: {
-    ensure: (server, serverPassword, hash) => ensureLogo(server, serverPassword, hash),
+    ensure: (server, serverPassword, hash, kind) => ensureLogo(server, serverPassword, hash, kind),
   },
   logoUrl: (hash) => logoUrls.get(hash) ?? '',
   version: async () => currentVersion,

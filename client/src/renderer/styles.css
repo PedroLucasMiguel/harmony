@@ -2565,7 +2565,7 @@ button.danger {
 .chat-msg {
   --row-pad: 0.15rem;
   /* The picture's width: a line without one keeps a column this wide, so every line's words share a left edge. */
-  --face: 1.6rem;
+  --face: 1.85rem;
 }
 /*
  * A message that names you is lit across the whole row, the picture too, from a bar at
@@ -11007,4 +11007,1491 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
 .dm-row:not([data-typing]) .dm-row-typing,
 .dm-row[data-typing] .dm-row-text {
   display: none;
+}
+
+/* ---------- polls ---------- */
+
+/*
+ * A poll in the log: a card under the name, the width of a comfortable line. Everything in it reads from the
+ * palette, so it follows the theme like the rest of the chat.
+ */
+.poll-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: min(26rem, 100%);
+  margin-top: 0.25rem;
+  padding: 0.8rem 0.9rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  background: var(--surface-2);
+}
+.poll-title {
+  font-weight: 700;
+  font-size: calc(1rem * var(--text-scale, 1));
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.poll-sub,
+.poll-footer,
+.poll-meta {
+  color: var(--muted);
+  font-size: calc(0.78rem * var(--text-scale, 1));
+}
+.poll-desc {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: calc(0.9rem * var(--text-scale, 1));
+}
+.poll-footer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.poll-cover {
+  width: 100%;
+  max-height: 14rem;
+  object-fit: cover;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+.poll-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.poll-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+}
+.poll-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.poll-choice:disabled {
+  cursor: default;
+}
+.poll-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+/* A circle for a poll that takes one answer, a rounded square for one that takes several. */
+.poll-check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border: 2px solid var(--border-strong);
+  border-radius: 50%;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.poll-check[data-kind='box'] {
+  border-radius: 6px;
+}
+.poll-choice:hover:not(:disabled) .poll-check {
+  border-color: var(--accent);
+}
+.poll-check[data-on] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.poll-check[data-on]::after {
+  content: '';
+  width: 0.3rem;
+  height: 0.6rem;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+.poll-text {
+  overflow-wrap: anywhere;
+}
+.poll-option[data-mine] .poll-text {
+  font-weight: 600;
+}
+.poll-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.poll-faces {
+  display: inline-flex;
+}
+.poll-faces .avatar {
+  width: 1.4rem;
+  height: 1.4rem;
+  font-size: 0.55rem;
+  margin: 0 0 0 -0.4rem;
+  box-shadow: 0 0 0 2px var(--surface-2);
+}
+.poll-faces .avatar:first-child {
+  margin-left: 0;
+}
+.poll-count {
+  min-width: 1ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.poll-bar {
+  grid-column: 1 / -1;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: rgb(var(--tint-rgb) / 0.12);
+  overflow: hidden;
+}
+.poll-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+/* Over: the bars stay, quieter, and nothing answers a click. */
+.poll-card[data-closed] .poll-fill {
+  background: var(--muted);
+}
+.poll-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.poll-view {
+  margin-top: 0.1rem;
+  padding: 0.5rem 0 0.1rem;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.poll-view:hover {
+  color: var(--accent-hover);
+}
+
+/* The dialog it is made in, and the one that lists who voted. */
+.poll-dialog,
+.poll-votes {
+  width: min(30rem, 94vw);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+.poll-dialog h3 {
+  margin: 0;
+  font-size: calc(0.78rem * var(--text-scale, 1));
+  font-weight: 600;
+  opacity: 0.7;
+}
+.poll-dialog textarea {
+  font: inherit;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid rgb(var(--tint-rgb) / 0.16);
+  background: var(--bg);
+  color: inherit;
+  resize: vertical;
+}
+.poll-section {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0.8rem 0 0.4rem;
+}
+.poll-option-count {
+  color: var(--muted);
+  font-size: calc(0.78rem * var(--text-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+.poll-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.7rem;
+}
+.poll-option-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.poll-option-row input {
+  flex: 1;
+  min-width: 0;
+}
+.poll-option-drop {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+}
+/* Kept in the row, only not seen, so that the options keep one width whether or not they can be removed. */
+.poll-option-drop[data-off] {
+  visibility: hidden;
+}
+.poll-picture {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+.poll-picture-preview {
+  max-width: 8rem;
+  max-height: 5rem;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.poll-dialog .check {
+  margin: 0.5rem 0;
+}
+.poll-dialog input[type='datetime-local'] {
+  margin: 0 0 0.4rem 3.4rem;
+}
+.poll-problem {
+  min-height: 1.2em;
+  margin: 0.2rem 0 0;
+  color: var(--danger-soft);
+}
+.poll-hidden {
+  color: var(--muted);
+}
+.poll-voters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.poll-voter-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.poll-voter-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.poll-voter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.poll-nobody {
+  margin: 0.3rem 0 0;
+}
+
+/* ---------- the server's head: its name and banner, at the top of the channel list ---------- */
+
+/*
+ * The strip across the top used to carry the server's picture and name. They are at the top of the channel list now,
+ * and the strip keeps the buttons. The head is drawn inside the list (so it is as wide as the list is, however far
+ * that has been dragged) and lifted out of it, up through the strip's height to the top of the window: --band is that
+ * height, which the strip is given exactly. A banner makes the head taller than the strip by --head-extra, and the
+ * list under it is moved down by as much.
+ */
+#view-channels {
+  --band: 3.75rem;
+  --head-extra: 0rem;
+}
+#view-channels[data-server-banner] {
+  --head-extra: 1.9rem;
+}
+#view-channels > .bar {
+  box-sizing: border-box;
+  height: var(--band);
+  padding-top: 0;
+  padding-bottom: 0;
+  flex-wrap: nowrap;
+}
+/* What is left of the server in the strip is nothing: the name is in the head. (A narrow screen brings it back, below.) */
+#view-channels .bar-left > #server-icon,
+#view-channels .bar-left > #server-name {
+  display: none;
+}
+#view-channels .bar-right {
+  margin-left: auto;
+}
+
+.server-head {
+  position: absolute;
+  z-index: 6;
+  top: calc(-1 * (var(--band) + 1rem));
+  left: -1rem;
+  right: 0;
+  height: calc(var(--band) + var(--head-extra));
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: calc((var(--band) - 1.9rem) / 2) 0.9rem 0 1rem;
+  overflow: hidden;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+#view-channels[data-server-banner] .server-head {
+  border-bottom: none;
+  background: var(--surface-2);
+}
+.server-head-banner {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+.server-head-banner[hidden] {
+  display: none;
+}
+/* A scrim from the top, so the name reads over a light picture as it does over a dark one. */
+#view-channels[data-server-banner] .server-head::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.62), rgb(0 0 0 / 0.1) 70%, transparent);
+  pointer-events: none;
+}
+.server-head > .server-badge,
+.server-head-text {
+  position: relative;
+}
+.server-head-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  /* As tall as the picture beside it, so the one line of a name sits level with it. */
+  min-height: 1.9rem;
+}
+.server-head-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(0.95rem * var(--text-scale, 1));
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+}
+.server-head-role {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(0.72rem * var(--text-scale, 1));
+  line-height: 1.1;
+}
+#view-channels[data-server-banner] .server-head-name,
+#view-channels[data-server-banner] .server-head-role {
+  color: #fff;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.7);
+}
+/* The list gives way to a head that is taller than the strip. */
+#view-channels .channel-list {
+  padding-top: calc(var(--head-extra) - 0.5rem);
+}
+#view-channels:not([data-server-banner]) .channel-list {
+  padding-top: 0;
+}
+
+/* The server's banner, in the owner's settings: a strip the shape it is cut to. */
+.server-banner-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.server-banner-preview {
+  flex: none;
+  display: block;
+  width: 12rem;
+  aspect-ratio: 3 / 1;
+  border-radius: 8px;
+  border: 1px dashed var(--border-strong);
+  background: rgb(var(--tint-rgb) / 0.06);
+  overflow: hidden;
+}
+.server-banner-preview[data-has] {
+  border-style: solid;
+}
+.server-banner-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.server-banner-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
+  /* The strip names the server again, and the head is the top of the drawer. */
+  #view-channels .bar-left > #server-icon {
+    display: grid;
+  }
+  #view-channels .bar-left > #server-name {
+    display: block;
+  }
+  #view-channels > .bar {
+    height: auto;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .server-head {
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    flex: none;
+    margin: -0.8rem -0.8rem 0.6rem;
+    height: calc(var(--band) + var(--head-extra));
+  }
+  #view-channels .channel-list,
+  #view-channels:not([data-server-banner]) .channel-list {
+    padding-top: 0.8rem;
+  }
+}
+
+/* ---------- forum channels ---------- */
+
+/*
+ * A forum's stage is its list of posts. Opening a post puts its thread -- the chat pane -- beside the list, which
+ * narrows to a column of its own; closing it gives the list the whole stage again.
+ */
+.channel-stage[data-forum] {
+  flex-direction: row;
+  gap: 1rem;
+}
+.channel-stage[data-forum] > #forum-active {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.channel-stage[data-forum][data-thread] > #forum-active {
+  flex: 0 0 clamp(14rem, 30%, 22rem);
+}
+/* With a post open there is a list and a thread to fit: the member list steps aside until it is closed. */
+.channels-layout[data-members]:has(.channel-stage[data-thread]) {
+  grid-template-columns: var(--side-col, minmax(calc(200px * var(--text-scale, 1)), calc(260px * var(--text-scale, 1)))) minmax(0, 1fr);
+}
+.channels-layout[data-members]:has(.channel-stage[data-thread]) .member-list {
+  display: none;
+}
+.channel-stage[data-forum][data-thread] > #chat-active {
+  flex: 1 1 0;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  padding-left: 1rem;
+}
+.forum {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.forum[data-drop]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  background: rgb(var(--accent-rgb) / 0.08);
+  pointer-events: none;
+}
+.forum-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.6rem 0 0.8rem;
+}
+.forum-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.forum-search:focus-within {
+  border-color: var(--accent);
+}
+.forum-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.forum-new {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+.forum-sort-wrap {
+  position: relative;
+  align-self: flex-start;
+}
+.forum-sort-wrap .search-menu {
+  right: auto;
+  left: 0;
+}
+.forum-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.forum-posts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.forum-post {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.forum-post:hover {
+  border-color: var(--border-strong);
+}
+.forum-post:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.forum-post[data-active] {
+  border-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 0.1);
+}
+.forum-post-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.forum-post-title {
+  margin: 0;
+  font-size: calc(1.05rem * var(--text-scale, 1));
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.forum-post-snippet {
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(0.85rem * var(--text-scale, 1));
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.forum-post-snippet .who {
+  color: var(--text);
+}
+.forum-post-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.7rem;
+  color: var(--muted);
+  font-size: calc(0.8rem * var(--text-scale, 1));
+}
+.forum-post-reactions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.forum-post-reactions .reaction {
+  cursor: default;
+}
+.forum-post-replies::before {
+  content: '';
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.3em;
+  vertical-align: -0.12em;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+.forum-post-thumb {
+  flex: none;
+  width: 5.2rem;
+  height: 3.6rem;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.forum-empty {
+  padding: 2rem 0;
+  text-align: center;
+}
+.forum-more {
+  display: block;
+  margin: 0.8rem auto 0.4rem;
+}
+
+/* The card a post is started in. */
+.forum-compose {
+  margin-bottom: 0.8rem;
+  padding: 0.7rem 0.8rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.forum-compose[data-drop] {
+  border-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 0.1);
+}
+.forum-compose-grid {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+.forum-compose-words {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.forum-compose-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.forum-compose-title,
+.forum-compose-body {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.forum-compose-title {
+  font-weight: 700;
+  font-size: calc(1.05rem * var(--text-scale, 1));
+}
+.forum-compose-body {
+  display: block;
+  resize: none;
+  min-height: 3rem;
+  margin-top: 0.3rem;
+  padding-left: 2.1rem;
+  box-sizing: border-box;
+}
+.forum-compose input::placeholder,
+.forum-compose textarea::placeholder {
+  color: var(--muted);
+}
+.forum-compose-media {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 4.2rem;
+  height: 4.2rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgb(var(--tint-rgb) / 0.06);
+  color: var(--muted);
+  font-size: 0;
+  cursor: pointer;
+}
+.forum-compose-media::before {
+  font-size: 1.6rem;
+}
+.forum-compose-media:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.forum-compose-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0 2.1rem;
+}
+.forum-compose-previews[hidden] {
+  display: none;
+}
+.forum-compose-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 4rem;
+  max-width: 9rem;
+  height: 4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.forum-compose-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.forum-compose-file {
+  padding: 0 0.5rem;
+  font-size: calc(0.75rem * var(--text-scale, 1));
+  overflow-wrap: anywhere;
+}
+.forum-compose-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+  font-size: 0;
+  cursor: pointer;
+}
+.forum-compose-remove::before {
+  font-size: 0.75rem;
+}
+.forum-compose-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+}
+.forum-compose-problem {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--danger-soft);
+  font-size: calc(0.8rem * var(--text-scale, 1));
+}
+.forum-compose-post {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* A post's thread, in the chat pane: its title, the line under the post, and who started it. */
+.post-title {
+  margin: 0.2rem 0 0.8rem;
+  font-size: calc(1.6rem * var(--text-scale, 1));
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.post-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.6rem 0 0.8rem;
+  color: var(--muted);
+  font-size: calc(0.78rem * var(--text-scale, 1));
+}
+.post-divider::before,
+.post-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+.op-badge {
+  margin-left: 0.3rem;
+  padding: 0 0.35rem;
+  border-radius: 4px;
+  background: rgb(var(--accent-rgb) / 0.25);
+  color: var(--accent);
+  font-size: calc(0.65rem * var(--text-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: 0.1em;
+}
+#chat-close-post[hidden] {
+  display: none;
+}
+
+/* With a post open the list is a narrow column: New Post keeps to its icon, and the search keeps its room. */
+.channel-stage[data-thread] .forum-new {
+  font-size: 0;
+  padding: 0.35rem 0.55rem;
+}
+.channel-stage[data-thread] .forum-new::before {
+  font-size: 1rem;
+  margin: 0;
+}
+/* The forum's search box is a row, not the channel search's absolutely placed field. */
+.forum-search .search-box-icon {
+  position: static;
+  flex: none;
+  color: var(--muted);
+}
+.forum-compose input.forum-compose-title {
+  padding: 0.25rem 0.3rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.forum-compose textarea.forum-compose-body {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+@media (max-width: 720px), (pointer: coarse) and (max-height: 500px) {
+  .channels-layout[data-members]:has(.channel-stage[data-thread]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* On a phone the list and the post are one at a time: the post covers the list, and its X goes back. */
+  .channel-stage[data-forum][data-thread] > #forum-active {
+    display: none;
+  }
+  .channel-stage[data-forum][data-thread] > #chat-active {
+    border-left: 0;
+    padding-left: 0;
+  }
+}
+
+/* ---------- who reacted ---------- */
+
+/* The card that opens when the pointer rests on a reaction. */
+.reactions-card {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  max-width: min(22rem, calc(100vw - 16px));
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  font-size: calc(0.88rem * var(--text-scale, 1));
+}
+.reactions-card-emoji {
+  flex: none;
+  font-size: 2.4rem;
+  line-height: 1;
+}
+.reactions-card-emoji .emoji-img,
+.reactions-glyph .emoji-img {
+  height: 1em;
+  width: auto;
+  vertical-align: middle;
+}
+.reactions-card-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.reactions-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.reactions-others {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.reactions-others:hover {
+  text-decoration: underline;
+}
+
+/* The window that lists everybody: the emoji down the left, who chose the picked one on the right. */
+.reactions-dialog {
+  width: min(30rem, 94vw);
+  height: min(36rem, 86vh);
+  padding: 0;
+  overflow: hidden;
+}
+.reactions-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.reactions-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+.reactions-head h2 {
+  margin: 0;
+}
+.reactions-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.reactions-tabs {
+  flex: none;
+  width: 6.2rem;
+  padding: 0.5rem;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.reactions-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.reactions-tab:hover {
+  background: rgb(var(--tint-rgb) / 0.08);
+}
+.reactions-tab[aria-selected='true'] {
+  background: rgb(var(--accent-rgb) / 0.18);
+  color: var(--text);
+  font-weight: 700;
+}
+.reactions-glyph {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+.reactions-count {
+  font-variant-numeric: tabular-nums;
+}
+.reactions-people {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0.4rem 0.8rem;
+  list-style: none;
+  overflow-y: auto;
+}
+.reactions-person {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0.2rem;
+}
+.reactions-avatar {
+  flex: none;
+}
+.reactions-names {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.reactions-names strong,
+.reactions-names small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- forum: pinned posts, mentions, what a row offers ---------- */
+
+.forum-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.forum-filters .forum-sort-wrap {
+  align-self: auto;
+}
+.forum-mentions[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 0.2);
+  color: var(--text);
+}
+.forum-post {
+  position: relative;
+}
+.forum-post-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.forum-post-pin {
+  flex: none;
+  color: var(--accent);
+  font-size: 0.95rem;
+}
+/* A pinned post is set apart from the rest, which follow below it. */
+.forum-post[data-post-pinned] {
+  border-color: rgb(var(--accent-rgb) / 0.45);
+}
+/* A post that mentions you is lit, as a message that does is in a channel. */
+.forum-post[data-mention] {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: rgb(var(--accent-rgb) / 0.07);
+}
+.forum-post-mention {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.forum-post-tools {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  display: none;
+  gap: 0.2rem;
+  padding: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.forum-post:hover .forum-post-tools,
+.forum-post:focus-within .forum-post-tools {
+  display: inline-flex;
+}
+@media (pointer: coarse) {
+  .forum-post-tools {
+    display: inline-flex;
+  }
+}
+
+/* ---------- the title bar ---------- */
+
+/*
+ * Where the window has no frame of its own (data-titlebar, set from the desktop app) the page draws a slim bar across
+ * the top, in the palette in use: back and forward on the left, the server at the middle, and the system's window
+ * buttons over the ends -- the traffic lights on a Mac, the three buttons elsewhere (told this bar's colours: see
+ * syncTitleBar). The rest of the page starts under it: it is the top safe area, as a phone's status bar is.
+ */
+:root {
+  --titlebar-h: 32px;
+}
+.titlebar {
+  display: none;
+}
+html[data-titlebar] {
+  --safe-area-inset-top: var(--titlebar-h);
+}
+html[data-titlebar] .titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-h);
+  box-sizing: border-box;
+  /* Room for the system's buttons: the traffic lights at the left on a Mac, the three buttons at the right elsewhere. */
+  padding: 0 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  /* Dragging the bar moves the window; a double click on it maximises it. */
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.titlebar[hidden] {
+  display: none !important;
+}
+html[data-titlebar][data-platform='darwin'] .titlebar {
+  padding-left: 82px;
+}
+html[data-titlebar][data-platform='darwin'][data-fullscreen] .titlebar {
+  padding-left: 12px;
+}
+html[data-titlebar]:not([data-platform='darwin']) .titlebar {
+  padding-right: 146px;
+}
+.titlebar-side {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.titlebar-btn {
+  -webkit-app-region: no-drag;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 0;
+  cursor: pointer;
+}
+.titlebar-btn::before {
+  font-size: 15px;
+}
+.titlebar-btn:hover:not(:disabled) {
+  background: rgb(var(--tint-rgb) / 0.12);
+  color: var(--text);
+}
+.titlebar-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+/* The server, at the middle of the window whatever is at its sides. */
+.titlebar-title {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 40%;
+  pointer-events: none;
+}
+.titlebar-title .server-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 10px;
+}
+.titlebar-title .server-badge[hidden] {
+  display: none;
+}
+.titlebar-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(0.82rem * var(--text-scale, 1));
+  font-weight: 600;
+}
+
+/* ---------- about ---------- */
+
+.titlebar-end {
+  margin-left: auto;
+}
+.about-dialog {
+  width: min(30rem, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.about-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  margin-bottom: 0.9rem;
+  text-align: center;
+}
+.about-logo {
+  width: 60px;
+  height: 60px;
+}
+.about-head h2 {
+  margin: 0.4rem 0 0;
+  font-size: calc(1.5rem * var(--text-scale, 1));
+}
+.about-head p {
+  margin: 0;
+}
+.about-version {
+  color: var(--muted);
+  font-size: calc(0.85rem * var(--text-scale, 1));
+}
+.about-version strong {
+  color: var(--text);
+  user-select: text;
+}
+.about-tagline {
+  max-width: 24rem;
+  margin-top: 0.3rem !important;
+}
+.about-body section {
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--border);
+}
+.about-body h3 {
+  margin: 0 0 0.3rem;
+  font-size: calc(0.78rem * var(--text-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.about-body p {
+  margin: 0.2rem 0;
+  font-size: calc(0.88rem * var(--text-scale, 1));
+}
+.about-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.about-body a:hover {
+  text-decoration: underline;
+}
+.about-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: calc(0.88rem * var(--text-scale, 1));
+}
+
+/* ---- the card over a server in the rail ------------------------------------------------------------------------- */
+
+.server-card {
+  position: fixed;
+  z-index: 90;
+  box-sizing: border-box;
+  width: min(15rem, calc(100vw - 96px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  /* Never in the way of what the pointer does next. */
+  pointer-events: none;
+}
+.server-card-banner {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  object-fit: cover;
+}
+.server-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.8rem 0.9rem;
+}
+/* With a banner the picture sits across its lower edge, as on the server's own page. */
+.server-card[data-banner] .server-card-head {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding-top: 0;
+}
+.server-card[data-banner] .server-card-icon {
+  margin-top: -28px;
+  border: 3px solid var(--surface-2);
+  box-sizing: content-box;
+  /* The tint a picture-less badge has, on the card's own colour, so that the ring around it stays clean. */
+  background: linear-gradient(rgb(var(--accent-rgb) / 0.22), rgb(var(--accent-rgb) / 0.22)), var(--surface-2);
+  background-origin: padding-box;
+  background-clip: padding-box, border-box;
+}
+.server-card-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: calc(1rem * var(--text-scale, 1));
+}
+
+/* ---------- status: online, idle, do not disturb, invisible ---------- */
+
+:root {
+  --status-online: #3ba55d;
+  --status-idle: #f0b232;
+  --status-dnd: #f23f43;
+  --status-invisible: #80848e;
+}
+/* The picture and the dot on its corner. */
+.self-face {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+}
+.status-face {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  line-height: 0;
+}
+.status-dot,
+.status-button {
+  --status-color: var(--status-online);
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--status-color);
+}
+[data-status='online'] {
+  --status-color: var(--status-online);
+}
+[data-status='idle'] {
+  --status-color: var(--status-idle);
+}
+[data-status='dnd'] {
+  --status-color: var(--status-dnd);
+}
+[data-status='invisible'] {
+  --status-color: var(--status-invisible);
+}
+.status-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid var(--bg);
+}
+/* Not by colour alone: idle has a bite out of it, do not disturb a bar across it, invisible is a ring. */
+.status-dot[data-status='idle'],
+.status-button[data-status='idle'] {
+  background: radial-gradient(circle at 28% 28%, var(--surface-2, var(--bg)) 0 32%, var(--status-idle) 34%);
+}
+.status-dot[data-status='dnd']::after,
+.status-button[data-status='dnd']::after {
+  content: '';
+  position: absolute;
+  inset: 50% 18% auto;
+  height: 22%;
+  border-radius: 2px;
+  background: var(--bg);
+  transform: translateY(-50%);
+}
+.status-button {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 0.9rem;
+  height: 0.9rem;
+  padding: 0;
+  border: 2px solid var(--surface);
+  cursor: pointer;
+}
+.status-button:hover {
+  transform: scale(1.2);
+}
+.status-button[data-status='invisible'],
+.status-dot[data-status='invisible'] {
+  background: var(--surface);
+  border-color: var(--status-invisible);
+}
+/* In the menu: the dot, then the word, and a mark on the one that is chosen. */
+.menu-item[data-status]::before {
+  content: '';
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.55rem;
+  border-radius: 50%;
+  background: var(--status-color);
+  vertical-align: baseline;
+}
+.menu-item[data-status='invisible']::before {
+  background: none;
+  border: 2px solid var(--status-invisible);
+  box-sizing: border-box;
+}
+.menu-item[data-status][aria-current='true'] {
+  font-weight: 700;
+}
+.profile-card-status[data-status='idle'] {
+  background: var(--status-idle);
+}
+.profile-card-status[data-status='dnd'] {
+  background: var(--status-dnd);
+}
+
+/* Whose card it is, when it is of somebody on a server that is not on screen (from the private messages). */
+.profile-card-server {
+  font-size: calc(0.78rem * var(--text-scale, 1));
+  color: var(--muted);
+}
+
+/* ---------- #channel in a message: pressed, it opens the channel ---------- */
+
+.channel-link {
+  padding: 0 0.2em;
+  border-radius: 4px;
+  background: rgb(var(--accent-rgb) / 0.16);
+  color: var(--accent);
+  cursor: pointer;
+}
+.channel-link:hover,
+.channel-link:focus-visible {
+  background: rgb(var(--accent-rgb) / 0.3);
+  outline: none;
+  text-decoration: underline;
+}
+/* The channel's own mark in the list that completes it. */
+#mention-items .kind {
+  flex: none;
+  color: var(--muted);
+}
+
+/* ---------- pictures, a little larger ---------- */
+
+/* The member list: 1.5em was small next to a name. */
+#member-items .status-face .avatar.tiny {
+  width: 1.85em;
+  height: 1.85em;
+}
+/* Voice: the people in the call, and under a voice channel in the list. */
+#voice-roster li .avatar {
+  width: 2.2em;
+  height: 2.2em;
+}
+.channel-member .avatar.tiny {
+  width: 2.3em;
+  height: 2.3em;
+}
+/* In messages the picture is --face wide; its initials follow. */
+.avatar.msg-avatar {
+  font-size: 0.8em;
+}
+
+/* Somebody is in a voice channel on a server that is not open: a small speaker on the corner of its bubble. */
+.rail-voice {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--bg);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+}
+.rail-voice::before {
+  width: 12px;
+  height: 12px;
 }

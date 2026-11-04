@@ -13,6 +13,20 @@ const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 contextBridge.exposeInMainWorld('harmony', {
   platform: process.platform,
 
+  /** Whether the window has no frame of its own, so that the page draws the title bar (see main/index.js). */
+  titleBar: process.argv.includes('--harmony-titlebar'),
+  setTitleBar: invoke('window:titlebar'),
+  isFullScreen: invoke('window:is-fullscreen'),
+  /**
+   * Fires when the window goes into or out of full screen, where the Mac's traffic lights are not there.
+   * @param {(on: boolean) => void} handler
+   */
+  onFullScreen(handler) {
+    const listener = (_event, on) => handler(on);
+    ipcRenderer.on('window:fullscreen', listener);
+    return () => ipcRenderer.removeListener('window:fullscreen', listener);
+  },
+
   settings: {
     get: invoke('settings:get'),
     set: invoke('settings:set'),
@@ -271,6 +285,7 @@ contextBridge.exposeInMainWorld('harmony', {
     banUser: invoke('api:ban-user'),
     updateGroup: invoke('api:update-group'),
     messages: invoke('api:messages'),
+    forumPosts: invoke('api:forum-posts'),
     markRead: invoke('api:mark-read'),
     unread: invoke('api:unread'),
     dmRequest: invoke('api:dm-request'),
@@ -278,6 +293,8 @@ contextBridge.exposeInMainWorld('harmony', {
     dmDownload: invoke('api:dm-download'),
     postMessage: invoke('api:post-message'),
     pinMessage: invoke('api:pin-message'),
+    voteMessage: invoke('api:vote-message'),
+    postPin: invoke('api:post-pin'),
     deleteMessage: invoke('api:delete-message'),
     editMessage: invoke('api:edit-message'),
     setAttachment: invoke('api:set-attachment'),

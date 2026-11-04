@@ -14,6 +14,7 @@
 // on any device clears them (channel:read).
 
 import { serverKeyOf } from './server-key.js';
+import { isCallRoom } from './calls-ui.js';
 
 /** How often a connection nobody is looking at is touched, so an idle session is not swept as abandoned. */
 export const KEEP_ALIVE_MS = 12 * 60 * 60 * 1000;
@@ -26,8 +27,12 @@ export function newSession(url) {
     /** connecting | up | down | locked */
     status: 'connecting',
     user: null,
+    /** Do not disturb on that server: its mentions are counted and marked, and make no sound. */
+    dnd: false,
     /** channelId -> {unread, mentions} */
     counts: new Map(),
+    /** voice channelId -> how many people are in it (private calls are not channels, and are not here) */
+    voice: new Map(),
   };
 }
 
@@ -45,6 +50,11 @@ export function totals(session) {
 /** What the server said when the connection said hello: who you are and what is new. */
 export function applyHello(session, hello) {
   session.user = hello.user ?? session.user;
+  session.dnd = hello.status === 'dnd';
+  // Who is in which voice channel: the hello says, and the rosters pushed after it keep it.
+  session.voice = new Map(Object.entries(hello.occupancy ?? {})
+    .map(([id, count]) => [Number(id), Number(count)])
+    .filter(([id, count]) => !isCallRoom(id) && count > 0));
   session.counts = new Map();
   for (const entry of hello.unread ?? []) {
     session.counts.set(entry.channelId, { unread: entry.unread, mentions: entry.mentions });
@@ -185,7 +195,19 @@ export function createBackgroundSessions({
         onRejected(session.url);
         break;
       case 'message':
-        if (applyMessage(session, msg.message)) onMention(session.url, msg.message);
+        // Counted either way; do not disturb only keeps it quiet.
+        if (applyMessage(session, msg.message) && !session.dnd) onMention(session.url, msg.message);
+        break;
+      case 'presence:self':
+        session.dnd = msg.status === 'dnd';
+        break;
+      case 'voice:roster':
+        if (!isCallRoom(msg.channelId)) {
+          const count = msg.roster?.length ?? 0;
+          if (count > 0) session.voice.set(msg.channelId, count);
+          else session.voice.delete(msg.channelId);
+        }
+        // Falls out to onChange below: the bubble hears of it with the push itself, not at the rail's next redraw.
         break;
       case 'message:deleted':
         applyDeleted(session, msg.channelId);
@@ -239,10 +261,14 @@ export function createBackgroundSessions({
     touch,
     has: (url) => sessions.has(serverKeyOf(url)),
     keys: () => [...sessions.keys()],
+    /** Who you are on that server, or null if it is not kept live. */
+    userOf: (url) => find(url)?.user ?? null,
+    /** The servers with a connection that is up, by address: where a message to the server can go. */
+    urls: () => [...sessions.values()].filter((s) => s.status === 'up').map((s) => s.url),
     /** What the rail shows of one server, or null if it is not kept live. */
     summary(url) {
       const session = find(url);
-      return session ? { status: session.status, ...totals(session) } : null;
+      return session ? { status: session.status, voice: session.voice.size > 0, ...totals(session) } : null;
     },
   };
 }

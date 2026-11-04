@@ -16,6 +16,9 @@ import {
   b64, openFile, sealFile, unb64,
 } from './dm-crypto.js';
 import { KeyState, SealFailed, SealError, Vault } from './dm-vault.js';
+import {
+  cleanPoll, isClosed, optionOfToken, pollBody, withVotes,
+} from './poll.js';
 
 /** The longest message body: what a channel allows, and what the server's size limit is built for. */
 export const MAX_BODY = 4000;
@@ -497,9 +500,19 @@ export class DmSession {
    * the message it answers (`reply`: an opened message). Shows when the server
    * echoes it back, as a channel's does.
    */
-  async send(conversationId, { body = '', file = null, reply = null } = {}) {
+  async send(conversationId, {
+    body = '', file = null, reply = null, poll = null,
+  } = {}) {
     const c = this.conversations.get(conversationId);
     if (!c) throw new DmError('no_such_conversation', 'No such conversation.');
+    // A poll says its question and its options as words too, for what shows a message as text only.
+    let kept = null;
+    if (poll) {
+      const cleaned = cleanPoll(poll);
+      if (!cleaned.ok) throw new DmError(cleaned.error, cleaned.error);
+      kept = cleaned.poll;
+      body = pollBody(kept);
+    }
     if (body.length > MAX_BODY) throw new DmError('too_long', `Messages are limited to ${MAX_BODY} characters.`);
     if (!body.trim() && !file) throw new DmError('empty_message', 'There is nothing to send.');
 
@@ -520,7 +533,9 @@ export class DmSession {
       ...(reply.attachmentName ? { attachmentName: reply.attachmentName } : {}),
     } : undefined;
 
-    const payload = { body, file: attachment?.file, reply: quote };
+    const payload = {
+      body, file: attachment?.file, reply: quote, ...(kept ? { poll: kept } : {}),
+    };
     const group = DmSession.isGroup(c);
     const res = await this.#sealAndSend(
       () => (group
@@ -546,6 +561,7 @@ export class DmSession {
     const found = this.#find(messageId);
     if (!found) throw new DmError('no_such_message', 'No such message.');
     const { message, conversation } = found;
+    if (message.poll) throw new DmError('poll_not_editable', 'A poll cannot be edited.');
     if (body.length > MAX_BODY) throw new DmError('too_long', `Messages are limited to ${MAX_BODY} characters.`);
     const payload = {
       body,
@@ -582,10 +598,41 @@ export class DmSession {
   async toggleReaction(messageId, emoji) {
     const found = this.#find(messageId);
     if (!found) throw new DmError('no_such_message', 'No such message.');
-    const { message, conversation } = found;
-    const mine = message.reactions.filter((r) => r.userIds.includes(this.#me.id)).map((r) => r.emoji);
-    const next = mine.includes(emoji) ? mine.filter((e) => e !== emoji) : [...mine, emoji].slice(0, 20);
+    const mine = this.#mineOn(found.message);
+    // The votes of a poll are in the same list and are not the emoji's to touch.
+    const votes = mine.filter((e) => optionOfToken(e) !== null);
+    const emojis = mine.filter((e) => optionOfToken(e) === null);
+    const next = emojis.includes(emoji) ? emojis.filter((e) => e !== emoji) : [...emojis, emoji].slice(0, 20);
+    await this.#putReactions(found, [...next, ...votes]);
+  }
 
+  /**
+   * Your vote in a poll: `options` is everything you choose and replaces what you chose before; none takes the vote
+   * back. Sealed as one of your reactions, which is all the server sees of it (see poll.js).
+   */
+  async votePoll(messageId, options) {
+    const found = this.#find(messageId);
+    if (!found) throw new DmError('no_such_message', 'No such message.');
+    const { poll } = found.message;
+    if (!poll) throw new DmError('not_a_poll', 'That is not a poll.');
+    // Closed is read from this computer's clock: nothing else here could say it, and a private poll is agreed on
+    // between the people who take part.
+    if (isClosed(poll)) throw new DmError('poll_closed', 'This poll has closed.');
+    const chosen = [...new Set(options)];
+    if (chosen.some((o) => !Number.isInteger(o) || o < 0 || o >= poll.options.length) || (!poll.multiple && chosen.length > 1)) {
+      throw new DmError('bad_vote', 'That is not a vote this poll can take.');
+    }
+    await this.#putReactions(found, withVotes(this.#mineOn(found.message), chosen));
+  }
+
+  /** Everything this person has put on a message, as the list that is sealed. */
+  #mineOn(message) {
+    return message.reactions.filter((r) => r.userIds.includes(this.#me.id)).map((r) => r.emoji);
+  }
+
+  /** Seal `next` as this person's reactions to a message, or take them all back when it is empty. */
+  async #putReactions({ message, conversation }, next) {
+    const messageId = message.id;
     let res;
     if (!next.length) {
       res = await this.#req('POST', `/api/dm-messages/${messageId}/react`, { sealed: null });

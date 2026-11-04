@@ -27,7 +27,7 @@ const HEARTBEAT_MS = 15_000;
 export class Realtime {
   #wss;
   #deps;
-  /** @type {Map<import('ws').WebSocket, {user: object, alive: boolean}>} */
+  /** @type {Map<import('ws').WebSocket, {user: object, alive: boolean, away: boolean}>} */
   #clients = new Map();
   #timer = null;
   /** Music Buddy's controls, per person: pressing them is cheap to do and not cheap to serve (a track is fetched). */
@@ -77,7 +77,7 @@ export class Realtime {
     // cannot set request headers, so the token cannot travel in an
     // Authorization header. It arrives in a `hello` frame instead, and nothing
     // else is accepted until it does.
-    this.#clients.set(ws, { user: null, alive: true });
+    this.#clients.set(ws, { user: null, alive: true, away: false });
 
     ws.on('pong', () => {
       const client = this.#clients.get(ws);
@@ -121,6 +121,7 @@ export class Realtime {
 
   #onClose(ws) {
     const client = this.#clients.get(ws);
+    const before = client?.user ? this.#statusOf(client.user.id) : null;
     this.#clients.delete(ws);
     if (!client?.user) return;
 
@@ -128,7 +129,11 @@ export class Realtime {
     // Nothing has to be reconciled, and a server restart rebuilds the whole
     // picture from whoever reconnects.
     const stillOnline = this.#isOnline(client.user.id);
-    if (stillOnline) return;
+    if (stillOnline) {
+      // The window that closed may have been the only one in use: the person is idle now.
+      if (this.#statusOf(client.user.id) !== before) this.broadcastPresence();
+      return;
+    }
 
     for (const { channelId } of this.#deps.voice.leaveAll(client.user.id)) {
       this.#broadcastRoster(channelId);
@@ -150,16 +155,52 @@ export class Realtime {
    * A Set, so two windows count once.
    */
   onlineUserIds() {
-    const out = new Set();
+    return this.presenceView().online;
+  }
+
+  /**
+   * What somebody is, to everybody else: null when they have no socket open, else one of PRESENCE_STATUSES.
+   *
+   * What they chose, except that a person who chose "online" and whose every window says it has not been touched
+   * (`presence:away`) is idle. Like the rest of presence it is derived, not stored.
+   */
+  #statusOf(userId) {
+    let open = false;
+    let active = false;
     for (const client of this.#clients.values()) {
-      if (client.user) out.add(client.user.id);
+      if (client.user?.id !== userId) continue;
+      open = true;
+      if (!client.away) active = true;
     }
-    return [...out];
+    if (!open) return null;
+    const chosen = this.#deps.accounts.byId(userId)?.presence_status ?? 'online';
+    if (chosen === 'online') return active ? 'online' : 'idle';
+    return chosen;
+  }
+
+  /**
+   * Who is on, and who of them is not plain "online": `online` lists everybody but the invisible (who are, as far as
+   * anybody else can tell, offline), `statuses` says idle or dnd for those that are.
+   *
+   * @returns {{online: number[], statuses: Object<number, 'idle'|'dnd'>}}
+   */
+  presenceView() {
+    const ids = new Set();
+    for (const client of this.#clients.values()) if (client.user) ids.add(client.user.id);
+    const online = [];
+    const statuses = {};
+    for (const id of ids) {
+      const status = this.#statusOf(id);
+      if (status === 'invisible') continue;
+      online.push(id);
+      if (status === 'idle' || status === 'dnd') statuses[id] = status;
+    }
+    return { online, statuses };
   }
 
   /** Tell everybody who is on. Sent whenever that set changes. */
   broadcastPresence() {
-    this.broadcast({ type: 'presence', online: this.onlineUserIds() });
+    this.broadcast({ type: 'presence', ...this.presenceView() });
   }
 
   /** True if this user has another socket open (a second window, say). */
@@ -221,7 +262,9 @@ export class Realtime {
         user: publicUser(user),
         ...this.channelView(user),
         voiceCap: VOICE_HARD_CAP,
-        online: this.onlineUserIds(),
+        ...this.presenceView(),
+        // What this person chose to be, which is theirs alone to know (an invisible person is missing from `online`).
+        status: user.presence_status ?? 'online',
         roles: this.#deps.roles.list().map(publicRole),
         badges: this.#deps.badges.list().map(publicBadge),
         // What is new in each channel, so a client that was away starts from the truth.
@@ -256,6 +299,8 @@ export class Realtime {
       'voice:publishing': this.#voicePublishing,
       'voice:refresh': this.#voiceRefresh,
       typing: this.#typing,
+      'presence:set': this.#presenceSet,
+      'presence:away': this.#presenceAway,
       'call:start': this.#callStart,
       'call:join': this.#callJoin,
       'call:decline': this.#callDecline,
@@ -268,6 +313,30 @@ export class Realtime {
       'admin:force-mute': this.#adminForceMute,
       'admin:move': this.#adminMove,
     };
+  }
+
+  // ---------------------------------------------------------- presence
+
+  /** A person chooses what to be on this server: every window of theirs is told, and everybody else's list follows. */
+  #presenceSet(user, msg) {
+    const result = this.#deps.accounts.setPresenceStatus(user.id, msg.status);
+    if (!result.ok) return { type: 'presence:error', error: result.error };
+    this.toUser(user.id, { type: 'presence:self', status: result.user.presence_status });
+    this.broadcastPresence();
+    return { type: 'presence:ok', status: result.user.presence_status };
+  }
+
+  /**
+   * One window saying it has not been touched for a while (or has been, again). Several windows count as one person:
+   * they are idle when all of them are. Only a change of what everybody sees is worth a broadcast.
+   */
+  #presenceAway(user, msg, ws) {
+    const client = this.#clients.get(ws);
+    if (!client) return undefined;
+    const before = this.#statusOf(user.id);
+    client.away = msg.away === true;
+    if (this.#statusOf(user.id) !== before) this.broadcastPresence();
+    return { type: 'presence:ok' };
   }
 
   // ------------------------------------------------------------- voice
@@ -381,10 +450,12 @@ export class Realtime {
     const stopped = msg.stopped === true;
     if (msg.scope === 'channel') {
       const channel = this.#deps.channels.get(id);
-      if (!channel || channel.kind !== 'text' || !this.#canSeeChannel(user, channel)) return ok;
+      if (!channel || (channel.kind !== 'text' && channel.kind !== 'forum') || !this.#canSeeChannel(user, channel)) return ok;
       const groups = new Map(this.#deps.channels.groups().map((g) => [g.id, g]));
+      // In a forum, the post it is being written under: somebody reading another post is not told.
+      const thread = channel.kind === 'forum' && Number.isSafeInteger(Number(msg.thread)) ? Number(msg.thread) : null;
       this.broadcastWhere({
-        type: 'typing', scope: 'channel', id, userId: user.id, stopped,
+        type: 'typing', scope: 'channel', id, userId: user.id, stopped, ...(thread ? { thread } : {}),
       }, (other) => other.id !== user.id && this.#deps.roles.canSee(
         this.#deps.roles.context(this.#deps.accounts.byId(other.id) ?? other), channel, groups,
       ));

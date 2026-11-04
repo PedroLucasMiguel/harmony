@@ -13,6 +13,7 @@ import { secretsMatch } from './auth.js';
 const NAME_KEY = 'server_name';
 const DOOR_KEY = 'door_password';
 const LOGO_KEY = 'server_logo';
+const BANNER_KEY = 'server_banner';
 const MAX_FILE_KEY = 'max_file_bytes';
 const STORAGE_KEY = 'storage_bytes';
 const MUSIC_KEY = 'music_enabled';
@@ -94,6 +95,22 @@ export class ServerSettings {
     const previous = this.logo;
     if (hash) this.#meta.set(LOGO_KEY, hash);
     else this.#meta.delete(LOGO_KEY);
+    return previous;
+  }
+
+  /**
+   * The server's banner, the picture behind its name at the top of the channel list: the hash of an upload, or null.
+   * Kept the way the logo is -- only the hash is here, and the route that sets it counts the references.
+   */
+  get banner() {
+    return this.#meta.get(BANNER_KEY) || null;
+  }
+
+  /** @returns {string|null} the banner it replaced, for its reference to be released */
+  setBanner(hash) {
+    const previous = this.banner;
+    if (hash) this.#meta.set(BANNER_KEY, hash);
+    else this.#meta.delete(BANNER_KEY);
     return previous;
   }
 
@@ -209,6 +226,7 @@ export class ServerSettings {
     return {
       name: this.name,
       logo: this.logo,
+      banner: this.banner,
       passwordRequired: this.passwordRequired,
       restartRequired: this.restartRequired,
       musicEnabled: this.musicEnabled,

@@ -12,6 +12,7 @@ import {
   mkdirSync, writeFileSync, renameSync, unlinkSync, statSync, statfsSync, rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { cleanPoll, pollBody, pollOf } from './polls.js';
 
 /**
  * What may be uploaded, and what it is called in search.
@@ -151,6 +152,9 @@ export const MAX_EMOJIS = 200;
 const PAGE_SIZE = 50;
 /** The most messages `since` hands back: a long way up a busy channel, and a bounded amount of work. */
 const JUMP_LIMIT = 2000;
+/** The longest a forum post's title is, and how many posts a page of the listing holds. */
+export const MAX_POST_TITLE = 200;
+const POSTS_PAGE = 30;
 /** Results to a page of a search, the way a person reads them; and the most a request may ask for. */
 export const SEARCH_PAGE = 25;
 const SEARCH_MAX = 50;
@@ -278,8 +282,9 @@ export class Chat {
     this.#q = {
       insertMessage: db.prepare(
         'INSERT INTO messages '
-        + '(channel_id, user_id, body, attachment_hash, attachment_name, media_type, reply_to, created_at) '
-        + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        + '(channel_id, user_id, body, attachment_hash, attachment_name, media_type, reply_to, created_at, poll, '
+        + 'thread_id, title) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ),
       insertFts: db.prepare(
         'INSERT INTO messages_fts (rowid, body, nickname, media_type) VALUES (?, ?, ?, ?)',
@@ -319,6 +324,27 @@ export class Chat {
         ORDER BY COALESCE(m.pinned_at, 0) DESC, m.id DESC
       `),
       setPinned: db.prepare('UPDATE messages SET pinned = ?, pinned_at = ? WHERE id = ?'),
+
+      // A forum thread: the post and what is written under it, in the same shapes the channel's own queries have.
+      threadHistory: db.prepare(`
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
+        WHERE (m.id = ? OR m.thread_id = ?) AND m.id < ?
+        ORDER BY m.id DESC LIMIT ?
+      `),
+      threadFrom: db.prepare(`
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
+        WHERE (m.id = ? OR m.thread_id = ?) AND m.id >= ?
+        ORDER BY m.id DESC LIMIT ?
+      `),
+      threadPinned: db.prepare(`
+        SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages m JOIN users u ON u.id = m.user_id
+        ${REPLY_JOIN}
+        WHERE (m.id = ? OR m.thread_id = ?) AND m.pinned = 1
+        ORDER BY COALESCE(m.pinned_at, 0) DESC, m.id DESC
+      `),
+      answersOf: db.prepare('SELECT id, attachment_hash FROM messages WHERE thread_id = ?'),
 
       searchFts: db.prepare(`
         SELECT m.*, u.nickname${REPLY_COLUMNS} FROM messages_fts f
@@ -502,6 +528,16 @@ export class Chat {
     return { ok: true, upload: this.#q.upload.get(hash), deduplicated: false };
   }
 
+  /** Delete a stored file now if nothing points at it any more. */
+  #purgeIfOrphan(hash) {
+    const upload = this.#q.upload.get(hash);
+    if (!upload || upload.refs > 0) return;
+    try {
+      unlinkSync(this.pathFor(hash));
+    } catch { /* already gone; drop the row anyway */ }
+    this.#q.deleteUpload.run(hash);
+  }
+
   /** Delete unreferenced files until there is room, oldest first. */
   #evictOrphans(needed) {
     for (const { hash } of this.#q.orphans.all()) {
@@ -581,9 +617,39 @@ export class Chat {
       .slice(0, max - [...extension].length).join('') + extension;
   }
 
-  post({ channelId, user, body = '', attachmentHash = null, attachmentName = null, replyTo = null }) {
-    const text = String(body ?? '').slice(0, 4000);
+  /** What the search index holds of a message: its words, and a post's title before them, so that a title finds it. */
+  static indexed(title, body) {
+    return title ? `${title}\n${body}` : body;
+  }
+
+  post({
+    channelId, user, body = '', attachmentHash = null, attachmentName = null, replyTo = null, poll = null,
+    title = null, threadId = null,
+  }) {
+    // A forum's post has a title; what is written under it points at the post. Neither is both, and a message of a
+    // text channel is neither (the route decides which of the three a channel takes).
+    let postTitle = null;
+    if (title !== null && title !== undefined) {
+      postTitle = String(title).replace(/\s+/g, ' ').trim().slice(0, MAX_POST_TITLE).trim();
+      if (!postTitle) return { ok: false, error: 'post_needs_title' };
+    }
+    let thread = null;
+    if (threadId !== null && threadId !== undefined) {
+      if (postTitle !== null) return { ok: false, error: 'bad_thread' };
+      thread = Number.parseInt(threadId, 10);
+      const root = Number.isSafeInteger(thread) ? this.#q.messageById.get(thread) : null;
+      if (!root || root.channel_id !== channelId || root.title === null) return { ok: false, error: 'no_such_post' };
+    }
+    // A poll says what its title says, wherever a message is read as text; its own words are kept apart.
+    let kept = null;
+    if (poll !== null && poll !== undefined) {
+      const cleaned = cleanPoll(poll);
+      if (!cleaned.ok) return cleaned;
+      kept = cleaned.poll;
+    }
+    const text = kept ? pollBody(kept) : String(body ?? '').slice(0, 4000);
     if (!text.trim() && !attachmentHash) return { ok: false, error: 'empty_message' };
+    if (postTitle !== null && kept) return { ok: false, error: 'bad_post' };
 
     // A reply answers a message in the same channel, and one that exists:
     // anything else would be a quote of something the readers here cannot
@@ -614,9 +680,12 @@ export class Chat {
         mediaType,
         replyId,
         Date.now(),
+        kept ? JSON.stringify(kept) : null,
+        thread,
+        postTitle,
       );
       const id = Number(info.lastInsertRowid);
-      this.#q.insertFts.run(id, text, user.nickname, mediaType ?? '');
+      this.#q.insertFts.run(id, Chat.indexed(postTitle, text), user.nickname, mediaType ?? '');
       if (attachmentHash) this.#q.addRef.run(attachmentHash);
       this.#db.exec('COMMIT');
       return { ok: true, message: this.#q.messageById.get(id) };
@@ -648,6 +717,8 @@ export class Chat {
     const message = this.#q.messageById.get(id);
     if (!message) return { ok: false, error: 'no_such_message' };
 
+    // What a poll asks is what it was sent with: changing it under the votes already given would change what they mean.
+    if (message.poll) return { ok: false, error: 'poll_not_editable' };
     const text = String(body ?? '').slice(0, 4000);
     if (!text.trim() && !message.attachment_hash) {
       return { ok: false, error: 'empty_message' };
@@ -658,7 +729,7 @@ export class Chat {
     try {
       this.#q.editMessage.run(text, Date.now(), id);
       this.#q.deleteFts.run(id);
-      this.#q.insertFts.run(id, text, message.nickname, message.media_type ?? '');
+      this.#q.insertFts.run(id, Chat.indexed(message.title, text), message.nickname, message.media_type ?? '');
       this.#db.exec('COMMIT');
     } catch (err) {
       this.#db.exec('ROLLBACK');
@@ -673,15 +744,29 @@ export class Chat {
 
     this.#db.exec('BEGIN');
     try {
+      // A post takes what is written under it along: those messages point at it by a column, not by a key.
+      const answers = message.title === null ? [] : this.#q.answersOf.all(id);
+      for (const answer of answers) {
+        this.#q.deleteFts.run(answer.id);
+        this.#q.deleteMessage.run(answer.id);
+        if (answer.attachment_hash) this.#q.dropRef.run(answer.attachment_hash);
+      }
       this.#q.deleteFts.run(id);
       this.#q.deleteMessage.run(id);
       if (message.attachment_hash) this.#q.dropRef.run(message.attachment_hash);
       this.#db.exec('COMMIT');
+      // A post is deleted with everything in it, its files too: not left to be evicted some day, but let go of now
+      // (those another message or a profile still points at are not: they hold a reference).
+      if (message.title !== null) {
+        for (const hash of [message.attachment_hash, ...answers.map((a) => a.attachment_hash)]) {
+          if (hash) this.#purgeIfOrphan(hash);
+        }
+      }
+      return { ok: true, message, answers: answers.map((a) => a.id) };
     } catch (err) {
       this.#db.exec('ROLLBACK');
       throw err;
     }
-    return { ok: true, message };
   }
 
   // ------------------------------------------------------------- reactions
@@ -817,7 +902,7 @@ export class Chat {
       if (hash) this.#q.addRef.run(hash);
       if (previous) this.#q.dropRef.run(previous);
       this.#q.deleteFts.run(id);
-      this.#q.insertFts.run(id, message.body, message.nickname, mediaType ?? '');
+      this.#q.insertFts.run(id, Chat.indexed(message.title, message.body), message.nickname, mediaType ?? '');
       this.#db.exec('COMMIT');
     } catch (err) {
       this.#db.exec('ROLLBACK');
@@ -843,6 +928,91 @@ export class Chat {
 
   pinned(channelId) {
     return this.#q.pinned.all(channelId);
+  }
+
+  // ------------------------------------------------------------- forum threads
+
+  /** A page of a thread, oldest first: the post and what is under it. The post is the first of the last page. */
+  thread(postId, { before = Number.MAX_SAFE_INTEGER, limit = PAGE_SIZE } = {}) {
+    return this.#q.threadHistory.all(postId, postId, before, Math.min(limit, PAGE_SIZE)).reverse();
+  }
+
+  /** From message `id` to the newest of a thread, as since() is for a channel. */
+  threadSince(postId, id) {
+    const rows = this.#q.threadFrom.all(postId, postId, id, JUMP_LIMIT);
+    return { messages: rows.reverse(), complete: rows.length < JUMP_LIMIT };
+  }
+
+  threadPinned(postId) {
+    return this.#q.threadPinned.all(postId, postId);
+  }
+
+  /**
+   * A forum's posts, a page at a time: each with how many answers it has and when it was last written in.
+   *
+   * `query` is looked for in the title and the words of the post and of what is written under it (a plain
+   * substring, so that a short word finds something too), `sort` is 'activity' (the default: the thread that was
+   * written in last), 'new' (the post that was made last) or 'replies' (the most answered).
+   */
+  posts(channelId, {
+    query = '', sort = 'activity', offset = 0, limit = POSTS_PAGE, onlyIds = null,
+  } = {}) {
+    const where = ['m.channel_id = ?', 'm.title IS NOT NULL'];
+    const params = [channelId];
+    // Only these posts (the ones that mention somebody, say): none at all is none, not no filter.
+    if (onlyIds) {
+      if (!onlyIds.length) return { posts: [], more: false };
+      where.push(`m.id IN (${onlyIds.map(() => '?').join(',')})`);
+      params.push(...onlyIds);
+    }
+    const text = String(query ?? '').trim();
+    if (text) {
+      const like = `%${escapeLike(text)}%`;
+      where.push(
+        "(m.title LIKE ? ESCAPE '\\' OR m.body LIKE ? ESCAPE '\\' "
+        + "OR EXISTS (SELECT 1 FROM messages r WHERE r.thread_id = m.id AND r.body LIKE ? ESCAPE '\\'))",
+      );
+      params.push(like, like, like);
+    }
+    // The pinned come first, the one pinned last at the very top; the rest follow in the order asked for.
+    const order = `(m.post_pinned_at IS NULL), m.post_pinned_at DESC, ${{
+      new: 'm.id DESC', replies: 'reply_count DESC, last_activity DESC, m.id DESC',
+    }[sort] ?? 'last_activity DESC, m.id DESC'}`;
+    const page = Math.min(Math.max(1, Math.trunc(limit) || POSTS_PAGE), POSTS_PAGE);
+    const skip = Math.max(0, Math.trunc(offset) || 0);
+    const rows = this.#prepared(`
+      SELECT m.*, u.nickname,
+        (SELECT COUNT(*) FROM messages r WHERE r.thread_id = m.id) AS reply_count,
+        COALESCE((SELECT MAX(r.created_at) FROM messages r WHERE r.thread_id = m.id), m.created_at) AS last_activity
+      FROM messages m JOIN users u ON u.id = m.user_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY ${order} LIMIT ? OFFSET ?
+    `).all(...params, page + 1, skip);
+    return { posts: rows.slice(0, page), more: rows.length > page };
+  }
+
+  /** Pin a post to the top of its forum, or let it go. Only a post (the first of a thread) can be. */
+  setPostPinned(id, pinned) {
+    const message = this.#q.messageById.get(id);
+    if (!message || message.title === null) return { ok: false, error: 'no_such_post' };
+    this.#db.prepare('UPDATE messages SET post_pinned_at = ? WHERE id = ?').run(pinned ? Date.now() : null, id);
+    return { ok: true, message: this.#q.messageById.get(id) };
+  }
+
+  /** The messages of a forum that have an @ in them, with the post each is under: what a mention is looked for in. */
+  atMessages(channelId) {
+    return this.#db.prepare(`
+      SELECT id, COALESCE(thread_id, id) AS post_id, user_id, body FROM messages
+      WHERE channel_id = ? AND body LIKE '%@%'
+    `).all(channelId);
+  }
+
+  /** How many answers a post has and when it was last written in: one post's line of the listing. */
+  postStats(postId) {
+    return this.#db.prepare(`
+      SELECT COUNT(*) AS reply_count, COALESCE(MAX(created_at), 0) AS last_reply
+      FROM messages WHERE thread_id = ?
+    `).get(postId);
   }
 
   setPinned(id, pinned) {
@@ -903,13 +1073,18 @@ export class Chat {
    */
   searchAll({
     channelIds, text = '', from = [], has = [], mentions = [], after = null, before = null,
-    pinned = null, sort = 'new', offset = 0, limit = SEARCH_PAGE,
+    pinned = null, sort = 'new', offset = 0, limit = SEARCH_PAGE, threadId = null,
   }) {
     const none = { total: 0, capped: false, results: [] };
     if (!channelIds.length) return none;
     const where = [`m.channel_id IN (${channelIds.map(() => '?').join(',')})`];
     const params = [...channelIds];
     let joinsUsers = false;
+    // Inside one forum post: the post and what is written under it.
+    if (threadId !== null) {
+      where.push('(m.thread_id = ? OR m.id = ?)');
+      params.push(threadId, threadId);
+    }
 
     // Dates, as ids: the first message after (or from) the moment, so that the range is on the primary key.
     if (Number.isFinite(after)) {
@@ -1298,6 +1473,9 @@ export const publicClip = (c) => (c ? {
  * than throwing -- which is also exactly right for a message created one
  * line ago.
  */
+/** A poll as a client is told it: its settings, without the votes. Whether it has closed is the client's clock to read. */
+const pollConfig = (m) => pollOf(m);
+
 export const publicMessage = (m, reactions = [], mentions = null) => (m ? {
   id: m.id,
   channelId: m.channel_id,
@@ -1309,6 +1487,11 @@ export const publicMessage = (m, reactions = [], mentions = null) => (m ? {
   attachmentBytes: m.attachment_bytes ?? null,
   mediaType: m.media_type ?? null,
   pinned: Boolean(m.pinned),
+  // A forum post has a title; an answer under one has the post's id. Neither is set in a text channel.
+  title: m.title ?? null,
+  threadId: m.thread_id ?? null,
+  // When a post was pinned to the top of its forum (not the same as `pinned`, a message pinned in a thread).
+  postPinnedAt: m.post_pinned_at ?? null,
   editedAt: m.edited_at ?? null,
   /*
    * What this answers: who, and the start of what they said -- or, when the
@@ -1328,6 +1511,8 @@ export const publicMessage = (m, reactions = [], mentions = null) => (m ? {
       : { id: m.reply_to, deleted: true })
     : null,
   reactions,
+  // What the poll is, for a message that is one; the votes are added by whoever knows who is asking (see forClient).
+  poll: pollConfig(m),
   // Ids, not names: the client already has the roster and would otherwise
   // have to fold and match nicknames a second time to know whether one of
   // them is you.

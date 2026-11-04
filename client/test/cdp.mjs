@@ -37,6 +37,9 @@ export function launchApp({ port, userDataDir, onStderr, extraArgs = [] }) {
   env.HARMONY_NO_KEY_HOOK = '1';
   // Nor a file manager window: "open the log folder" is pressed in tests.
   env.HARMONY_NO_OPEN = '1';
+  // The system's own frame, so that what the tests measure starts at the top of the window as it always did. The title
+  // bar's own test turns it back on (HARMONY_TEST_TITLEBAR=1).
+  if (!process.env.HARMONY_TEST_TITLEBAR) env.HARMONY_NATIVE_FRAME = '1';
   // A saved session opens the server by itself; the tests start from the connect screen.
   // (The rail's own test turns it back on.)
   if (!process.env.HARMONY_TEST_AUTO_SIGNIN) env.HARMONY_NO_AUTO_SIGNIN = '1';

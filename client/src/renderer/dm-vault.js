@@ -19,6 +19,7 @@ import {
   Identity, RecoveryKey, aad, b64, nonceOf, openLocal, pad, pairKey, publicKey, random, safetyNumber, sealLocal,
   unwrap, wrap,
 } from './dm-crypto.js';
+import { POLL_LIMITS, optionOfToken, validPoll } from './poll.js';
 
 /** Why something could not be sealed for the other person. */
 export const SealError = Object.freeze({
@@ -466,6 +467,7 @@ export class Vault {
     const peer = group ? m.userId : peerOrNull;
     const view = {
       file: null, call: null, group: null, unreadable: false, outOfPlace: false, unconfirmed: false, mid: null, rev: 0,
+      poll: null,
     };
     let body = '';
     let reply = null;
@@ -500,6 +502,7 @@ export class Vault {
           view.rev = p.rev ?? 0;
           body = p.body;
           view.file = p.file ?? null;
+          view.poll = p.poll ?? null;
           reply = p.reply ?? null;
         }
       } else {
@@ -517,6 +520,7 @@ export class Vault {
       mediaType: view.file ? mediaTypeOf(view.file.mime) : null,
       editedAt: m.editedAt ?? null,
       reply,
+      poll: view.poll,
       reactions: this.openReactions(m.conversationId, peerOrNull, m.id, m.reactions ?? []),
       createdAt: m.createdAt,
       pinned: Boolean(m.pinned),
@@ -630,7 +634,9 @@ export class Vault {
         continue;
       }
       if (!Array.isArray(emoji) || !emoji.every((e) => typeof e === 'string')) continue;
-      for (const e of emoji.slice(0, 20)) {
+      // A person's votes in a poll ride with their emoji (see poll.js) and are not counted against the 20.
+      const votes = emoji.filter((e) => optionOfToken(e) !== null).slice(0, POLL_LIMITS.maxOptions);
+      for (const e of [...emoji.filter((x) => optionOfToken(x) === null).slice(0, 20), ...votes]) {
         const found = out.find((x) => x.emoji === e);
         if (!found) out.push({ emoji: e, count: 1, userIds: [r.userId] });
         else if (!found.userIds.includes(r.userId)) {
@@ -757,6 +763,7 @@ function messageJson(payload) {
   const out = { body: payload.body ?? '' };
   if (payload.file) out.file = payload.file;
   if (payload.reply) out.reply = payload.reply;
+  if (payload.poll) out.poll = payload.poll;
   out.mid = payload.mid ?? b64(random(16));
   if (payload.rev) out.rev = payload.rev;
   if (payload.of !== undefined && payload.of !== null) out.of = payload.of;
@@ -774,6 +781,8 @@ function parsePayload(plain) {
       mid: typeof p.mid === 'string' ? p.mid : null,
       rev: Number.isInteger(p.rev) && p.rev > 0 ? p.rev : 0,
       of: Number.isSafeInteger(p.of) ? p.of : null,
+      // A poll somebody sent; one that is not well formed is just the words it came with.
+      poll: validPoll(p.poll),
     };
   } catch {
     return null;

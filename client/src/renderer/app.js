@@ -20,6 +20,13 @@ import { createDmUi } from './dm-ui.js';
 import { createCalls, isCallRoom } from './calls-ui.js';
 import { createTyping } from './typing-ui.js';
 import { messageTime } from './message-time.js';
+import { createPollUi } from './poll-ui.js';
+import { createForumUi } from './forum-ui.js';
+import { createReactionsUi } from './reactions-ui.js';
+import { createNavHistory } from './nav-history.js';
+import {
+  STATUSES, createIdleWatch, isStatus, listedStatus, ownStatus,
+} from './status.js';
 import { fileCard, iconFor, textCard, previewsAsText, readHead } from './attachment-card.js';
 import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
 import { firstLink, linkEmbed } from './link-embed.js';
@@ -202,6 +209,13 @@ const el = {
   serverLogoPreview: $('server-logo-preview'),
   serverLogoPick: $('server-logo-pick'),
   serverLogoRemove: $('server-logo-remove'),
+  serverBannerPreview: $('server-banner-preview'),
+  serverBannerPick: $('server-banner-pick'),
+  serverBannerRemove: $('server-banner-remove'),
+  channelsView: $('view-channels'),
+  serverHeadBanner: $('server-head-banner'),
+  serverHeadIcon: $('server-head-icon'),
+  serverHeadName: $('server-head-name'),
   serverChipName: $('server-chip-name'),
   serverChipHost: $('server-chip-host'),
   serverBackRow: $('server-back-row'),
@@ -233,6 +247,7 @@ const el = {
   channelsWho: $('channels-who'),
   channelsAvatar: $('channels-avatar'),
   avatarButton: $('avatar-button'),
+  statusButton: $('status-button'),
   avatarFile: $('avatar-file'),
   languageSelect: $('language-select'),
   loginLanguage: $('login-language'),
@@ -394,6 +409,19 @@ const el = {
   chatUploadCancel: $('chat-upload-cancel'),
   soundpad: $('soundpad'),
   chatEmoji: $('chat-emoji'),
+  forumActive: $('forum-active'),
+  chatClosePost: $('chat-close-post'),
+  titlebar: $('titlebar'),
+  titlebarIcon: $('titlebar-icon'),
+  titlebarName: $('titlebar-name'),
+  navBack: $('nav-back'),
+  navForward: $('nav-forward'),
+  aboutOpen: $('about-open'),
+  about: $('about'),
+  aboutVersion: $('about-version'),
+  aboutCopy: $('about-copy'),
+  aboutClose: $('about-close'),
+  chatPoll: $('chat-poll'),
   mentionPop: $('mention-pop'),
   mentionItems: $('mention-items'),
   mentionSound: $('mention-sound'),
@@ -704,6 +732,13 @@ const state = {
      * channel, which is the opposite of true.
      */
     online: new Set(),
+    /**
+     * Who of them is idle or does not want to be disturbed, by user id (everybody else on is plain online). This
+     * server's: another server may have the same person in another state, and never meets this.
+     */
+    statuses: {},
+    /** What the person using this client chose to be on this server -- theirs alone to know. */
+    myStatus: 'online',
     joining: false,
   },
 
@@ -726,6 +761,11 @@ const state = {
   nativeShare: null,
   chat: {
     channelId: null, messages: [], pinned: [], pendingFiles: [], replyTo: null,
+    /** The open channel is a forum: its list is on the stage, and a post may be open beside it. See openForumChannel. */
+    forum: false,
+    /** The open post of a forum: its id, and the post as a message (the first of its thread). */
+    threadId: null,
+    post: null,
     /** One of your own messages being rewritten in the composer, or null. See setEditing. */
     editing: null,
     /** Where each channel was scrolled to when it was left, for this session. See rememberChatScroll. */
@@ -928,6 +968,7 @@ function showView(id) {
   if (el.picker.open) el.picker.close();
   renderServerRail();
   renderCallBar();
+  paintTitleBar();
 }
 
 /** The id of the page on screen. */
@@ -1110,6 +1151,11 @@ function applyCapabilities() {
     .map(([name]) => name.toLowerCase());
   document.documentElement.dataset.lacks = lacks.join(' ');
   document.documentElement.dataset.platform = harmony.platform;
+  // A window with no frame of its own: the page draws the bar across the top (see the title bar's markup and CSS).
+  if (harmony.titleBar) {
+    document.documentElement.dataset.titlebar = '';
+    document.getElementById('titlebar').hidden = false;
+  }
 }
 
 // The last language used, before settings have even loaded, so the first thing
@@ -1444,6 +1490,7 @@ async function saveProfile(extra = {}, { accountSecret } = {}) {
     accountSecret: remember ? (accountSecret ?? findProfile(url)?.accountSecret ?? '') : '',
     // Kept, not rebuilt from the screen: only syncLogo changes it.
     logo: findProfile(url)?.logo ?? null,
+    banner: findProfile(url)?.banner ?? null,
     lastUsed: Date.now(),
   };
   /*
@@ -1526,25 +1573,42 @@ function fillServerBadge(node, { name, logo, reachable = false, checking = false
  * current one's.
  */
 async function syncLogo(url, password, hash) {
+  await syncPicture('logo', url, password, hash);
+}
+
+/** The banner the rail's card shows, kept the way the logo is: its hash in the profile, its picture in the cache. */
+async function syncBanner(url, password, hash) {
+  await syncPicture('banner', url, password, hash);
+}
+
+let pictureWrites = Promise.resolve();
+
+async function syncPicture(kind, url, password, hash) {
   if (hash === undefined) return;
   const profile = findProfile(url);
   if (!profile) return;
   if (hash) {
     try {
-      await harmony.logos.ensure(url, password ?? '', hash);
+      await harmony.logos.ensure(url, password ?? '', hash, kind);
     } catch {
       return; // Kept as it was; the next check tries again.
     }
   }
-  if ((profile.logo ?? null) !== (hash ?? null)) {
+  // One at a time: the logo and the banner each rewrite the list, and a second read before the first write lands
+  // would put the first one's change back.
+  pictureWrites = pictureWrites.then(async () => {
+    if ((findProfile(url)?.[kind] ?? null) === (hash ?? null)) return;
     const servers = savedServers().map((p) => (
-      serverKey(p.url) === serverKey(url) ? { ...p, logo: hash ?? null } : p
+      serverKey(p.url) === serverKey(url) ? { ...p, [kind]: hash ?? null } : p
     ));
     state.settings = await harmony.settings.set({ servers });
+  }).catch(() => {});
+  await pictureWrites;
+  if (kind === 'logo') {
+    if (serverKey(url) === serverKey(el.serverUrl.value)) renderServerChip();
+    if (!el.serverMenu.hidden) renderServerMenu();
   }
-  if (serverKey(url) === serverKey(el.serverUrl.value)) renderServerChip();
-  if (!el.serverMenu.hidden) renderServerMenu();
-  // The rail draws the logo from the profile: it was kept above, so it is drawn again now.
+  // The rail draws both from the profile: it was kept above, so it is drawn again now.
   renderServerRail();
 }
 
@@ -1631,6 +1695,7 @@ function renderServerRail() {
     root: el.serverRail,
     t,
     fillBadge: fillServerBadge,
+    pictureUrl: logoUrl,
     onSelect: (url) => resumeServer(url),
     onHome: () => openPrivateMessages(),
     onAdd: () => addServerFromRail(),
@@ -1657,10 +1722,13 @@ function renderServerRail() {
         url: p.url,
         name: serverNames.get(key) || status?.name || serverHost(p.url),
         logo: p.logo ?? null,
+        banner: p.banner ?? null,
         current,
         state: railState,
         unread: live?.unread ?? 0,
         mentions: live?.mentions ?? 0,
+        // The server's own connection once it is up; until then (just put away, or still connecting) what was seen.
+        voice: live?.status === 'up' ? live.voice : Boolean(voiceSeen.get(key) ?? live?.voice),
         inCall: Boolean(state.voice.channelId && state.voiceServer && serverKey(state.voiceServer) === key),
       };
     }),
@@ -1723,11 +1791,11 @@ function hideVoiceUi() {
 async function reattachVoice() {
   try {
     const {
-      channels, groups, occupancy, rosters, online, occupiedFor,
+      channels, groups, occupancy, rosters, online, statuses, status, occupiedFor,
     } = await harmony.api.channels(state.server);
     state.channels.list = channels;
     state.channels.groups = groups ?? [];
-    state.channels.online = new Set(online ?? []);
+    adoptPresence({ online, statuses, status }, { own: true });
     state.channels.occupancy = occupancy ?? {};
     state.channels.rosters = rosters ?? {};
     setOccupied(occupiedFor);
@@ -1769,6 +1837,17 @@ function setOccupied(durations, { merge = false } = {}) {
     else next[id] = now - Number(ms);
   }
   state.channels.occupiedSince = next;
+  noteVoiceSeen();
+}
+
+/**
+ * Whether anybody was in a voice channel on each server, as last seen while it was the open one. When a server is
+ * put away its own connection starts again from nothing, and until its hello arrives the bubble says what was seen.
+ */
+const voiceSeen = new Map();
+function noteVoiceSeen() {
+  const key = openServerKey();
+  if (key) voiceSeen.set(key, Object.values(state.channels.occupancy ?? {}).some((n) => n > 0));
 }
 
 /** The timers beside the voice channels, a second further on. One timer for all of them. */
@@ -2036,6 +2115,108 @@ const backgrounds = createBackgroundSessions({
   onUp: (url, user) => startBackgroundDm(url, user),
 });
 
+/*
+ * Your status on a server, and the app being left alone.
+ *
+ * What was chosen is the server's to keep (it is per server: the same person can be busy on one and free on another);
+ * the screen only asks, and draws. Being idle because nothing was touched for five minutes is not a choice: it is
+ * told to every server this client is connected to -- except the one whose voice channel (or call) it is in, where
+ * somebody talking is not idling -- and the server makes of it what it will (it only shows for those who chose
+ * "online").
+ */
+const idleWatch = createIdleWatch();
+/** By server: what was last said about the app being idle, so that only a change is sent. */
+const awaySent = new Map();
+
+/** The servers there is a connection to: the open one and the ones kept behind it. */
+function connectedServers() {
+  const urls = [];
+  if (state.auth.user && state.server) urls.push(state.server);
+  for (const url of backgrounds.urls()) if (!urls.some((u) => serverKeyOf(u) === serverKeyOf(url))) urls.push(url);
+  return urls;
+}
+
+const inVoiceOn = (server) => Boolean(
+  state.voice.channelId && state.voiceServer && serverKeyOf(state.voiceServer) === serverKeyOf(server),
+);
+
+function syncAway() {
+  const idle = idleWatch.away;
+  for (const url of connectedServers()) {
+    const key = serverKeyOf(url);
+    const away = idle && !inVoiceOn(url);
+    if (awaySent.get(key) === away) continue;
+    awaySent.set(key, away);
+    // An older server does not know it: nothing is lost.
+    rt('presence:away', { away }, url).catch(() => awaySent.delete(key));
+  }
+  paintOwnStatus();
+}
+
+for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart']) {
+  window.addEventListener(type, () => {
+    idleWatch.touch();
+    // Back from being idle: told at once, not at the next tick.
+    if ([...awaySent.values()].some(Boolean)) syncAway();
+  }, { capture: true, passive: true });
+}
+setInterval(syncAway, 5_000);
+
+/** What to draw for yourself on the open server: what you chose, or idle if the app is not being touched. */
+function ownShownStatus() {
+  return ownStatus(state.myStatus, { away: idleWatch.away, inCall: Boolean(state.server) && inVoiceOn(state.server) });
+}
+
+function paintOwnStatus() {
+  const shown = ownShownStatus();
+  // Outside a call this is what the strip says under your name (inside one it says how the call is going).
+  if (!state.voice.channelId) el.selfStatus.textContent = t(`status.${shown}`);
+  el.statusButton.dataset.status = shown;
+  el.statusButton.title = `${t(`status.${shown}`)} - ${t('status.change')}`;
+  el.statusButton.setAttribute('aria-label', el.statusButton.title);
+}
+
+/** A small coloured dot, with the word for those who cannot tell the colours apart. */
+function statusDot(status) {
+  const dot = document.createElement('span');
+  dot.className = 'status-dot';
+  dot.dataset.status = status;
+  dot.title = t(`status.${status}`);
+  return dot;
+}
+
+/** What this person is on this server, as the server now says (it may be from another window of theirs). */
+function adoptOwnStatus(status) {
+  state.myStatus = isStatus(status) ? status : 'online';
+  paintOwnStatus();
+  renderMembers();
+}
+
+/** Choose what to be on the open server. */
+async function chooseStatus(status) {
+  if (!state.server || status === state.myStatus) return;
+  const was = state.myStatus;
+  adoptOwnStatus(status);
+  try {
+    const reply = await rt('presence:set', { status });
+    if (reply?.type === 'presence:error') throw new Error(t('status.failed'));
+  } catch (err) {
+    adoptOwnStatus(was);
+    showChannelsError(err.message ?? String(err));
+  }
+}
+
+el.statusButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  openRowMenu(t('status.menu_title'), STATUSES.map((status) => ({
+    label: t(`status.${status}`),
+    title: t(`status.hint_${status}`),
+    status,
+    current: status === state.myStatus,
+    run: () => chooseStatus(status),
+  })), event, { above: el.statusButton });
+});
+
 /** The people of each server kept in the background, for drawing its private conversations. */
 const backgroundUsers = new Map();
 
@@ -2158,6 +2339,7 @@ function probeSavedServers() {
         if (password && health.passwordRequired && !health.authenticated) stalePasswords.add(key);
         if (health.name) serverNames.set(key, health.name);
         syncLogo(profile.url, password, health.logo);
+        syncBanner(profile.url, password, health.banner);
         serverStatus.set(key, {
           reachable: true, name: health.name ?? known?.name ?? '', at: Date.now(),
         });
@@ -2430,6 +2612,7 @@ async function submitServer({ resuming = false } = {}) {
     await adoptServer(server);
     // Behind the switch, not before it: the screen does not wait for a picture.
     syncLogo(server, el.password.value, health.logo);
+    syncBanner(server, el.password.value, health.banner);
     addingFrom = null;
     el.serverBackRow.hidden = true;
 
@@ -2977,11 +3160,18 @@ let callsCtl = null;
 const typing = createTyping({
   t,
   nameOf: (userId) => displayOf(userId, 'someone'),
-  changed: (key) => { if (key === `c:${state.chat.channelId}`) renderChatTyping(); },
+  changed: (key) => { if (key === chatTypingKey()) renderChatTyping(); },
 });
 
+/**
+ * Who is typing where, for a channel: the channel, and in a forum the post as well -- somebody writing under another
+ * post is not typing in this one.
+ */
+const typingKey = (channelId, thread = null) => (thread ? `c:${channelId}:${thread}` : `c:${channelId}`);
+const chatTypingKey = () => (state.chat.channelId ? typingKey(state.chat.channelId, state.chat.threadId) : null);
+
 function renderChatTyping() {
-  el.chatTyping.textContent = state.chat.channelId ? typing.text(`c:${state.chat.channelId}`) : '';
+  el.chatTyping.textContent = state.chat.channelId ? typing.text(chatTypingKey()) : '';
 }
 let securityUi = null;
 /** The Roles, Members and Channels pages of the server dialog; see server-admin.js. */
@@ -3112,7 +3302,7 @@ function badgeEl(badge, size = 'small') {
   const span = document.createElement('span');
   span.className = `badge-icon ${size}`;
   span.title = badge.name ?? '';
-  const src = badge.previewUrl || (badge.imageHash ? harmony.mediaUrl(badge.imageHash) : null);
+  const src = badge.previewUrl || (badge.imageHash ? harmony.mediaUrl(badge.imageHash, lookupServer ?? undefined) : null);
   if (src) {
     const img = document.createElement('img');
     img.src = src;
@@ -3616,6 +3806,16 @@ function renderProfile() {
  * no accounts keeps the original single-box flow, which is what lets a 1.0.0
  * deployment and its tests carry on unchanged.
  */
+/**
+ * Who is on and what they are, as the server said it. `own` is for a picture that comes whole (a hello, a fresh
+ * list): it also says what this person chose, and a server too old to know of statuses has them online.
+ */
+function adoptPresence({ online, statuses, status } = {}, { own = false } = {}) {
+  state.channels.online = new Set(online ?? []);
+  state.channels.statuses = statuses ?? {};
+  if (own) state.myStatus = isStatus(status) ? status : 'online';
+}
+
 async function enterChannels() {
   // This server is the open one now: its own connection is made below, and a
   // background one beside it would be a second socket for the same session.
@@ -3629,6 +3829,8 @@ async function enterChannels() {
   // to be told separately where to download from.
   await harmony.media.setServer(state.server);
   showChannelsError('');
+  // Presence is this server's: nothing of the last one's is carried over before this one's own arrives.
+  adoptPresence({}, { own: true });
   // A new session starts with no text channel open, whatever the last one
   // on this or another server had open. See resetChat.
   resetChat();
@@ -3662,7 +3864,7 @@ async function enterChannels() {
     state.channels.rosters = hello.rosters ?? {};
     // Who is online too: this server's, not the one that was open before it. A fresh
     // connection also says so in its realtime:up; one that was kept (a call's) does not.
-    state.channels.online = new Set(hello.online ?? []);
+    adoptPresence(hello, { own: true });
     setOccupied(hello.occupiedFor);
     setReads(hello.unread);
   } catch (err) {
@@ -3670,11 +3872,11 @@ async function enterChannels() {
     // Fall back to the REST list so the lobby is still usable read-only.
     try {
       const {
-        channels, groups, occupancy, rosters, online, occupiedFor,
+        channels, groups, occupancy, rosters, online, statuses, status, occupiedFor,
       } = await harmony.api.channels(state.server);
       state.channels.list = channels;
       state.channels.groups = groups ?? [];
-      state.channels.online = new Set(online ?? []);
+      adoptPresence({ online, statuses, status }, { own: true });
       state.channels.occupancy = occupancy ?? {};
       state.channels.rosters = rosters ?? {};
       setOccupied(occupiedFor);
@@ -3768,6 +3970,9 @@ function openRowMenu(label, items, event, { above = null } = {}) {
     button.type = 'button';
     button.className = `ghost menu-item${item.danger ? ' danger' : ''}`;
     if (item.icon) button.dataset.icon = item.icon;
+    // A status: its dot, and a mark on the one that is.
+    if (item.status) button.dataset.status = item.status;
+    if (item.current) button.setAttribute('aria-current', 'true');
     button.textContent = item.label;
     button.title = item.title;
     button.addEventListener('click', () => {
@@ -4033,7 +4238,7 @@ function channelNodes(channel) {
   if (channel.id === viewing) li.setAttribute('data-viewing', '');
   // A text channel with nothing new in it, and not the one on screen, is drawn dimmer --
   // and so is a voice channel you are not in.
-  if (channel.kind === 'text') {
+  if (channel.kind === 'text' || channel.kind === 'forum') {
     const news = state.channels.reads.get(channel.id);
     if (news?.unread > 0) li.setAttribute('data-unread', '');
     else if (channel.id !== viewing) li.setAttribute('data-read', '');
@@ -4050,7 +4255,7 @@ function channelNodes(channel) {
   const kind = document.createElement('span');
   kind.className = 'kind';
   kind.dataset.kind = channel.kind;
-  kind.dataset.icon = channel.kind === 'voice' ? 'speaker-high' : 'hash';
+  kind.dataset.icon = { voice: 'speaker-high', forum: 'chats-teardrop' }[channel.kind] ?? 'hash';
 
   const name = document.createElement('span');
   name.className = 'channel-name';
@@ -4661,9 +4866,16 @@ const serverInfo = { name: 'Harmony', passwordRequired: false, restartRequired: 
  * without another round trip.
  */
 function applyServerInfo(info) {
-  if (info) Object.assign(serverInfo, info);
+  if (info) {
+    Object.assign(serverInfo, info);
+    // A server too old to have banners says nothing about one: it has none, whatever the last server had.
+    if (!('banner' in info)) serverInfo.banner = null;
+  }
   el.serverName.textContent = serverInfo.name;
+  el.serverHeadName.textContent = serverInfo.name;
+  paintTitleBar();
   paintServerIcon();
+  paintServerBanner();
   // The rail names the server by it too, and follows a change the moment it is made.
   if (info?.name && state.server) {
     serverNames.set(serverKey(state.server), info.name);
@@ -4688,7 +4900,11 @@ function paintServerIcon() {
   const logo = serverInfo.logo !== undefined
     ? serverInfo.logo
     : findProfile(state.server || el.serverUrl.value)?.logo ?? null;
-  const paint = () => fillServerBadge(el.serverIcon, { name: serverInfo.name, logo, dot: false });
+  const paint = () => {
+    fillServerBadge(el.serverIcon, { name: serverInfo.name, logo, dot: false });
+    fillServerBadge(el.serverHeadIcon, { name: serverInfo.name, logo, dot: false });
+    fillServerBadge(el.titlebarIcon, { name: serverInfo.name, logo, dot: false });
+  };
   paint();
   if (!logo) return;
   harmony.logos.ensure(state.server || el.serverUrl.value.trim(), el.password.value, logo)
@@ -4697,6 +4913,24 @@ function paintServerIcon() {
       if ((serverInfo.logo ?? logo) === logo) paint();
     })
     .catch(() => { /* the initial stays */ });
+}
+
+/**
+ * The banner behind the server's name at the top of the channel list, or none. Marked on the view as well, because
+ * a banner makes the head taller and the list under it has to leave room (see .server-head).
+ */
+function paintServerBanner() {
+  const hash = state.auth.user ? serverInfo.banner ?? null : null;
+  const img = el.serverHeadBanner;
+  el.channelsView.toggleAttribute('data-server-banner', Boolean(hash));
+  if (!hash) {
+    img.hidden = true;
+    img.removeAttribute('src');
+    return;
+  }
+  const src = harmony.mediaUrl(hash);
+  if (img.getAttribute('src') !== src) img.src = src;
+  img.hidden = false;
 }
 
 /** The server's roles. A server too old to have any simply has none. */
@@ -4746,7 +4980,7 @@ function applyRolePowers() {
   if (!state.auth.user) return;
   el.channelAdd.hidden = !can('channels.create');
   // A role given or taken away reaches the pin on every message and the list of pins, at once.
-  const mayPin = can('messages.pin');
+  const mayPin = ['messages.pin', 'messages.delete', 'posts.pin', 'posts.delete'].map((p) => can(p)).join();
   if (couldPin !== null && couldPin !== mayPin && state.chat.channelId !== null) renderChat();
   couldPin = mayPin;
   el.channelsRole.textContent = ownRoleText(state.auth.user);
@@ -4795,6 +5029,8 @@ async function loadServerInfo() {
  * one request -- but only made the server's logo by Save.
  */
 let pendingLogo;
+/** The banner chosen in the server dialog and not saved yet: the hash of what was uploaded, null for none, undefined for no change. */
+let pendingBanner;
 
 function paintLogoPreview(src) {
   fillServerBadge(el.serverLogoPreview, { name: serverInfo.name, logo: null, dot: false });
@@ -4829,6 +5065,40 @@ async function stageServerLogo(file) {
   });
   paintLogoPreview(shown);
   el.serverLogoRemove.disabled = false;
+}
+
+/** The banner field's preview: a picture in a strip as wide as the banner is shown, or an empty strip. */
+function paintBannerPreview(src) {
+  if (!src) {
+    el.serverBannerPreview.replaceChildren();
+    el.serverBannerPreview.removeAttribute('data-has');
+    return;
+  }
+  const img = document.createElement('img');
+  img.alt = '';
+  img.src = src;
+  el.serverBannerPreview.replaceChildren(img);
+  el.serverBannerPreview.setAttribute('data-has', '');
+}
+
+/**
+ * Crop a picked image for the server's banner in the same window a profile banner is cut in, and upload what is left.
+ * A GIF stays a GIF. Like the logo it is only staged: Save is what sends it.
+ */
+async function stageServerBanner(file) {
+  const blob = await openImageEditor({ file, kind: 'banner', purpose: 'server', t });
+  if (!blob) return;
+  const upload = await harmony.media.upload(state.server, new Uint8Array(await blob.arrayBuffer()), blob.type);
+  pendingBanner = upload.hash;
+  // A data: URL, because the page may only show images from itself or data:.
+  const shown = await new Promise((done, fail) => {
+    const reader = new FileReader();
+    reader.onload = () => done(reader.result);
+    reader.onerror = () => fail(reader.error);
+    reader.readAsDataURL(blob);
+  });
+  paintBannerPreview(shown);
+  el.serverBannerRemove.disabled = false;
 }
 
 /*
@@ -4903,6 +5173,9 @@ function openServerDialog(tab) {
       })
       .catch(() => {});
   }
+  pendingBanner = undefined;
+  paintBannerPreview(serverInfo.banner ? harmony.mediaUrl(serverInfo.banner) : null);
+  el.serverBannerRemove.disabled = !serverInfo.banner;
   el.serverNameInput.value = serverInfo.name;
   el.serverPasswordInput.value = '';
   el.serverPasswordOff.checked = false;
@@ -4950,6 +5223,7 @@ async function saveServerSettings() {
 
   const body = { name };
   if (pendingLogo !== undefined) body.logo = pendingLogo;
+  if (pendingBanner !== undefined) body.banner = pendingBanner;
   // An absent field and an empty string are different answers, and the
   // server treats them differently on purpose -- so an untouched box must
   // not be sent at all, or saving a rename would take the door off.
@@ -4975,6 +5249,7 @@ async function saveServerSettings() {
     applyServerInfo(server);
     // The new picture (or none) into this server's profile and the rail, without waiting for the broadcast.
     await syncLogo(state.server, el.password.value, server.logo ?? null);
+    await syncBanner(state.server, el.password.value, server.banner ?? null);
 
     /*
      * Tell this client the new key before anything else asks for it.
@@ -5038,7 +5313,13 @@ function renderMembers() {
     li.dataset.profileUser = String(user.id);
     if (off) li.setAttribute('data-off', '');
 
-    li.append(avatarEl(user, 'tiny'));
+    const face = document.createElement('span');
+    face.className = 'status-face';
+    face.append(avatarEl(user, 'tiny'));
+    // What they are on this server: not drawn for those who are not on (an invisible person is not).
+    const shown = off ? null : listedStatus(user.id, state.channels.online, state.channels.statuses);
+    if (shown) face.append(statusDot(shown));
+    li.append(face);
 
     const name = document.createElement('span');
     name.className = 'member-name';
@@ -5140,6 +5421,7 @@ function renderChannels() {
 }
 
 async function onChannelClick(channel) {
+  if (channel.kind === 'forum') return openForumChannel(channel);
   if (channel.kind !== 'voice') return openTextChannel(channel);
   // Clicking the channel you are already in is how you get back to the
   // streams after reading a text channel. It used to do nothing at all,
@@ -5177,7 +5459,14 @@ function applyStage() {
   const tiles = el.channelVideo.dataset.layout !== 'pip'
     && Boolean(el.channelVideo.querySelector('.channel-tile'));
 
-  el.chatActive.hidden = !chatting;
+  // A forum shows its list, and its chat pane only while a post is open: the pane is that post's thread.
+  const forum = chatting && state.chat.forum;
+  const thread = forum && state.chat.threadId !== null;
+  el.chatActive.hidden = !chatting || (forum && !thread);
+  el.forumActive.hidden = !forum;
+  el.channelStage.toggleAttribute('data-forum', forum);
+  el.channelStage.toggleAttribute('data-thread', thread);
+  el.chatClosePost.hidden = !thread;
   el.channelVideo.hidden = chatting || !tiles;
 
   const stage = chatting || tiles;
@@ -5733,7 +6022,8 @@ function applyVoiceButtons() {
    * cannot hear anything.
    */
   const inVoice = Boolean(state.voice.channelId);
-  el.selfStatus.textContent = !inVoice ? t('app.online')
+  paintOwnStatus();
+  el.selfStatus.textContent = !inVoice ? t(`status.${ownShownStatus()}`)
     : state.voice.deafened ? t('app.deafened')
       : state.voice.muted ? t('app.muted')
         : state.voice.pushToTalk
@@ -6476,11 +6766,48 @@ function applyTheme(id, custom = state.settings?.customTheme) {
     for (const [name, value] of Object.entries(customPalette(custom))) {
       root.style.setProperty(name, value);
     }
+    syncTitleBar();
     return 'custom';
   }
   const theme = THEMES.some((t) => t.id === id) ? id : DEFAULT_THEME;
   root.dataset.theme = theme;
+  syncTitleBar();
   return theme;
+}
+
+/*
+ * The title bar.
+ *
+ * Drawn from the palette in use, so it follows the theme; and where the system draws the window's buttons over it
+ * (Windows and Linux) they are told its colours, which are read back from the bar as it is now.
+ */
+const hexOf = (css) => {
+  const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(css ?? '');
+  return m ? `#${[m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')}` : null;
+};
+
+function syncTitleBar() {
+  if (!harmony.titleBar || harmony.platform === 'darwin') return;
+  const bar = document.getElementById('titlebar');
+  if (!bar) return;
+  const style = getComputedStyle(bar);
+  const color = hexOf(style.backgroundColor);
+  const symbolColor = hexOf(style.color);
+  if (color) harmony.setTitleBar({ color, symbolColor }).catch(() => { /* a window without an overlay */ });
+}
+
+/** The server named at the middle of the bar: the one you are in, or the app's name until you are in one. */
+function paintTitleBar() {
+  if (!harmony.titleBar || !el.titlebarName) return;
+  const inside = Boolean(state.auth?.user) && activeViewId() !== 'view-connect';
+  el.titlebarName.textContent = inside ? serverInfo.name : 'Harmony';
+  el.titlebarIcon.hidden = !inside;
+}
+
+if (harmony.titleBar) {
+  const root = document.documentElement;
+  harmony.onFullScreen((on) => root.toggleAttribute('data-fullscreen', on));
+  harmony.isFullScreen().then((on) => root.toggleAttribute('data-fullscreen', Boolean(on))).catch(() => {});
 }
 
 /** The Custom swatch's bands, painted from its own colours. */
@@ -8549,12 +8876,15 @@ function newMessagesDivider() {
 }
 
 async function openTextChannel(channel) {
+  navRecord('channel', channel.id);
   // Before channelId changes and before anything is redrawn: the log still
   // shows the channel being left, and this is the only moment it can be read.
   rememberChatScroll();
   state.chat.showsHistory = false;
   // A voice message is recorded for the channel it was started in.
-  const entering = state.chat.channelId !== channel.id;
+  const entering = state.chat.channelId !== channel.id || state.chat.forum;
+  // From a forum to a text channel (or from one forum to another): its list and post are put away.
+  leaveForum();
   if (entering) {
     chatVoice.cancel();
     // Where the new messages begin, taken now: reading the channel moves the mark.
@@ -8665,7 +8995,11 @@ function toggleStar(message) {
   try {
     const done = isStarred(message)
       ? stars.remove(scope, 'channel', message.id)
-      : stars.add(scope, { kind: 'channel', id: message.id, channelId: message.channelId, message: channelSnapshot(message) });
+      : stars.add(scope, {
+        kind: 'channel', id: message.id, channelId: message.channelId,
+        // In a forum, which post it is of, so that the star's card can say and go there.
+        message: channelSnapshot({ ...message, postTitle: message.title ?? state.chat.post?.title ?? null }),
+      });
     el.chatNote.textContent = '';
     return done;
   } catch (err) {
@@ -8676,10 +9010,11 @@ function markOpenChannelRead() {
   clearTimeout(readTimer);
   readTimer = setTimeout(() => {
     const id = state.chat.channelId;
-    const newest = state.chat.messages.at(-1)?.id;
+    // A forum is read as a whole: its list and its threads are all on the one mark.
+    const newest = state.chat.forum ? Number.POSITIVE_INFINITY : state.chat.messages.at(-1)?.id;
     // Not looked at: a channel open behind a minimised window has not been read.
     if (!state.auth.user || !id || !newest || document.hidden) return;
-    harmony.api.markRead(state.server, id, newest)
+    harmony.api.markRead(state.server, id, state.chat.forum ? undefined : newest)
       .then((entry) => {
         noteRead(entry);
         renderChannels();
@@ -8716,7 +9051,8 @@ const chatScrollKey = (channelId) => `${state.server}#${channelId}`;
 function rememberChatScroll() {
   const id = state.chat.channelId;
   const log = el.chatLog;
-  if (id == null || !state.chat.showsHistory || !log.clientHeight) return;
+  // A post's thread is opened at its start each time, so there is no place in it to remember.
+  if (id == null || state.chat.forum || !state.chat.showsHistory || !log.clientHeight) return;
 
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < CHAT_BOTTOM_PX;
   let place = { atBottom: true };
@@ -8748,7 +9084,7 @@ async function pageBackTo(server, channelId, messages, anchorId) {
   for (let page = 0; page < JUMP_MAX_PAGES && list.length && list[0].id > anchorId; page += 1) {
     let older;
     try {
-      ({ messages: older } = await harmony.api.messages(server, channelId, list[0].id));
+      ({ messages: older } = await harmony.api.messages(server, channelId, list[0].id, undefined, state.chat.threadId ?? undefined));
     } catch {
       break;
     }
@@ -8793,6 +9129,7 @@ function closeChat() {
   rememberChatScroll();
   state.chat.showsHistory = false;
   state.chat.channelId = null;
+  leaveForum();
   renderChatTyping();
   if (el.voiceActive.hidden) el.voiceIdle.hidden = false;
   applyStage();
@@ -8815,6 +9152,69 @@ function closeChat() {
  * spaces, and "who did they mean" would have no answer.
  */
 const MENTION_RE = /(?<![\w@])@([a-z0-9][a-z0-9_-]{0,23})/gi;
+
+/*
+ * #channel
+ *
+ * A channel is named in a message by its name in lower case, with spaces as dashes ("Locked Room" is #locked-room): a
+ * word that a space does not end. What ends one is what ends a word -- a space, or punctuation -- so "see #general."
+ * means general. Only a channel this person can see is a link; any other #word is just a word.
+ */
+const CHANNEL_END = '\\s#@:.,;!?()\\[\\]{}<>"\'`*~|\\\\/';
+const CHANNEL_REF_RE = new RegExp(`(?<![\\w#&])#([^${CHANNEL_END}]{1,32})`, 'gi');
+const CHANNEL_STRIP_RE = new RegExp(`[${CHANNEL_END.replace('\\s', '')}]`, 'g');
+
+/** What a channel is called in a message. */
+const channelHandle = (name) => String(name ?? '').toLowerCase().replace(/\s+/g, '-').replace(CHANNEL_STRIP_RE, '');
+
+/** The channels a message can point to: text channels and forums, by handle, the first of a name winning. */
+let channelRefs = { list: null, byHandle: new Map() };
+function channelsByHandle() {
+  if (channelRefs.list !== state.channels.list) {
+    const byHandle = new Map();
+    for (const channel of state.channels.list ?? []) {
+      if (channel.kind !== 'text' && channel.kind !== 'forum') continue;
+      const handle = channelHandle(channel.name);
+      if (handle && !byHandle.has(handle)) byHandle.set(handle, channel);
+    }
+    channelRefs = { list: state.channels.list, byHandle };
+  }
+  return channelRefs.byHandle;
+}
+
+/** A #channel in a message: pressed, it opens the channel. */
+function channelNode(channel) {
+  const span = document.createElement('span');
+  span.className = 'channel-link';
+  span.setAttribute('role', 'link');
+  span.tabIndex = 0;
+  span.dataset.channelId = String(channel.id);
+  span.textContent = `#${channel.name}`;
+  span.title = t('channel_link.open', { name: channel.name });
+  return span;
+}
+
+/** Open the channel a link points to, from wherever the link is (a message, a pinned message, a search result). */
+function openChannelLink(link) {
+  const channel = state.channels.list.find((c) => c.id === Number(link.dataset.channelId));
+  if (!channel) return;
+  if (document.querySelector('.view[data-active]')?.id !== 'view-channels') showView('view-channels');
+  onChannelClick(channel);
+}
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('.channel-link');
+  if (!link) return;
+  event.preventDefault();
+  openChannelLink(link);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const link = event.target.closest?.('.channel-link');
+  if (!link) return;
+  event.preventDefault();
+  openChannelLink(link);
+});
 
 /** The one mention that is not a person. */
 const EVERYONE = 'everyone';
@@ -9021,7 +9421,8 @@ function notifyMention(message) {
     state.mentioned.set(message.channelId, (state.mentioned.get(message.channelId) ?? 0) + 1);
     renderChannels();
   }
-  if (state.settings?.mentionSound !== false) playCue('mention');
+  // Do not disturb is silence, not absence: the markers above are still put up.
+  if (state.settings?.mentionSound !== false && state.myStatus !== 'dnd') playCue('mention');
 }
 
 // --- the suggestion list ---------------------------------------------------
@@ -9043,6 +9444,35 @@ function mentionTokenStart() {
   // Anything that cannot be in a nickname ends the token.
   if (/[^a-z0-9_-]/i.test(value.slice(at + 1, caret))) return -1;
   return at;
+}
+
+/** Where the #channel being typed starts, or -1: the same rules as for an @. */
+function channelTokenStart() {
+  const value = el.chatInput.value;
+  const caret = el.chatInput.selectionStart ?? value.length;
+  const at = value.lastIndexOf('#', caret - 1);
+  if (at < 0) return -1;
+  if (at > 0 && /[\w#&]/.test(value[at - 1])) return -1;
+  if (new RegExp(`[${CHANNEL_END}]`).test(value.slice(at + 1, caret))) return -1;
+  return at;
+}
+
+/** What is being typed at the caret: an @ or a #, whichever began last. */
+function composerToken() {
+  const mention = mentionTokenStart();
+  const channel = channelTokenStart();
+  if (mention < 0 && channel < 0) return null;
+  return mention > channel ? { kind: '@', at: mention } : { kind: '#', at: channel };
+}
+
+/** The channels a typed fragment could mean, the ones that start with it first. */
+function channelCandidates(query) {
+  const q = query.toLowerCase();
+  return [...channelsByHandle()]
+    .filter(([handle, channel]) => handle.includes(q) || channel.name.toLowerCase().includes(q))
+    .sort(([a], [b]) => Number(b.startsWith(q)) - Number(a.startsWith(q)))
+    .slice(0, 8)
+    .map(([handle, channel]) => ({ nickname: handle, handle, channel }));
 }
 
 let mentionMatches = [];
@@ -9090,7 +9520,22 @@ function renderMentionList() {
     if (index === mentionActive) li.setAttribute('data-active', '');
     li.dataset.nickname = match.nickname;
 
-    if (match.role) {
+    if (match.channel) {
+      const kind = document.createElement('span');
+      kind.className = 'kind';
+      kind.dataset.icon = match.channel.kind === 'forum' ? 'chats-teardrop' : 'hash';
+      const name = document.createElement('span');
+      name.className = 'mention-name';
+      name.textContent = match.channel.name;
+      li.append(kind, name);
+      // What goes in the message, when it is not what the channel is called.
+      if (match.handle !== match.channel.name.toLowerCase()) {
+        const note = document.createElement('span');
+        note.className = 'mention-nick';
+        note.textContent = `#${match.handle}`;
+        li.append(note);
+      }
+    } else if (match.role) {
       const dotEl = document.createElement('span');
       dotEl.className = 'role-dot';
       dotEl.style.setProperty('--role-color', match.role.color);
@@ -9146,11 +9591,12 @@ function closeMentions() {
 
 /** Open, update or close the list for whatever is under the caret. */
 function updateMentions() {
-  const at = mentionTokenStart();
-  if (at < 0) return closeMentions();
+  const token = composerToken();
+  if (!token) return closeMentions();
 
   const caret = el.chatInput.selectionStart ?? el.chatInput.value.length;
-  mentionMatches = mentionCandidates(el.chatInput.value.slice(at + 1, caret));
+  const typed = el.chatInput.value.slice(token.at + 1, caret);
+  mentionMatches = token.kind === '#' ? channelCandidates(typed) : mentionCandidates(typed);
   if (!mentionMatches.length) return closeMentions();
 
   mentionActive = Math.min(mentionActive, mentionMatches.length - 1);
@@ -9177,14 +9623,15 @@ function updateMentions() {
 /** Put the chosen nickname in, replacing what was typed of it. */
 function acceptMention(index) {
   const match = mentionMatches[index];
-  const at = mentionTokenStart();
-  if (!match || at < 0) return closeMentions();
+  const token = composerToken();
+  if (!match || !token) return closeMentions();
+  const { at } = token;
 
   const input = el.chatInput;
   const caret = input.selectionStart ?? input.value.length;
   // A trailing space, because the next thing typed is a word and not more
   // of the name -- and without it the list stays open over what follows.
-  const insert = `@${match.nickname} `;
+  const insert = match.channel ? `#${match.handle} ` : `@${match.nickname} `;
   input.value = input.value.slice(0, at) + insert + input.value.slice(caret);
   const after = at + insert.length;
   input.setSelectionRange(after, after);
@@ -9281,9 +9728,9 @@ function renderPlain(target, text) {
   let last = 0;
   let replaced = 0;
 
-  const TOKENS = new RegExp(`${SHORTCODE_RE.source}|${MENTION_RE.source}`, 'gi');
+  const TOKENS = new RegExp(`${SHORTCODE_RE.source}|${MENTION_RE.source}|${CHANNEL_REF_RE.source}`, 'gi');
   for (let m = TOKENS.exec(text); m; m = TOKENS.exec(text)) {
-    const [whole, shortcode, mention] = m;
+    const [whole, shortcode, mention, channelRef] = m;
     let node = null;
 
     if (shortcode) {
@@ -9297,6 +9744,10 @@ function renderPlain(target, text) {
       // A text node back means it matched nobody, so leave the text where
       // it is rather than cutting it out and putting it back.
       if (drawn.nodeType !== Node.TEXT_NODE) node = drawn;
+    } else if (channelRef) {
+      // The open server's channels: another server's private conversations name none of them.
+      const channel = lookupUsers === null ? channelsByHandle().get(channelRef.toLowerCase()) : null;
+      if (channel) node = channelNode(channel);
     }
     if (!node) continue;
 
@@ -9872,6 +10323,16 @@ function addPendingFiles(files) {
 }
 
 /** The strip of reactions under a message. Drawn only when there are some. */
+const reactionsUi = createReactionsUi({
+  t, displayOf, faceOf, avatarEl, appendEmoji,
+});
+
+/** A message's reactions as they are now, not as the row that is asking was drawn: that row is built again by each one. */
+function liveReactions(messageId) {
+  const found = state.chat.messages.find((m) => m.id === messageId) ?? state.chat.pinned.find((m) => m.id === messageId);
+  return found?.reactions ?? [];
+}
+
 function reactionRow(message) {
   const row = document.createElement('div');
   row.className = 'reactions';
@@ -9886,7 +10347,12 @@ function reactionRow(message) {
     // roster rows are: the row is rebuilt under you by everybody else's
     // reactions, and `mine` from render time would be stale.
     button.addEventListener('click', () => toggleReaction(message.id, reaction.emoji));
-    button.title = (reaction.userIds ?? []).map((id) => displayOf(id, 'someone')).join(', ');
+    // The pointer resting on it says who reacted; a shift-click or a long press lists everybody (see reactions-ui.js).
+    reactionsUi.attach(
+      button,
+      () => liveReactions(message.id).find((r) => r.emoji === reaction.emoji),
+      () => liveReactions(message.id),
+    );
 
     appendEmoji(button, reaction.emoji);
     const count = document.createElement('span');
@@ -10823,6 +11289,11 @@ const GROUP_WINDOW_MS = 5 * 60 * 1000;
 function messageContent(message) {
   const text = document.createElement('span');
   text.className = 'text';
+  // Listed anywhere but in the log (pins, search results, stars) a poll is its question; the card is the log's.
+  if (message.poll) {
+    text.textContent = `\u{1F4CA} ${message.poll.title}`;
+    return { text, emojiOnly: false };
+  }
   // Text nodes and images only -- see renderBody. A chat message is the most
   // obvious place in the app for someone to try injecting markup.
   const emojiOnly = Boolean(renderBody(text, message.body));
@@ -10851,6 +11322,402 @@ function messageContent(message) {
     if (card) text.append(card);
   }
   return { text, emojiOnly };
+}
+
+/*
+ * Polls in a channel.
+ *
+ * The server counts: a message's poll carries `results` (the count of each option, how many people voted, who
+ * unless the poll hides them, and what this person chose). A vote is sent whole -- everything chosen -- and the
+ * answer, like what others do, is a message:poll push that lands in applyPollResults.
+ */
+const pollUi = createPollUi({ t, faceOf, avatarEl, displayOf });
+
+const POLL_ERRORS = new Set(['poll_closed', 'bad_vote', 'slow_down', 'poll_needs_title', 'poll_needs_options']);
+const pollErrorText = (err, fallback) => (POLL_ERRORS.has(err?.code) ? t(`poll.err_${err.code}`) : (err?.message || fallback));
+
+/** The votes of a poll message, with the shape the card wants whatever the server has said so far. */
+function pollResultsOf(message) {
+  const r = message.poll.results;
+  return {
+    counts: r?.counts ?? message.poll.options.map(() => 0),
+    total: r?.total ?? 0,
+    voters: message.poll.anonymous ? null : (r?.voters ?? message.poll.options.map(() => [])),
+    mine: r?.mine ?? [],
+  };
+}
+
+function pollCardFor(message) {
+  return pollUi.card({
+    poll: message.poll,
+    results: () => pollResultsOf(message),
+    imageUrl: message.attachmentHash ? harmony.mediaUrl(message.attachmentHash) : null,
+    onImage: () => openLightbox(message),
+    onVote: (options) => voteInPoll(message.id, options),
+  });
+}
+
+/** Put the votes the server reported where the poll is drawn from: both lists, since a pinned message is a copy. */
+function applyPollResults(messageId, results) {
+  for (const list of [state.chat.messages, state.chat.pinned]) {
+    const target = list.find((m) => m.id === messageId);
+    if (!target?.poll) continue;
+    // What everybody is told does not say what this person chose; only their own push and answers do.
+    target.poll.results = { ...results, mine: results.mine ?? target.poll.results?.mine ?? [] };
+  }
+}
+
+/** A message that came again (pinned, say) without anybody's choice in it keeps the one this person made. */
+function carryVotes(next, previous) {
+  if (next?.poll && previous?.poll?.results?.mine) {
+    next.poll.results = { ...(next.poll.results ?? {}), mine: previous.poll.results.mine };
+  }
+}
+
+async function voteInPoll(messageId, options) {
+  try {
+    const { results } = await harmony.api.voteMessage(state.server, messageId, options);
+    applyPollResults(messageId, results);
+  } catch (err) {
+    showChannelsError(pollErrorText(err, t('poll.vote_failed')));
+  }
+}
+
+/** The poll button: the dialog, then the picture if there is one, then the message. */
+async function startPoll() {
+  const channelId = state.chat.channelId;
+  if (channelId === null || state.chat.editing) return;
+  const made = await pollUi.compose();
+  if (!made) return;
+  if (made.image && activeUpload) {
+    el.chatNote.textContent = t('app.wait_for_the_file_already');
+    return;
+  }
+  el.chatNote.textContent = '';
+  try {
+    let attachmentHash = null;
+    let attachmentName = null;
+    if (made.image) {
+      const upload = await uploadAttachment(made.image);
+      attachmentHash = upload.hash;
+      attachmentName = made.image.name;
+    }
+    await harmony.api.postMessage(state.server, channelId, {
+      poll: made.poll, attachmentHash, attachmentName, ...(state.chat.threadId ? { threadId: state.chat.threadId } : {}),
+    });
+    // The server echoes it back over the socket, like any message.
+    sendingUntil = Date.now() + 2000;
+  } catch (err) {
+    el.chatNote.textContent = err.code === 'cancelled' ? '' : pollErrorText(err, t('poll.err_failed'));
+  }
+}
+
+/*
+ * Forums.
+ *
+ * A forum channel has no log: its stage is the list of its posts (forum-ui.js), and opening a post puts that post's
+ * thread -- the post first, then what is written under it -- in the chat pane beside the list. So everything a
+ * channel's chat does (files, voice messages, polls, replies, pins, stars, reactions, the search, typing, dropping a
+ * file) is what a post's thread does, with `state.chat.threadId` saying which post the requests are about.
+ */
+const forumUi = createForumUi({
+  t,
+  harmony,
+  state,
+  displayOf,
+  nameFont,
+  appendEmoji,
+  openEmojiPicker: (...args) => openEmojiPicker(...args),
+  closeEmojiPicker: () => closeEmojiPicker(),
+  mediaUrl: (hash) => harmony.mediaUrl(hash),
+  openPost: (postId) => openPost(postId),
+  createPost: (input) => createForumPost(input),
+  say: (text) => showChannelsError(text),
+  mentionsMe: (message) => mentionsMe(message),
+  canPin: () => can('posts.pin'),
+  canDelete: (message) => message.userId === state.auth.user?.id || can('posts.delete'),
+  pinPost: (message, on) => harmony.api.postPin(state.server, message.id, on),
+  deletePost: (message) => deleteForumPost(message),
+});
+
+/** Delete a post, with everything written under it, after asking. The server tells everybody, this person included. */
+async function deleteForumPost(message) {
+  if (!await askConfirm(t('forum.delete_this_post'), { okLabel: t('app.delete_2') })) return;
+  await harmony.api.deleteMessage(state.server, message.id);
+}
+
+/** "OP" beside the name of whoever started the open post, on the post and on what they write under it. */
+function opBadge(message) {
+  if (state.chat.threadId === null || !state.chat.post || message.userId !== state.chat.post.userId) return [];
+  const badge = document.createElement('span');
+  badge.className = 'op-badge';
+  badge.textContent = t('forum.op');
+  badge.title = t('forum.op_title');
+  return [badge];
+}
+
+function postTitleEl(post) {
+  const h = document.createElement('h1');
+  h.className = 'post-title';
+  h.textContent = post.title;
+  return h;
+}
+
+function postDividerEl(empty) {
+  const box = document.createElement('div');
+  box.className = 'post-divider';
+  box.setAttribute('role', 'separator');
+  const line = document.createElement('span');
+  line.textContent = empty ? t('forum.no_answers') : t('forum.answers');
+  box.append(line);
+  return box;
+}
+
+/*
+ * Back and forward, in the title bar: through the channels and forum posts opened on this server, as a browser goes
+ * through pages. Every way of getting somewhere records it (opening a channel or a post, closing a post to its list);
+ * going back or forward replays the place without recording it again.
+ */
+const navHistory = createNavHistory();
+let navigating = false;
+
+function paintNav() {
+  el.navBack.disabled = !navHistory.canBack;
+  el.navForward.disabled = !navHistory.canForward;
+}
+
+function navRecord(type, channelId, postId = null) {
+  if (navigating || !state.server) return;
+  const server = state.server;
+  // Another server's places are not this one's: a new trail starts.
+  if (navHistory.current && navHistory.current.server !== server) navHistory.clear();
+  navHistory.push({ key: `${serverKey(server)}|${type}|${channelId}|${postId ?? ''}`, server, type, channelId, postId });
+  paintNav();
+}
+
+async function navGo(entry) {
+  if (!entry || entry.server !== state.server || !state.auth.user) return;
+  const channel = (state.channels.list ?? []).find((c) => c.id === entry.channelId);
+  if (!channel) {
+    // The channel has been deleted since: it is left out of the trail.
+    navHistory.drop(entry.key);
+    paintNav();
+    return;
+  }
+  navigating = true;
+  try {
+    if (activeViewId() !== 'view-channels') showView('view-channels');
+    if (entry.type === 'post') {
+      if (!(state.chat.forum && state.chat.channelId === channel.id)) await openForumChannel(channel);
+      await openPost(entry.postId);
+    } else if (channel.kind === 'forum') {
+      if (state.chat.forum && state.chat.channelId === channel.id) closePost();
+      else await openForumChannel(channel);
+    } else {
+      await openTextChannel(channel);
+    }
+  } finally {
+    navigating = false;
+    paintNav();
+  }
+}
+
+/*
+ * About Harmony: the window the button at the end of the title bar opens. The version is the app's own, asked of the
+ * main process (the page does not know it), and what "Copy version info" puts on the clipboard is what to paste into
+ * a report.
+ */
+let aboutInfo = '';
+el.aboutOpen.addEventListener('click', async () => {
+  let version = '';
+  try {
+    version = await harmony.version();
+  } catch { /* shown without */ }
+  el.aboutVersion.textContent = version || '?';
+  aboutInfo = `Harmony ${version || '?'} (${harmony.platform})`;
+  el.aboutCopy.textContent = t('about.copy');
+  if (!el.about.open) el.about.showModal();
+});
+el.aboutClose.addEventListener('click', () => el.about.close());
+el.aboutCopy.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(aboutInfo);
+    el.aboutCopy.textContent = t('about.copied');
+  } catch {
+    el.aboutCopy.textContent = aboutInfo;
+  }
+});
+// A click on the dark around it closes it, as a window of its own would.
+el.about.addEventListener('click', (event) => {
+  if (event.target === el.about) el.about.close();
+});
+
+const navBack = () => navGo(navHistory.back());
+const navForward = () => navGo(navHistory.forward());
+el.navBack.addEventListener('click', navBack);
+el.navForward.addEventListener('click', navForward);
+document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || !harmony.titleBar) return;
+  // Command-[ and ] on a Mac, Alt with the arrows elsewhere: what a browser does.
+  const mac = harmony.platform === 'darwin';
+  const back = mac ? event.metaKey && event.key === '[' : event.altKey && event.key === 'ArrowLeft';
+  const forward = mac ? event.metaKey && event.key === ']' : event.altKey && event.key === 'ArrowRight';
+  if (!back && !forward) return;
+  event.preventDefault();
+  if (back) navBack();
+  else navForward();
+});
+
+/** Whether a message belongs to what the chat pane is showing: the open text channel, or the open post of a forum. */
+function inOpenChat(message) {
+  if (message.channelId !== state.chat.channelId) return false;
+  if (!state.chat.forum) return true;
+  const post = state.chat.threadId;
+  return post !== null && (message.id === post || message.threadId === post);
+}
+
+/** Put a forum away: its list, and the post that was open. For anything that takes the chat pane for something else. */
+function leaveForum() {
+  if (!state.chat.forum && state.chat.threadId === null) return;
+  state.chat.forum = false;
+  state.chat.threadId = null;
+  state.chat.post = null;
+  state.chat.messages = [];
+  state.chat.pinned = [];
+  el.chatInput.placeholder = t('chat_form.message');
+  el.chatClosePost.hidden = true;
+  forumUi.close();
+}
+
+async function openForumChannel(channel) {
+  // The forum that is open, clicked again: back to its list, on its own.
+  if (state.chat.forum && state.chat.channelId === channel.id) {
+    closePost();
+    return;
+  }
+  rememberChatScroll();
+  chatVoice.cancel();
+  leaveForum();
+  state.chat.showsHistory = false;
+  state.chat.channelId = channel.id;
+  state.chat.forum = true;
+  state.chat.threadId = null;
+  state.chat.post = null;
+  state.chat.messages = [];
+  state.chat.pinned = [];
+  state.chat.newAfter = null;
+  navRecord('channel', channel.id);
+  setReply(null);
+  setEditing(null);
+  channelPins?.close();
+  setPendingFile(null);
+  applyComposer();
+  state.mentioned.delete(channel.id);
+  el.chatNote.textContent = '';
+  el.voiceIdle.hidden = true;
+  forumUi.open(channel);
+  searchUi?.refreshPlaceholder();
+  renderChatTyping();
+  applyStage();
+  renderChannels();
+  markOpenChannelRead();
+}
+
+/** Open a post of the open forum beside its list: its thread is loaded into the chat pane. */
+async function openPost(postId) {
+  const channelId = state.chat.channelId;
+  if (!state.chat.forum || channelId === null) return;
+  if (state.chat.threadId === postId && state.chat.showsHistory) return;
+  const server = state.server;
+  chatVoice.cancel();
+  state.chat.threadId = postId;
+  navRecord('post', channelId, postId);
+  state.chat.post = null;
+  state.chat.messages = [];
+  state.chat.pinned = [];
+  state.chat.hasMore = false;
+  state.chat.showsHistory = false;
+  state.chat.newAfter = null;
+  setReply(null);
+  setEditing(null);
+  channelPins?.close();
+  setPendingFile(null);
+  applyComposer();
+  el.chatNote.textContent = '';
+  el.chatLog.replaceChildren();
+  forumUi.highlight(postId);
+  searchUi?.refreshPlaceholder();
+  renderChatTyping();
+  applyStage();
+  try {
+    const { messages, pinned, post } = await harmony.api.messages(server, channelId, undefined, undefined, postId);
+    // Another post, or another channel, was opened while this one came.
+    if (state.server !== server || state.chat.channelId !== channelId || state.chat.threadId !== postId) return;
+    state.chat.post = post ?? messages.find((m) => m.id === postId) ?? null;
+    state.chat.messages = messages;
+    state.chat.pinned = pinned;
+    state.chat.hasMore = messages.length >= CHAT_PAGE;
+    state.chat.showsHistory = true;
+    const title = state.chat.post?.title ?? '';
+    el.chatName.textContent = title;
+    el.chatInput.placeholder = t('forum.reply_placeholder', { title });
+    renderChat({ scrollToBottom: state.chat.hasMore });
+    // A post is read from its start, with what is written under it below.
+    if (!state.chat.hasMore) el.chatLog.scrollTop = 0;
+    markOpenChannelRead();
+    await refreshKeepSet();
+  } catch (err) {
+    if (state.chat.threadId !== postId) return;
+    closePost();
+    showChannelsError(err.code === 'no_such_post' ? t('forum.post_gone') : err.message);
+  }
+}
+
+/** The post is put away: the forum's list is the whole stage again. */
+function closePost() {
+  if (!state.chat.forum || state.chat.threadId === null) return;
+  navRecord('channel', state.chat.channelId);
+  chatVoice.cancel();
+  setReply(null);
+  setEditing(null);
+  channelPins?.close();
+  setPendingFile(null);
+  state.chat.threadId = null;
+  state.chat.post = null;
+  state.chat.messages = [];
+  state.chat.pinned = [];
+  state.chat.showsHistory = false;
+  el.chatInput.placeholder = t('chat_form.message');
+  forumUi.highlight(null);
+  searchUi?.refreshPlaceholder();
+  renderChatTyping();
+  applyStage();
+}
+el.chatClosePost.addEventListener('click', closePost);
+
+/**
+ * Start a post: its files are uploaded, the post goes with the first of them (and the words and the title), and each
+ * of the others is a message under it, from the same person, straight after.
+ */
+async function createForumPost({ title, body, files }) {
+  const channelId = state.chat.channelId;
+  if (!state.chat.forum || channelId === null) throw new Error(t('forum.err_not_open'));
+  if (activeUpload) throw new Error(t('app.wait_for_the_file_already'));
+  const sent = [];
+  for (const file of files) {
+    const upload = await uploadAttachment(file);
+    sent.push({ attachmentHash: upload.hash, attachmentName: file.name });
+  }
+  let post;
+  try {
+    ({ message: post } = await harmony.api.postMessage(state.server, channelId, { title, body, ...(sent[0] ?? {}) }));
+  } catch (err) {
+    throw new Error(err.code === 'post_needs_title' ? t('forum.err_post_needs_title') : err.message);
+  }
+  for (const more of sent.slice(1)) {
+    await harmony.api.postMessage(state.server, channelId, { threadId: post.id, ...more });
+  }
+  return post;
 }
 
 /**
@@ -10887,6 +11754,9 @@ function messageRow(message, previous) {
     // was pinned.
     && !previous.pinned
     && !message.pinned
+    // A forum's post is set apart from the first answer under it, whoever wrote it.
+    && !previous.title
+    && !message.title
     // A reply shows what it answers above its name, so it always starts a
     // block of its own.
     && !message.reply
@@ -10943,12 +11813,17 @@ function messageRow(message, previous) {
   const pin = document.createElement('button');
   pin.className = 'msg-tool';
   pin.dataset.icon = 'push-pin';
-  pin.textContent = message.pinned ? t('app.unpin') : t('app.pin');
+  // The post at the head of a thread is pinned to the top of its forum, which is its own pin and its own permission;
+  // every other message is pinned in the thread (or the channel) it is in.
+  const isPost = Boolean(message.title);
+  const pinnedNow = isPost ? Boolean(message.postPinnedAt) : message.pinned;
+  pin.textContent = isPost ? (pinnedNow ? t('forum.unpin_post') : t('forum.pin_post')) : (pinnedNow ? t('app.unpin') : t('app.pin'));
   pin.title = pin.textContent;
-  if (message.pinned) pin.setAttribute('data-on', '');
+  if (pinnedNow) pin.setAttribute('data-on', '');
   pin.addEventListener('click', async () => {
     try {
-      await harmony.api.pinMessage(state.server, message.id, !message.pinned);
+      if (isPost) await harmony.api.postPin(state.server, message.id, !pinnedNow);
+      else await harmony.api.pinMessage(state.server, message.id, !message.pinned);
     } catch (err) {
       showChannelsError(err.message);
     }
@@ -10965,7 +11840,7 @@ function messageRow(message, previous) {
 
   tools.append(reply, react, star);
   // Only for those the server would let: admins, and roles that hold the permission.
-  if (can('messages.pin')) tools.append(pin);
+  if (can(message.title ? 'posts.pin' : 'messages.pin')) tools.append(pin);
   if (message.attachmentHash) {
     const download = document.createElement('button');
     download.className = 'msg-tool';
@@ -11003,10 +11878,11 @@ function messageRow(message, previous) {
     who.dataset.profileUser = String(message.userId);
     who.textContent = displayOf(message.userId, message.nickname);
     nameFont(who, message.userId);
-    head.append(who, when);
+    head.append(who, ...opBadge(message), when);
     main.append(head);
   }
-  main.append(text);
+  main.append(message.poll ? pollCardFor(message) : text);
+  if (message.poll) row.setAttribute('data-poll', '');
 
   /*
    * Editing, and only your own.
@@ -11023,7 +11899,8 @@ function messageRow(message, previous) {
    * arriving. Keeping it alive across that is a pile of state about
    * drafts and caret positions, and this is a friends' chat.
    */
-  if (message.userId === state.auth.user?.id) {
+  // A poll is not rewritten: the votes already given are answers to what it asked.
+  if (message.userId === state.auth.user?.id && !message.poll) {
     const change = document.createElement('button');
     change.className = 'msg-tool';
     change.dataset.icon = 'pencil-simple';
@@ -11040,14 +11917,14 @@ function messageRow(message, previous) {
 
   // Your own, or anybody's with the permission -- the same rule the server
   // enforces, so a button that appears always works.
-  if (message.userId === state.auth.user?.id || can('messages.delete')) {
+  if (message.userId === state.auth.user?.id || can(message.title ? 'posts.delete' : 'messages.delete')) {
     const remove = document.createElement('button');
     remove.className = 'msg-tool msg-tool-danger';
     remove.dataset.icon = 'trash';
     remove.textContent = t('app.delete_2');
     remove.title = t('app.delete_2');
     remove.addEventListener('click', async () => {
-      if (!await askConfirm(t('app.delete_this_message'), { okLabel: t('app.delete_2') })) return;
+      if (!await askConfirm(message.title ? t('forum.delete_this_post') : t('app.delete_this_message'), { okLabel: t('app.delete_2') })) return;
       try {
         await harmony.api.deleteMessage(state.server, message.id);
         // The server pushes message:deleted to everyone, including us.
@@ -11093,7 +11970,10 @@ function renderChat({ scrollToBottom = false, restore = null, toNews = false } =
       rows.push(newMessagesDivider(), messageRow(m, undefined));
       return;
     }
-    rows.push(messageRow(m, all[i - 1]));
+    const row = messageRow(m, all[i - 1]);
+    // The post of the open thread: its title above it, and a line under it, between it and what answers it.
+    if (state.chat.threadId !== null && m.id === state.chat.threadId) rows.push(postTitleEl(m), row, postDividerEl(all.length === 1));
+    else rows.push(row);
   });
   // At the top of the history, and only while there is more to load.
   if (state.chat.hasMore && state.chat.showsHistory && rows.length) rows.unshift(olderMessagesButton());
@@ -11246,7 +12126,7 @@ async function loadOlderMessages(button) {
   loadingOlder = true;
   button.disabled = true;
   try {
-    const { messages: older } = await harmony.api.messages(server, channelId, oldest);
+    const { messages: older } = await harmony.api.messages(server, channelId, oldest, undefined, state.chat.threadId ?? undefined);
     if (state.server !== server || state.chat.channelId !== channelId) return;
     state.chat.hasMore = (older?.length ?? 0) >= CHAT_PAGE;
     if (!older?.length) {
@@ -11280,7 +12160,7 @@ async function jumpToMessage(id) {
     const server = state.server;
     const channelId = state.chat.channelId;
     try {
-      const { messages: since } = await harmony.api.messages(server, channelId, null, id);
+      const { messages: since } = await harmony.api.messages(server, channelId, null, id, state.chat.threadId ?? undefined);
       if (state.server === server && state.chat.channelId === channelId && since?.some((m) => m.id === id)) {
         state.chat.messages = since;
         // Whatever is above the first of them is older than anything held, and can be asked for.
@@ -11299,7 +12179,7 @@ async function jumpToMessage(id) {
     let older;
     try {
       ({ messages: older } = await harmony.api.messages(
-        state.server, state.chat.channelId, oldest,
+        state.server, state.chat.channelId, oldest, undefined, state.chat.threadId ?? undefined,
       ));
     } catch (err) {
       el.chatNote.textContent = err.message;
@@ -11374,6 +12254,7 @@ async function sendMessage() {
       const last = done === queue.length - 1;
       await harmony.api.postMessage(state.server, state.chat.channelId, {
         body: last ? body : '', attachmentHash, attachmentName,
+        ...(state.chat.threadId ? { threadId: state.chat.threadId } : {}),
         ...(replying && done === 0 ? { replyTo: replying.id } : {}),
       });
       done += 1;
@@ -11396,13 +12277,21 @@ async function sendMessage() {
 }
 
 /** A search result was chosen: its channel, and the message in it. */
-async function jumpToResult(channelId, messageId) {
-  const channel = (state.channels.list ?? []).find((c) => c.id === channelId && c.kind === 'text');
+async function jumpToResult(channelId, messageId, threadId = null) {
+  const channel = (state.channels.list ?? []).find((c) => c.id === channelId && (c.kind === 'text' || c.kind === 'forum'));
   if (!channel) {
     el.chatNote.textContent = t('stars.channel_gone');
     return;
   }
-  if (state.chat.channelId !== channelId || !state.chat.showsHistory) await openTextChannel(channel);
+  if (channel.kind === 'forum') {
+    // In a forum a message is in a post's thread: the post, or one of what is written under it.
+    const post = threadId ?? messageId;
+    if (!state.chat.forum || state.chat.channelId !== channelId) await openForumChannel(channel);
+    if (state.chat.threadId !== post || !state.chat.showsHistory) await openPost(post);
+    if (state.chat.threadId === post) await jumpToMessage(messageId);
+    return;
+  }
+  if (state.chat.channelId !== channelId || !state.chat.showsHistory || state.chat.forum) await openTextChannel(channel);
   await jumpToMessage(messageId);
 }
 
@@ -11447,11 +12336,11 @@ channelStars = createStarsUi({
             avatar: avatarEl(faceOf(message.userId, message.nickname), 'msg-avatar'),
             who,
             createdAt: message.createdAt,
-            where: channelName ? `#${channelName}` : null,
+            where: channelName ? `#${channelName}${message.postTitle || message.title ? ` \u203a ${message.postTitle || message.title}` : ''}` : null,
             content: messageContent(message),
             go: () => {
               channelStars.close();
-              jumpToResult(entry.channelId, entry.id);
+              jumpToResult(entry.channelId, entry.id, message.threadId ?? (message.title ? entry.id : null));
             },
             actions: [toolButton('x', t('stars.unstar'), () => stars.remove(scope, 'channel', entry.id))],
           });
@@ -11487,16 +12376,17 @@ searchUi = createSearchUi({
   nameFont,
   messageContent,
   people: () => [...state.users.values()].map((u) => ({ id: u.id, nickname: u.nickname, label: displayOf(u.id, u.nickname) })),
-  channels: () => (state.channels.list ?? []).filter((c) => c.kind === 'text'),
-  // The server holds the channels' words, so it is the server that looks through them.
-  search: (request) => harmony.api.searchAll(state.server, request),
+  channels: () => (state.channels.list ?? []).filter((c) => c.kind === 'text' || c.kind === 'forum'),
+  // The server holds the channels' words, so it is the server that looks through them -- in an open post, only that post.
+  search: (request) => harmony.api.searchAll(state.server, state.chat.threadId ? { ...request, thread: state.chat.threadId } : request),
   groupOf: (m) => ({ key: m.channelId, label: (state.channels.list ?? []).find((c) => c.id === m.channelId)?.name ?? String(m.channelId) }),
   historyKey: () => serverKey(state.server),
   placeholder: () => {
+    if (state.chat.threadId) return t('forum.search_post');
     const name = el.serverName.textContent.trim();
     return name ? t('search.placeholder_in', { name }) : t('search.placeholder');
   },
-  jump: (m) => jumpToResult(m.channelId, m.id),
+  jump: (m) => jumpToResult(m.channelId, m.id, m.threadId ?? null),
   isNarrow: () => narrowScreen.matches,
 });
 
@@ -12832,6 +13722,11 @@ function onRealtimeEvent(msg) {
    */
   // Private conversations and their keys are dm-ui's, on whichever server they arrive.
   if (dmUi?.handleEvent(msg)) return;
+  // A new connection starts as one in use: it is told again if the app is idle.
+  if (msg.type === 'realtime:up') {
+    awaySent.delete(serverKeyOf(msg.server ?? state.server));
+    setTimeout(syncAway, 0);
+  }
   // Calls ring, and are told of, on every server that is signed in to.
   if (msg.type === 'realtime:up' && msg.calls) callsCtl?.seed(msg.server ?? state.server, msg.calls);
   if (callsCtl?.handleEvent(msg)) return;
@@ -12843,7 +13738,7 @@ function onRealtimeEvent(msg) {
   }
   switch (msg.type) {
     case 'presence':
-      state.channels.online = new Set(msg.online ?? []);
+      adoptPresence(msg);
       renderMembers();
       profileCard?.refresh();
       // Somebody online this client has never heard of: an account made
@@ -12853,8 +13748,16 @@ function onRealtimeEvent(msg) {
       if ([...state.channels.online].some((id) => !state.users.has(id))) refreshUsersSoon();
       break;
 
-    case 'channels':
+    // What this person chose, from another window of theirs (or this one, answered).
+    case 'presence:self':
+      adoptOwnStatus(msg.status);
+      break;
+
+    case 'channels': {
+      // A message that points to a channel is drawn from the channels there are: a new one, or a rename, redraws it.
+      const before = [...channelsByHandle().keys()].join();
       state.channels.list = msg.channels;
+      if (state.chat.channelId && [...channelsByHandle().keys()].join() !== before) setTimeout(() => renderChat(), 0);
       // Always together. A client holding one and not the other would draw
       // channels into folders it has not heard of, or empty folders whose
       // channels it has not been told about.
@@ -12867,6 +13770,7 @@ function onRealtimeEvent(msg) {
       }
       serverAdmin?.render('channels');
       break;
+    }
 
     // The roles changed: a name's colour, what somebody may do, and every
     // list that is drawn from them.
@@ -12913,20 +13817,25 @@ function onRealtimeEvent(msg) {
     case 'typing':
       // Channels' typing is the open server's; a conversation's is dm-ui's (see above).
       if (msg.scope === 'channel') {
-        if (msg.stopped) typing.remove(`c:${msg.id}`, msg.userId);
-        else typing.note(`c:${msg.id}`, msg.userId);
+        if (msg.stopped) typing.remove(typingKey(msg.id, msg.thread), msg.userId);
+        else typing.note(typingKey(msg.id, msg.thread), msg.userId);
       }
       break;
 
     case 'message':
       // What was being written has been sent.
-      typing.remove(`c:${msg.message.channelId}`, msg.message.userId);
+      typing.remove(typingKey(msg.message.channelId, msg.message.threadId), msg.message.userId);
       noteIncoming(msg.message);
       renderChannels();
       // Before the channel filter, on purpose: a mention in a channel you
       // are not looking at is the only one worth making a noise about.
       notifyMention(msg.message);
-      if (msg.message.channelId === state.chat.channelId) {
+      // A forum's list takes the post, or counts the answer under its post, whichever post is open.
+      if (msg.message.channelId === state.chat.channelId && state.chat.forum) {
+        forumUi.onMessage(msg.message);
+        markOpenChannelRead();
+      }
+      if (inOpenChat(msg.message)) {
         state.chat.messages.push(msg.message);
         renderChat({ scrollToBottom: msg.message.userId === state.auth.user?.id && Date.now() < sendingUntil });
         markOpenChannelRead();
@@ -12934,8 +13843,11 @@ function onRealtimeEvent(msg) {
       break;
 
     case 'message:updated':
-      if (msg.message.channelId === state.chat.channelId) {
+      if (msg.message.channelId === state.chat.channelId && state.chat.forum) forumUi.onUpdated(msg.message);
+      if (inOpenChat(msg.message)) {
+        if (state.chat.post?.id === msg.message.id) state.chat.post = msg.message;
         const index = state.chat.messages.findIndex((m) => m.id === msg.message.id);
+        carryVotes(msg.message, state.chat.messages[index]);
         if (index >= 0) state.chat.messages[index] = msg.message;
         if (state.chat.editing?.id === msg.message.id) state.chat.editing = msg.message;
         state.chat.pinned = state.chat.pinned.filter((m) => m.id !== msg.message.id);
@@ -12958,6 +13870,15 @@ function onRealtimeEvent(msg) {
           renderChannels();
         }
       }
+      if (msg.channelId === state.chat.channelId && state.chat.forum) {
+        forumUi.onDeleted(msg);
+        // The post that is open was deleted, with everything under it.
+        if (state.chat.threadId !== null && msg.post && msg.id === state.chat.threadId) {
+          closePost();
+          showChannelsError(t('forum.post_gone'));
+          break;
+        }
+      }
       if (msg.channelId === state.chat.channelId) {
         state.chat.messages = state.chat.messages.filter((m) => m.id !== msg.id);
         state.chat.pinned = state.chat.pinned.filter((m) => m.id !== msg.id);
@@ -12967,8 +13888,15 @@ function onRealtimeEvent(msg) {
       }
       break;
 
+    case 'message:poll':
+      if (msg.channelId !== state.chat.channelId) break;
+      applyPollResults(msg.id, msg.results);
+      renderChat();
+      break;
+
     case 'message:reactions': {
       if (msg.channelId !== state.chat.channelId) break;
+      if (state.chat.forum) forumUi.onReactions(msg.id, msg.reactions);
       // Both lists: a pinned message is a separate copy, and the strip in
       // the pinned pane would otherwise go stale until the next page load.
       for (const list of [state.chat.messages, state.chat.pinned]) {
@@ -12993,6 +13921,8 @@ function onRealtimeEvent(msg) {
       applyServerInfo(info);
       // The owner changed the logo: everybody's list follows, without a restart.
       syncLogo(state.server || el.serverUrl.value.trim(), el.password.value, info.logo ?? null);
+      // An older server says nothing of a banner: it has none.
+      syncBanner(state.server || el.serverUrl.value.trim(), el.password.value, info.banner ?? null);
       break;
     }
 
@@ -13133,7 +14063,7 @@ function onRealtimeEvent(msg) {
       if (msg.badges) state.badges = msg.badges;
       if (msg.channels) state.channels.list = msg.channels;
       if (msg.groups) state.channels.groups = msg.groups;
-      if (msg.online) state.channels.online = new Set(msg.online);
+      if (msg.online) adoptPresence(msg, { own: true });
       if (msg.rosters) state.channels.rosters = msg.rosters;
       if (msg.occupancy) state.channels.occupancy = msg.occupancy;
       if (msg.occupiedFor) setOccupied(msg.occupiedFor);
@@ -15430,11 +16360,7 @@ dmUi = createDmUi({
   onUnread: () => renderServerRail(),
   inServer,
   // Told apart by address when two servers go by the same name.
-  serverName: (server) => {
-    const name = (url) => serverNames.get(serverKey(url)) || serverHost(url);
-    const mine = name(server);
-    return savedServers().filter((p) => name(p.url) === mine).length > 1 ? `${mine} (${serverHost(server)})` : mine;
-  },
+  serverName: serverLabel,
   listDocked: () => document.querySelector('.view[data-active]')?.id === 'view-dms',
   showConversation: () => showDmView({ refresh: false }),
 });
@@ -15480,6 +16406,7 @@ profileCard = createProfileCard({
   roles: () => state.roles,
   users: () => state.users,
   online: () => state.channels.online,
+  statuses: () => state.channels.statuses,
   displayOf,
   avatarEl,
   nameFont,
@@ -15494,6 +16421,8 @@ profileCard = createProfileCard({
   },
   badges: () => state.badges,
   badgeEl,
+  inServer,
+  mediaUrl: (hash) => harmony.mediaUrl(hash, lookupServer ?? undefined),
 });
 
 /*
@@ -15504,10 +16433,57 @@ profileCard = createProfileCard({
  */
 document.addEventListener('click', (event) => {
   const target = event.target.closest?.('[data-profile-user]');
-  if (!target || event.target.closest('dialog[open]')) return;
+  // Not from inside a dialog -- except the private messages' own (a group's members), whose card opens over it.
+  if (!target || (event.target.closest('dialog[open]') && !target.dataset.profileServer)) return;
   const userId = Number(target.dataset.profileUser);
+  // From the private messages: a person of the server the conversation is on, not necessarily the open one.
+  if (target.dataset.profileServer) {
+    if (Number.isInteger(userId)) openProfileOnServer(target.dataset.profileServer, userId, target);
+    return;
+  }
   if (Number.isInteger(userId) && state.users.has(userId)) profileCard.open(userId, target);
 });
+
+/** A server's name, told apart by address from another that goes by the same one. */
+function serverLabel(server) {
+  const name = (url) => serverNames.get(serverKey(url)) || serverHost(url);
+  const mine = name(server);
+  return savedServers().filter((p) => name(p.url) === mine).length > 1 ? `${mine} (${serverHost(server)})` : mine;
+}
+
+/** The roles and badges of servers that are not open, by server: asked for the first time somebody there is looked at. */
+const foreignSets = new Map();
+
+/**
+ * Somebody's profile on the server their private conversation is on. Read-only: it is what anyone there can see of
+ * them -- picture, banner, name, badges, roles -- with that server's own roles and badges, and its name on the card.
+ */
+async function openProfileOnServer(server, userId, anchor) {
+  const key = serverKeyOf(server);
+  const isOpen = key === openServerKey();
+  const people = isOpen ? state.users : backgroundUsers.get(key);
+  if (!people?.has(userId)) return;
+  let set = isOpen ? null : foreignSets.get(key);
+  // Asked again after a minute: roles and badges change, and a card should not show last week's.
+  if (!isOpen && (!set || Date.now() - set.at > 60_000)) {
+    // Their colours and badges come from their server: one asked for it, whichever is open. A failure is a card
+    // without them, not a card that does not open.
+    const [roles, badges] = await Promise.all([
+      harmony.api.roles(server).then((r) => r.roles ?? []).catch(() => []),
+      harmony.api.badges(server).then((r) => r.badges ?? []).catch(() => []),
+    ]);
+    set = { roles: sortRoles(roles), badges, at: Date.now() };
+    foreignSets.set(key, set);
+  }
+  profileCard.open(userId, anchor, {
+    server,
+    serverName: serverLabel(server),
+    meId: isOpen ? state.auth.user?.id : backgrounds.userOf(server)?.id,
+    users: () => (isOpen ? state.users : backgroundUsers.get(key) ?? people),
+    roles: () => (isOpen ? state.roles : set.roles),
+    badges: () => (isOpen ? state.badges : set.badges),
+  });
+}
 
 /*
  * Forgot the password: answer the three questions written while signed in,
@@ -15710,6 +16686,31 @@ el.serverLogoRemove.addEventListener('click', () => {
   pendingLogo = null;
   paintLogoPreview(null);
   el.serverLogoRemove.disabled = true;
+});
+el.serverBannerPick.addEventListener('click', () => {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/png,image/jpeg,image/webp,image/gif';
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0];
+    if (!file) return;
+    el.serverErrorLine.hidden = true;
+    el.serverBannerPick.disabled = true;
+    try {
+      await stageServerBanner(file);
+    } catch (err) {
+      el.serverErrorLine.textContent = err.message;
+      el.serverErrorLine.hidden = false;
+    } finally {
+      el.serverBannerPick.disabled = false;
+    }
+  });
+  picker.click();
+});
+el.serverBannerRemove.addEventListener('click', () => {
+  pendingBanner = null;
+  paintBannerPreview(null);
+  el.serverBannerRemove.disabled = true;
 });
 // A box the form will not accept says so on the dialog's own line: Electron draws no bubble of its own, and a form
 // that silently does nothing when Save is pressed is no answer.
@@ -16336,7 +17337,7 @@ el.soundpadFile.addEventListener('change', () => {
 el.chatForm.addEventListener('submit', (event) => {
   event.preventDefault();
   // The next keystroke is a new message being written: announced at once, not after the wait.
-  if (state.chat.channelId) typing.rest(`c:${state.chat.channelId}`);
+  if (state.chat.channelId) typing.rest(chatTypingKey());
   sendMessage();
 });
 
@@ -16350,10 +17351,11 @@ el.chatForm.addEventListener('submit', (event) => {
 el.chatInput.addEventListener('input', () => {
   const channelId = state.chat.channelId;
   if (channelId && !state.chat.editing) {
-    const key = `c:${channelId}`;
-    const stop = () => rt('typing', { scope: 'channel', id: channelId, stopped: true });
+    const key = chatTypingKey();
+    const thread = state.chat.threadId ? { thread: state.chat.threadId } : {};
+    const stop = () => rt('typing', { scope: 'channel', id: channelId, stopped: true, ...thread });
     // Typing, or having emptied the box: the second is stopping, and is said at once.
-    if (el.chatInput.value.trim()) typing.ping(key, () => rt('typing', { scope: 'channel', id: channelId }), stop);
+    if (el.chatInput.value.trim()) typing.ping(key, () => rt('typing', { scope: 'channel', id: channelId, ...thread }), stop);
     else typing.quiet(key, stop);
   }
   growChatInput();
@@ -16572,6 +17574,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 el.chatAttach.addEventListener('click', () => el.chatFile.click());
+el.chatPoll.addEventListener('click', startPoll);
 
 el.chatFile.addEventListener('change', () => {
   // No note: the cards inside the box say what is attached, and they say it
@@ -16617,12 +17620,15 @@ function chatAcceptsDrop() {
 /** Where a dropped file would go: the open channel's chat, or the open private conversation. */
 function dropTarget() {
   if (chatAcceptsDrop()) return 'chat';
+  // A forum's list, with no post open beside it: the file starts a new post.
+  if (state.chat.forum && forumUi.acceptsFiles() && document.getElementById('view-channels')?.hasAttribute('data-active')) return 'forum';
   if (document.getElementById('view-dms')?.hasAttribute('data-active') && dmUi?.acceptsFiles()) return 'dm';
   return null;
 }
 
 function hideChatDrop() {
   el.chatDrop.hidden = true;
+  el.forumActive.removeAttribute('data-drop');
   dmUi?.showDrop(false);
 }
 
@@ -16635,6 +17641,10 @@ for (const type of ['dragenter', 'dragover']) {
     if (!target) return;
     if (target === 'dm') {
       dmUi.showDrop(true);
+      return;
+    }
+    if (target === 'forum') {
+      el.forumActive.setAttribute('data-drop', '');
       return;
     }
     if (el.chatDrop.hidden) {
@@ -16671,6 +17681,10 @@ document.addEventListener('drop', (event) => {
   if (!files.length) return;
   if (target === 'dm') {
     dmUi.dropFiles(files);
+    return;
+  }
+  if (target === 'forum') {
+    forumUi.dropFiles(files);
     return;
   }
   addPendingFiles(files);

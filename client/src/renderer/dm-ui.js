@@ -29,6 +29,9 @@ import { expiring } from './expiring.js';
 import { firstLink, linkEmbed } from './link-embed.js';
 import { createTyping } from './typing-ui.js';
 import { messageTime } from './message-time.js';
+import { createPollUi } from './poll-ui.js';
+import { createReactionsUi } from './reactions-ui.js';
+import { resultsFromReactions, withoutVotes } from './poll.js';
 
 /** How many people a group holds, as the server limits it (and as a call can carry). */
 const MAX_GROUP = 16;
@@ -66,6 +69,10 @@ function words(t, error, nameOf = () => '') {
     case 'too_long': return t('dm.error.too_long', { max: MAX_BODY });
     case 'file_too_large': return t('dm.error.file_too_large');
     case 'slow_down': return t('dm.error.slow_down');
+    case 'poll_closed': return t('poll.err_poll_closed');
+    case 'bad_vote': return t('poll.err_bad_vote');
+    case 'poll_needs_title': return t('poll.err_poll_needs_title');
+    case 'poll_needs_options': return t('poll.err_poll_needs_options');
     case 'unreachable': return error.message;
     default: return error?.message || t('dm.error.generic');
   }
@@ -123,6 +130,7 @@ export function createDmUi(deps) {
     input: $('dm-input'),
     emoji: $('dm-emoji'),
     send: $('dm-send'),
+    poll: $('dm-poll'),
     record: $('dm-record'),
     recorder: $('dm-recorder'),
     file: $('dm-file'),
@@ -285,6 +293,17 @@ export function createDmUi(deps) {
     return span;
   };
   const faceFor = (c, size) => (isGroup(c) ? groupAvatar(size) : avatarEl(faceOf(c.peer, ''), size));
+
+  /**
+   * Make a person's picture or name open their profile on the server this conversation belongs to (app.js, on a click
+   * on anything with a data-profile-user: the server says whose people those ids are).
+   */
+  const profileMark = (node, userId) => {
+    const h = scope ?? home;
+    if (!h || userId == null) return;
+    node.dataset.profileUser = String(userId);
+    node.dataset.profileServer = h.server;
+  };
 
   const homeOf = (server) => homes.get(serverKeyOf(server)) ?? null;
   /** The home of the server that is open on screen. */
@@ -851,6 +870,10 @@ export function createDmUi(deps) {
       delete el.headAvatar.dataset.icon;
       el.headAvatar.replaceChildren(...avatarEl(faceOf(c.peer, '')).childNodes);
     }
+    // Somebody's profile is a click on their picture; a group's picture is nobody's.
+    delete el.headAvatar.dataset.profileUser;
+    delete el.headAvatar.dataset.profileServer;
+    if (!isGroup(c)) profileMark(el.headAvatar, c.peer);
     // The name is drawn in a span: a name font sizes itself against what it sits in
     // (fonts.css), and the heading's own size would otherwise override that.
     const label = document.createElement('span');
@@ -915,6 +938,7 @@ export function createDmUi(deps) {
     el.send.disabled = blocked || noKey;
     el.record.disabled = blocked || noKey;
     el.attach.disabled = blocked || noKey;
+    el.poll.disabled = blocked || noKey;
     syncRecord();
   }
 
@@ -1099,11 +1123,13 @@ export function createDmUi(deps) {
       if (message.pinned) pin.setAttribute('data-on', '');
       tools.append(pin);
       if (message.attachmentHash && marks.file) tools.append(tool('download-simple', t('app.download'), () => saveFile(message)));
-      if (mine) tools.append(tool('pencil-simple', t('app.edit_2'), () => setEditing(message)));
+      // A poll is not rewritten: the votes already given are answers to what it asked.
+      if (mine && !message.poll) tools.append(tool('pencil-simple', t('app.edit_2'), () => setEditing(message)));
     }
     if (mine && !marks.call && !marks.group) tools.append(tool('trash', t('app.delete_2'), () => removeMessage(message), true));
 
     const gutter = grouped ? time : avatarEl(faceOf(message.userId, ''), 'msg-avatar');
+    if (!grouped) profileMark(gutter, message.userId);
     if (grouped) time.classList.add('when-gutter');
 
     const main = document.createElement('div');
@@ -1115,16 +1141,18 @@ export function createDmUi(deps) {
       who.className = 'who';
       who.textContent = peerName(message.userId);
       nameFont(who, message.userId);
+      profileMark(who, message.userId);
       head.append(who, time);
       main.append(head);
     }
-    main.append(text);
+    main.append(message.poll && readable ? pollCardFor(message) : text);
+    if (message.poll && readable) row.setAttribute('data-poll', '');
     row.append(gutter, main, tools);
     if (message.reply) {
       row.setAttribute('data-reply', '');
       row.prepend(replyLine(message.reply));
     }
-    if (message.reactions.length) main.append(reactionRow(message));
+    if (withoutVotes(message.reactions).length) main.append(reactionRow(message));
     return row;
   }
 
@@ -1157,16 +1185,23 @@ export function createDmUi(deps) {
     return line;
   }
 
+  const reactionsUi = createReactionsUi({
+    t, displayOf: (id, fallback) => peerName(id) || fallback, faceOf, avatarEl, appendEmoji,
+  });
+
   function reactionRow(message) {
     const row = document.createElement('div');
     row.className = 'reactions';
-    for (const reaction of message.reactions) {
+    // The votes of a poll are in the same list: they are the card's, not a strip of emoji.
+    for (const reaction of withoutVotes(message.reactions)) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'reaction';
       if (reaction.userIds.includes(me())) b.setAttribute('data-mine', '');
-      b.title = reaction.userIds.map((id) => peerName(id)).join(', ');
       b.addEventListener('click', () => toggleReaction(message.id, reaction.emoji));
+      // Who reacted, on the pointer resting on it; everybody, on a shift-click or a long press (see reactions-ui.js).
+      const live = () => withoutVotes(session?.messageById?.(message.id)?.reactions ?? message.reactions);
+      reactionsUi.attach(b, () => live().find((r) => r.emoji === reaction.emoji), live);
       appendEmoji(b, reaction.emoji);
       const count = document.createElement('span');
       count.className = 'count';
@@ -1175,6 +1210,52 @@ export function createDmUi(deps) {
       row.append(b);
     }
     return row;
+  }
+
+  // ---------------------------------------------------------------- polls
+
+  /*
+   * A private poll is counted here, by everybody who is in the conversation, from the votes sealed as reactions
+   * (see poll.js). Hiding who voted is something this app does when it draws them, which the note in the
+   * dialog says; the server sees neither the poll nor a vote.
+   */
+  const pollUi = createPollUi({
+    t, faceOf, avatarEl, displayOf: (id, fallback) => peerName(id) || fallback,
+  });
+
+  function pollCardFor(message) {
+    const card = pollUi.card({
+      poll: message.poll,
+      results: () => resultsFromReactions(message.poll, message.reactions, me()),
+      onVote: async (options) => { await attempt(() => session.votePoll(message.id, options)); },
+    });
+    // The picture is sealed like any file of the conversation: fetched and opened here, then put in the card.
+    if (message.private.file && message.mediaType === 'image') {
+      session.file(message).then((opened) => {
+        if (!opened?.inline) return;
+        card.setCover(opened.url);
+      }).catch(() => {});
+    }
+    return card;
+  }
+
+  /** The poll button: the dialog, then the message, with its picture sealed along with it. */
+  async function startPoll() {
+    if (busy || !session?.ready || currentId === null || editing) return;
+    const made = await pollUi.compose({ inPrivate: true });
+    if (!made) return;
+    if (made.image && made.image.size > 25 * 1024 * 1024) {
+      el.note.textContent = t('dm.error.file_too_large');
+      return;
+    }
+    busy = true;
+    const file = made.image
+      ? { name: made.image.name, mime: made.image.type, bytes: new Uint8Array(await made.image.arrayBuffer()) }
+      : null;
+    sendingUntil = Infinity;
+    await attempt(() => session.send(currentId, { poll: made.poll, file }));
+    sendingUntil = Date.now() + 2000;
+    busy = false;
   }
 
   /** The file of a message: opened when it is drawn, a placeholder until then. */
@@ -1747,7 +1828,11 @@ export function createDmUi(deps) {
         const name = document.createElement('span');
         name.className = 'dm-picker-name';
         name.textContent = id === me() ? `${peerName(id)} (${t('dm.group.you')})` : peerName(id);
-        row.append(avatarEl(faceOf(id, ''), 'tiny'), name);
+        const face = avatarEl(faceOf(id, ''), 'tiny');
+        // Their picture or name opens their profile on this server, over the dialog.
+        profileMark(face, id);
+        profileMark(name, id);
+        row.append(face, name);
         if (id === now.ownerId) {
           const badge = document.createElement('small');
           badge.className = 'dm-owner-badge';
@@ -1963,6 +2048,7 @@ export function createDmUi(deps) {
     pickFile(new File([file], `pasted-${stamp}.${extension}`, { type: file.type }));
   });
   el.attach.addEventListener('click', () => el.file.click());
+  el.poll.addEventListener('click', startPoll);
   el.file.addEventListener('change', () => {
     pickFile(el.file.files?.[0]);
     el.file.value = '';

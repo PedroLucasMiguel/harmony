@@ -15,6 +15,7 @@ export const PERMISSION_GROUPS = [
   { key: 'channels', permissions: ['channels.create', 'channels.edit', 'channels.password', 'channels.delete'] },
   { key: 'users', permissions: ['users.mute', 'users.kick', 'users.ban'] },
   { key: 'messages', permissions: ['messages.delete', 'messages.pin'] },
+  { key: 'posts', permissions: ['posts.delete', 'posts.pin'] },
   { key: 'roles', permissions: ['roles.hierarchy'] },
   { key: 'badges', permissions: ['badges.create', 'badges.edit'] },
   { key: 'music', permissions: ['music.control'] },

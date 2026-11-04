@@ -737,6 +737,7 @@ export function createServerAdmin(deps) {
     list: $('chan-list'),
     newText: $('chan-new-text'),
     newVoice: $('chan-new-voice'),
+    newForum: $('chan-new-forum'),
     newGroup: $('chan-new-group'),
     editor: $('chan-editor'),
     subject: $('chan-subject'),
@@ -814,7 +815,7 @@ export function createServerAdmin(deps) {
       const li = item(chanSelected?.kind === 'channel' && chanSelected.id === c.id,
         (() => {
           const icon = document.createElement('span');
-          icon.dataset.icon = c.kind === 'voice' ? 'speaker-high' : 'hash';
+          icon.dataset.icon = { voice: 'speaker-high', forum: 'chats-teardrop' }[c.kind] ?? 'hash';
           icon.className = 'admin-kind';
           return icon;
         })(),
@@ -844,6 +845,7 @@ export function createServerAdmin(deps) {
     const actor = ctx();
     ch.newText.hidden = !actor.can('channels.create');
     ch.newVoice.hidden = !actor.can('channels.create');
+    ch.newForum.hidden = !actor.can('channels.create');
     ch.newGroup.hidden = !actor.can('channels.create');
   }
 
@@ -982,6 +984,7 @@ export function createServerAdmin(deps) {
 
   ch.newText.addEventListener('click', () => selectChannel({ kind: 'new-text' }));
   ch.newVoice.addEventListener('click', () => selectChannel({ kind: 'new-voice' }));
+  ch.newForum.addEventListener('click', () => selectChannel({ kind: 'new-forum' }));
   ch.newGroup.addEventListener('click', () => selectChannel({ kind: 'new-group' }));
 
   const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
@@ -1005,7 +1008,7 @@ export function createServerAdmin(deps) {
           created = (await harmony.api.createGroup(server(), name, body)).group;
           chanSelected = { kind: 'group', id: created.id };
         } else {
-          body.kind = sel.kind === 'new-voice' ? 'voice' : 'text';
+          body.kind = { 'new-voice': 'voice', 'new-forum': 'forum' }[sel.kind] ?? 'text';
           created = (await harmony.api.createChannel(server(), body)).channel;
           chanSelected = { kind: 'channel', id: created.id };
         }

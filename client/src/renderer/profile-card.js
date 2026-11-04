@@ -23,6 +23,7 @@ import {
  * @param {() => Array} deps.roles
  * @param {() => Map<number, object>} deps.users
  * @param {() => Set<number>} deps.online
+ * @param {() => Object<number, string>} [deps.statuses]  who of them is idle or does not want to be disturbed
  * @param {(userId: number, fallback?: string) => string} deps.displayOf
  * @param {(user: object, size?: string) => HTMLElement} deps.avatarEl
  * @param {(node: HTMLElement, userId: number, user?: object) => void} deps.nameFont
@@ -34,12 +35,29 @@ import {
  * @param {(userId: number) => void} deps.manage  open the Members page on them
  * @param {() => Array} deps.badges               the server's badges
  * @param {(badge: object, size?: string) => HTMLElement} deps.badgeEl
+ * @param {(scope: object, fn: Function) => any} [deps.inServer]  runs a drawing against another server's people
+ * @param {(hash: string) => string} [deps.mediaUrl]  where a picture of the server being drawn is loaded from
+ *
+ * A card is the open server's, with everything to do with a person there -- or, from the private messages, somebody's
+ * on the server a conversation belongs to (`open(userId, from, scope)`): read-only, with that server's own roles and
+ * badges, its name on the card, and no status, which the private messages do not show.
  */
 export function createProfileCard(deps) {
   const {
-    harmony, t, server, me, roles, users, online, displayOf, avatarEl, nameFont, roleLabel, setUser,
-    badges, badgeEl,
+    harmony, t, me, displayOf, avatarEl, nameFont, roleLabel, setUser, badgeEl,
+    statuses = () => ({}), mediaUrl = (hash) => harmony.mediaUrl(hash),
   } = deps;
+
+  /**
+   * Another server's person, from the private messages: {server, serverName, meId, users(), roles(), badges()}; or
+   * null for the open server's own.
+   */
+  let scope = null;
+  const server = () => (scope ? scope.server : deps.server());
+  const users = () => (scope ? scope.users() : deps.users());
+  const roles = () => (scope ? scope.roles() : deps.roles());
+  const badges = () => (scope ? scope.badges() : deps.badges());
+  const online = () => (scope ? new Set() : deps.online());
 
   const card = document.createElement('div');
   card.className = 'profile-card';
@@ -56,7 +74,8 @@ export function createProfileCard(deps) {
   document.body.append(tip);
 
   function showTip(badge, from) {
-    const picture = badgeEl(badge, 'large');
+    // The picture is of this card's server, which the page's own lookups are told when it is not the open one.
+    const picture = scope && deps.inServer ? deps.inServer(scope, () => badgeEl(badge, 'large')) : badgeEl(badge, 'large');
     const name = document.createElement('strong');
     name.textContent = badge.name;
     tip.replaceChildren(picture, name);
@@ -65,6 +84,7 @@ export function createProfileCard(deps) {
       text.textContent = badge.description;
       tip.append(text);
     }
+    if (tip.parentNode !== card.parentNode) card.parentNode.append(tip);
     tip.style.left = '-9999px';
     tip.style.top = '0px';
     tip.hidden = false;
@@ -102,11 +122,17 @@ export function createProfileCard(deps) {
   };
 
   function render() {
+    // Names and pictures are drawn against the people of the server the card is of.
+    return scope && deps.inServer ? deps.inServer(scope, renderCard) : renderCard();
+  }
+
+  function renderCard() {
     const user = users().get(openFor);
     if (!user) return close();
-    const mine = user.id === me()?.id;
+    const mine = user.id === (scope ? scope.meId : me()?.id);
     const actor = contextOf(me(), roles());
-    const above = actor.owner ? true : outranks(actor, contextOf(user, roles()));
+    // What somebody may do to somebody is the rank on THIS server; another server's people are only looked at.
+    const above = scope ? false : (actor.owner ? true : outranks(actor, contextOf(user, roles())));
     const held = rolesOf(user, roles());
 
     // ---- banner, with the buttons over it
@@ -118,7 +144,7 @@ export function createProfileCard(deps) {
       const img = document.createElement('img');
       img.alt = '';
       img.draggable = false;
-      img.src = harmony.mediaUrl(user.bannerHash);
+      img.src = mediaUrl(user.bannerHash);
       banner.append(img);
       // As dim as its owner made it; undimmed if they never chose.
       if (user.bannerDim != null) {
@@ -128,13 +154,13 @@ export function createProfileCard(deps) {
     }
     const actions = document.createElement('div');
     actions.className = 'profile-card-actions';
-    if (!mine && deps.canMessage()) {
+    if (!scope && !mine && deps.canMessage()) {
       actions.append(button('ghost small icon-only', 'chat-circle-dots', t('profile_card.message'), () => {
         close();
         deps.message(user.id);
       }));
     }
-    if (!mine && deps.canManage(user.id)) {
+    if (!scope && !mine && deps.canManage(user.id)) {
       actions.append(button('ghost small icon-only', 'gear-six', t('profile_card.manage'), () => {
         close();
         deps.manage(user.id);
@@ -147,7 +173,12 @@ export function createProfileCard(deps) {
     const status = document.createElement('span');
     status.className = 'profile-card-status';
     status.toggleAttribute('data-online', online().has(user.id));
-    status.title = online().has(user.id) ? t('profile_card.online') : t('profile_card.offline');
+    // Idle and do not disturb are what they are on this server; invisible is not on at all, as far as anyone can tell.
+    const shown = online().has(user.id) ? (statuses()[user.id] ?? 'online') : null;
+    if (shown) status.dataset.status = shown;
+    status.title = shown ? t(`status.${shown}`) : t('profile_card.offline');
+    // The private messages show nobody's status: no dot at all.
+    status.hidden = Boolean(scope);
     // The status dot sits on the picture's edge, so it cannot be a child of the
     // picture (which clips to its circle): the two share a wrapper instead.
     const faceWrap = document.createElement('div');
@@ -193,6 +224,14 @@ export function createProfileCard(deps) {
         row.append(holder);
       }
       body.append(row);
+    }
+
+    // Whose card it is of, when it is not the server on screen.
+    if (scope) {
+      const where = document.createElement('div');
+      where.className = 'profile-card-server';
+      where.textContent = t('profile_card.on_server', { name: scope.serverName });
+      body.append(where);
     }
 
     if (user.createdAt) {
@@ -299,17 +338,22 @@ export function createProfileCard(deps) {
     openFor = null;
     anchor = null;
     adding = false;
+    scope = null;
     card.hidden = true;
     card.replaceChildren();
     hideTip();
   }
 
   /** Open on a person, beside the element that was clicked; the same click again puts it away. */
-  function open(userId, from) {
+  function open(userId, from, ofScope = null) {
     if (openFor === userId && anchor === from && !card.hidden) return close();
     openFor = userId;
     anchor = from;
     adding = false;
+    scope = ofScope;
+    // Over a dialog that is open (a group's members), or it would be behind it: a modal is above the whole page.
+    const host = [...document.querySelectorAll('dialog[open]')].pop() ?? document.body;
+    if (card.parentNode !== host) host.append(card);
     render();
     return undefined;
   }

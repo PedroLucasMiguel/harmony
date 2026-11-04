@@ -109,7 +109,11 @@ async function run() {
   const [keyA, keyB] = await Promise.all([startServer(PORT_A, MTX_A), startServer(PORT_B, MTX_B)]);
   await api(BASE_A, '/api/accounts/register', { method: 'POST', body: { nickname: 'pedro', password: 'hunter22', ownerKey: keyA() } });
   await api(BASE_B, '/api/accounts/register', { method: 'POST', body: { nickname: 'pedro', password: 'hunter22', ownerKey: keyB() } });
-  await api(BASE_B, '/api/accounts/register', { method: 'POST', body: { nickname: 'ana', password: 'hunter22' } });
+  const anaId = (await api(BASE_B, '/api/accounts/register', { method: 'POST', body: { nickname: 'ana', password: 'hunter22' } })).body.user.id;
+  // A role that only server B has, held by Ana: her profile there says so, and server A has never heard of it.
+  const bossB = (await api(BASE_B, '/api/accounts/login', { method: 'POST', body: { nickname: 'pedro', password: 'hunter22' } })).body.token;
+  const zebra = (await api(BASE_B, '/api/roles', { method: 'POST', token: bossB, body: { name: 'Zebra', color: '#44aa88' } })).body.role;
+  await api(BASE_B, `/api/accounts/${anaId}/roles`, { method: 'POST', token: bossB, body: { roles: [zebra.id] } });
 
   // Pedro: A, then B (both saved), then back on A with B behind it.
   const pedroApp = launchApp({ port: DEBUG_PEDRO, userDataDir: mkdtempSync(join(tmpdir(), 'harmony-rdm-pedro-')) });
@@ -168,6 +172,31 @@ async function run() {
   }
   const who = await pedro.evaluate("return document.getElementById('dm-name').textContent");
   check('named for Ana, from server B\'s people', /ana/i.test(who), who);
+
+  // --- her profile: on her server (B), while A is the one that is open
+  await pedro.evaluate("document.querySelector('#dm-log .chat-msg .msg-avatar[data-profile-user]').click(); return true;");
+  await waitFor(pedro, "!document.querySelector('.profile-card').hidden", { label: 'her profile card' });
+  const card = await pedro.evaluate(`const c = document.querySelector('.profile-card');
+    return { name: c.querySelector('.profile-card-name')?.textContent, handle: c.querySelector('.profile-card-handle')?.textContent,
+      server: c.querySelector('.profile-card-server')?.textContent, roles: [...c.querySelectorAll('.profile-card-chips .role-chip')].map((x) => x.textContent.trim()),
+      dotHidden: c.querySelector('.profile-card-status')?.hidden, buttons: c.querySelectorAll('.profile-card-actions button').length,
+      editable: Boolean(c.querySelector('.profile-card-add, .profile-card-chip-x')) };`);
+  check('clicking her picture in the conversation opens her profile', card.name === 'ana' && card.handle === 'ana', JSON.stringify(card));
+  check('it says which server it is of', /^On \S+/.test(card.server ?? ''), JSON.stringify(card));
+  check('with the roles she has on that server, which this one does not have', JSON.stringify(card.roles) === '["Zebra"]', JSON.stringify(card));
+  check('read-only: nothing to change her roles with, and no message or manage buttons', !card.editable && card.buttons === 0, JSON.stringify(card));
+  check('and no status on it: the private messages show none', card.dotHidden === true, JSON.stringify(card));
+  await pedro.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true;");
+  await sleep(200);
+  check('Escape puts it away', await pedro.evaluate("return document.querySelector('.profile-card').hidden"));
+  await pedro.evaluate("document.getElementById('dm-head-avatar').click(); return true;");
+  await waitFor(pedro, "!document.querySelector('.profile-card').hidden", { label: 'her card from the heading' });
+  check('and so does her picture in the heading', (await pedro.evaluate("return document.querySelector('.profile-card-name')?.textContent")) === 'ana');
+  if (process.env.SCREENSHOT) {
+    const shot = await pedro.send('Page.captureScreenshot', { format: 'png' });
+    (await import('node:fs')).writeFileSync(`${process.env.SCREENSHOT}.profile.png`, Buffer.from(shot.data, 'base64'));
+  }
+  await pedro.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true;");
   await waitFor(pedro, "!document.querySelector('#server-rail .rail-home .rail-badge')", { label: 'the count going', timeoutMs: 15_000 });
   check('and reading it clears the count', true);
 

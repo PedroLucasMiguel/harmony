@@ -31,6 +31,68 @@ describe('what a hello says', () => {
   });
 });
 
+describe('voice channels, for the bubble', () => {
+  const live = async (occupancy) => {
+    const harmony = fakeHarmony();
+    const sessions = createBackgroundSessions({ harmony, onChange: () => {} });
+    const started = sessions.start({ url: 'v.test', token: 't' });
+    await new Promise((r) => setImmediate(r));
+    harmony.answer('v.test', { ...hello(), occupancy });
+    await started;
+    return sessions;
+  };
+  const push = (sessions, channelId, people) => sessions.handleEvent({
+    type: 'voice:roster', server: 'http://v.test', channelId, roster: Array.from({ length: people }, (_, i) => ({ userId: i })),
+  });
+
+  it('say whether anybody is in one, from the hello', async () => {
+    assert.equal((await live({ 4: 0 })).summary('v.test').voice, false);
+    const sessions = await live({ 4: 2 });
+    assert.equal(sessions.summary('v.test').voice, true);
+    sessions.stopAll();
+  });
+
+  it('follow the rosters that come after it, and forget an emptied channel', async () => {
+    const sessions = await live({});
+    assert.equal(sessions.summary('v.test').voice, false);
+    push(sessions, 4, 1);
+    push(sessions, 5, 3);
+    assert.equal(sessions.summary('v.test').voice, true);
+    push(sessions, 4, 0);
+    assert.equal(sessions.summary('v.test').voice, true, 'another channel still has people');
+    push(sessions, 5, 0);
+    assert.equal(sessions.summary('v.test').voice, false);
+    sessions.stopAll();
+  });
+
+  it('tell the rail the moment somebody joins or the last one leaves', async () => {
+    const harmony = fakeHarmony();
+    let changes = 0;
+    const sessions = createBackgroundSessions({ harmony, onChange: () => { changes += 1; } });
+    const started = sessions.start({ url: 'v.test', token: 't' });
+    await new Promise((r) => setImmediate(r));
+    harmony.answer('v.test', { ...hello(), occupancy: {} });
+    await started;
+    let seen = changes;
+    push(sessions, 4, 1);
+    assert.ok(changes > seen, 'the first person in');
+    assert.equal(sessions.summary('v.test').voice, true);
+    seen = changes;
+    push(sessions, 4, 0);
+    assert.ok(changes > seen, 'the last one out');
+    assert.equal(sessions.summary('v.test').voice, false);
+    sessions.stopAll();
+  });
+
+  it('do not count a private call: it is not a channel, and not the server\'s', async () => {
+    const sessions = await live({ 100_000_007: 2 });
+    assert.equal(sessions.summary('v.test').voice, false);
+    push(sessions, 100_000_009, 2);
+    assert.equal(sessions.summary('v.test').voice, false);
+    sessions.stopAll();
+  });
+});
+
 describe('messages as they arrive', () => {
   it('count as news in their channel, and not your own', () => {
     const s = newSession('http://a.test');
@@ -119,7 +181,7 @@ describe('the background sessions', () => {
     assert.equal(sessions.summary('http://a.test:8080/').status, 'connecting');
     harmony.answer('A.test:8080', hello([{ channelId: 1, unread: 2, mentions: 1 }]));
     await started;
-    assert.deepEqual(sessions.summary('a.test:8080'), { status: 'up', unread: 2, mentions: 1 });
+    assert.deepEqual(sessions.summary('a.test:8080'), { status: 'up', voice: false, unread: 2, mentions: 1 });
     assert.ok(changes >= 2);
     sessions.stopAll();
   });
@@ -144,7 +206,7 @@ describe('the background sessions', () => {
     await again;
     watched.handleEvent({ type: 'message', server: 'http://b.test', message: message({ id: 42, mentions: [ME.id] }) });
     assert.deepEqual(mentioned, ['b.test', 42]);
-    assert.deepEqual(watched.summary('b.test'), { status: 'up', unread: 1, mentions: 1 });
+    assert.deepEqual(watched.summary('b.test'), { status: 'up', voice: false, unread: 1, mentions: 1 });
     sessions.stopAll();
     watched.stopAll();
   });
@@ -161,7 +223,7 @@ describe('the background sessions', () => {
     sessions.handleEvent({ type: 'realtime:down', server: 'http://a.test' });
     assert.equal(sessions.summary('a.test').status, 'down');
     sessions.handleEvent({ type: 'realtime:up', server: 'http://a.test', user: ME, unread: [{ channelId: 1, unread: 1, mentions: 0 }] });
-    assert.deepEqual(sessions.summary('a.test'), { status: 'up', unread: 1, mentions: 0 });
+    assert.deepEqual(sessions.summary('a.test'), { status: 'up', voice: false, unread: 1, mentions: 0 });
     sessions.handleEvent({ type: 'realtime:rejected', server: 'http://a.test' });
     assert.equal(sessions.summary('a.test').status, 'locked');
     assert.deepEqual(rejected, ['a.test']);

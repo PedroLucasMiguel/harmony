@@ -276,7 +276,7 @@ export class Channels {
    * moment in between. A password of its own is ignored there: it follows the group.
    */
   async create({ kind, name, password, groupId = null }) {
-    if (kind !== 'voice' && kind !== 'text') return { ok: false, error: 'invalid_kind' };
+    if (kind !== 'voice' && kind !== 'text' && kind !== 'forum') return { ok: false, error: 'invalid_kind' };
     const clean = cleanChannelName(name);
     if (!clean) return { ok: false, error: 'invalid_name' };
     const group = groupId == null ? null : this.group(Number(groupId));

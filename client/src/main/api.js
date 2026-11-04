@@ -287,8 +287,8 @@ async function sdpExchange(url, offerSdp) {
  * -- the same rule as probe(): one server's credentials never go to another.
  * Shaped like fetchUpload, for the logo cache to verify and store.
  */
-async function fetchServerLogo(serverUrl, serverPassword) {
-  const url = `${normalizeBase(serverUrl)}/api/server/logo`;
+async function fetchServerLogo(serverUrl, serverPassword, kind = 'logo') {
+  const url = `${normalizeBase(serverUrl)}/api/server/${kind === 'banner' ? 'banner' : 'logo'}`;
   const headers = {};
   if (serverPassword) headers['X-Harmony-Password'] = serverPassword;
   let res;
@@ -650,12 +650,28 @@ module.exports = {
   }),
   unread: (s) => requestJson(s, '/api/unread'),
   // `before`: the page above a message; `until`: everything from a message down to the newest (see the server's since()).
-  messages: (s, id, before, until) =>
-    requestJson(s, `/api/channels/${id}/messages${before ? `?before=${Number(before)}` : until ? `?until=${Number(until)}` : ''}`),
+  // `thread`: a forum's post, whose messages these are (a forum has no log of its own).
+  messages: (s, id, before, until, thread) => {
+    const query = new URLSearchParams();
+    if (before) query.set('before', String(Number(before)));
+    else if (until) query.set('until', String(Number(until)));
+    if (thread) query.set('thread', String(Number(thread)));
+    const text = query.toString();
+    return requestJson(s, `/api/channels/${id}/messages${text ? `?${text}` : ''}`);
+  },
+  // A forum's posts: `params` is {q, sort, offset}. See GET /api/channels/:id/posts.
+  forumPosts: (s, id, params) =>
+    requestJson(s, `/api/channels/${id}/posts?${new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, String(v)]))}`),
   postMessage: (s, id, body) =>
     requestJson(s, `/api/channels/${id}/messages`, { method: 'POST', body }),
   pinMessage: (s, id, pinned) =>
     requestJson(s, `/api/messages/${id}/pin`, { method: 'POST', body: { pinned } }),
+  // Pin a forum post to the top of its forum, or let it go: its own permission, apart from pinning a message.
+  postPin: (s, id, pinned) =>
+    requestJson(s, `/api/messages/${id}/post-pin`, { method: 'POST', body: { pinned } }),
+  // Everything chosen in a poll, which replaces what was chosen before; none takes the vote back.
+  voteMessage: (s, id, options) =>
+    requestJson(s, `/api/messages/${id}/vote`, { method: 'POST', body: { options } }),
   deleteMessage: (s, id) =>
     requestJson(s, `/api/messages/${id}/delete`, { method: 'POST' }),
   // Your own only; the server refuses anybody else's, admin or not.

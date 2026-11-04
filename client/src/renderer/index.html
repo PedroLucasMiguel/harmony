@@ -15,6 +15,28 @@
   </head>
   <body>
     <!--
+      The title bar, where the window has no frame of its own (see main/index.js): back and forward through the places
+      you have been, and the server you are in at the middle. The window's buttons are the system's, over its ends.
+      Not there in a browser or on a phone, which have a frame of their own.
+    -->
+    <header class="titlebar" id="titlebar" hidden>
+      <div class="titlebar-side">
+        <button type="button" class="titlebar-btn" id="nav-back" data-icon="arrow-left" disabled
+                title="Back" aria-label="Back" data-i18n-title="titlebar.back" data-i18n-aria-label="titlebar.back"></button>
+        <button type="button" class="titlebar-btn" id="nav-forward" data-icon="arrow-right" disabled
+                title="Forward" aria-label="Forward" data-i18n-title="titlebar.forward" data-i18n-aria-label="titlebar.forward"></button>
+      </div>
+      <div class="titlebar-title">
+        <span class="server-badge" id="titlebar-icon" aria-hidden="true" hidden></span>
+        <span class="titlebar-name" id="titlebar-name">Harmony</span>
+      </div>
+      <!-- At the end of the bar, clear of the system's window buttons: about Harmony. See #about. -->
+      <div class="titlebar-side titlebar-end">
+        <button type="button" class="titlebar-btn" id="about-open" data-icon="info"
+                title="About Harmony" aria-label="About Harmony" data-i18n-title="about.open" data-i18n-aria-label="about.open"></button>
+      </div>
+    </header>
+    <!--
       The shell: the rail of servers on the left, and every view beside it. The
       rail is only there once there is a server to switch to (see renderServerRail).
     -->
@@ -286,6 +308,55 @@
       pressed the button. confirm() does work, but asking in two different
       ways depending on the question is worse than asking in one.
     -->
+    <!--
+      About Harmony: who made it, who it owes, what it is built on, and the version, which is what to give when
+      something is reported. Opened from the button at the end of the title bar. The links open in the browser.
+    -->
+    <dialog id="about" class="ask about-dialog" aria-labelledby="about-title">
+      <header class="about-head">
+        <span class="brand-logo about-logo" aria-hidden="true"></span>
+        <h2 id="about-title">Harmony</h2>
+        <p class="about-version"><span data-i18n="about.version">Version</span> <strong id="about-version">&hellip;</strong></p>
+        <p class="muted about-tagline" data-i18n="about.tagline">Share your screen, talk and write with the people of your own server.</p>
+      </header>
+      <div class="about-body">
+        <section>
+          <h3 data-i18n="about.made_by">Made by</h3>
+          <p><a href="https://github.com/PedroLucasMiguel" target="_blank" rel="noopener">Pedro Lucas Miguel</a>
+            <span class="muted" data-i18n="about.made_with_ai">, with an AI coding assistant doing the writing.</span></p>
+          <p><a href="https://github.com/PedroLucasMiguel/harmony" target="_blank" rel="noopener" data-i18n="about.source">Source code and releases</a></p>
+        </section>
+        <section>
+          <h3 data-i18n="about.credits">Credits</h3>
+          <p><a href="https://github.com/Brunovncs/ciranda" target="_blank" rel="noopener">Ciranda</a>,
+            <span data-i18n="about.ciranda_by">a fork of Harmony by</span>
+            <a href="https://github.com/Brunovncs" target="_blank" rel="noopener">Bruno (Brunovncs)</a>:
+            <span class="muted" data-i18n="about.ciranda_what">where the end-to-end encrypted private conversations were designed and first built, and whose protocol Harmony follows.</span></p>
+        </section>
+        <section>
+          <h3 data-i18n="about.built_on">Built on</h3>
+          <ul class="about-list">
+            <li><a href="https://www.electronjs.org/" target="_blank" rel="noopener">Electron</a></li>
+            <li><a href="https://github.com/bluenviron/mediamtx" target="_blank" rel="noopener">MediaMTX</a></li>
+            <li><a href="https://github.com/paulmillr/noble-curves" target="_blank" rel="noopener">noble</a> <span class="muted">(MIT)</span></li>
+            <li><a href="https://ai.google.dev/edge/mediapipe" target="_blank" rel="noopener">MediaPipe</a> <span class="muted">(Apache-2.0)</span></li>
+            <li><a href="https://github.com/jitsi/rnnoise-wasm" target="_blank" rel="noopener">RNNoise</a> <span class="muted">(Jitsi, BSD)</span></li>
+            <li><a href="https://github.com/Vanilagy/mp4-muxer" target="_blank" rel="noopener">mp4-muxer</a></li>
+            <li><a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp</a> <span class="muted" data-i18n="about.optional">(optional, for Music Buddy)</span></li>
+            <li><a href="https://phosphoricons.com/" target="_blank" rel="noopener">Phosphor Icons</a> <span class="muted">(MIT)</span></li>
+          </ul>
+        </section>
+        <section>
+          <h3 data-i18n="about.license">License</h3>
+          <p><span data-i18n="about.license_text">MIT. No warranty: Harmony is a recreational project, written by an AI assistant and not security-reviewed. Use it among people you trust.</span></p>
+        </section>
+      </div>
+      <div class="ask-buttons">
+        <button type="button" class="ghost" id="about-copy" data-i18n="about.copy">Copy version info</button>
+        <button type="button" class="primary" id="about-close" autofocus data-i18n="about.close">Close</button>
+      </div>
+    </dialog>
+
     <dialog id="ask" class="ask">
       <form method="dialog" id="ask-form">
         <h2 id="ask-title"></h2>
@@ -329,7 +400,6 @@
                   title="Channels" aria-label="Channels" data-icon="list" data-i18n-title="view.channels.channels" data-i18n-aria-label="view.channels.channels"></button>
           <span class="server-badge" id="server-icon" aria-hidden="true"></span>
           <strong class="brand-small" id="server-name">Harmony</strong>
-          <span class="muted" id="channels-role"></span>
         </div>
         <div class="bar-right">
           <!--
@@ -372,6 +442,19 @@
           <!-- Drag to narrow the column; double-click for full width. -->
           <div class="col-resizer" data-resize="side" role="separator"
                aria-orientation="vertical" aria-label="Resize the channel list" data-i18n-aria-label="view.channels.resize_the_channel_list"></div>
+          <!--
+            The server: its picture and name, over its banner if it has one. It sits at the top of the column and
+            reaches up through the strip's height, so that the strip keeps the buttons and the name is not among
+            them. On a narrow screen it is the top of the drawer, and the strip still names the server. See .server-head.
+          -->
+          <div class="server-head" id="server-head">
+            <img class="server-head-banner" id="server-head-banner" alt="" draggable="false" hidden />
+            <span class="server-badge" id="server-head-icon" aria-hidden="true"></span>
+            <span class="server-head-text">
+              <strong class="server-head-name" id="server-head-name">Harmony</strong>
+              <span class="muted server-head-role" id="channels-role"></span>
+            </span>
+          </div>
           <div class="channel-list-head">
             <h2 data-i18n="view.channels.channels">Channels</h2>
             <button class="ghost small icon-only" id="channel-add" data-icon="plus"
@@ -545,9 +628,14 @@
                  your face to change your face, your name to change your
                  name. One button doing both needs a menu to disambiguate,
                  which is a click more than either deserves. -->
-            <button class="self-avatar" id="avatar-button" title="Change your picture" data-i18n-title="channel_dock.change_your_picture">
-              <span class="avatar" id="channels-avatar"></span>
-            </button>
+            <span class="self-face">
+              <button class="self-avatar" id="avatar-button" title="Change your picture" data-i18n-title="channel_dock.change_your_picture">
+                <span class="avatar" id="channels-avatar"></span>
+              </button>
+              <!-- Your status on THIS server: the dot on your picture, and the menu behind it. -->
+              <button type="button" class="status-button" id="status-button" data-status="online" aria-haspopup="menu"
+                      title="Change your status" data-i18n-title="status.change"></button>
+            </span>
             <button class="self-identity" id="self-name" title="Change your display name" data-i18n-title="channel_dock.change_your_display_name">
               <span class="self-text">
                 <strong id="channels-who">Signed in</strong>
@@ -621,6 +709,41 @@
             voice channel you are already in puts the streams back.
           -->
           <div class="channel-video" id="channel-video" hidden></div>
+          <!--
+            A forum channel: the list of its posts. Opening one puts its thread in #chat-active beside this, which
+            is the chat pane showing that post. See forum-ui.js and openPost in app.js.
+          -->
+          <div id="forum-active" class="forum" hidden>
+            <header class="voice-head">
+              <h2 id="forum-name"></h2>
+            </header>
+            <div class="forum-toolbar">
+              <div class="forum-search">
+                <span class="search-box-icon" data-icon="magnifying-glass" aria-hidden="true"></span>
+                <input id="forum-search" type="text" autocomplete="off" spellcheck="false"
+                       placeholder="Search or create a post…" data-i18n-placeholder="forum.search_placeholder"
+                       aria-label="Search the posts" data-i18n-aria-label="forum.search_label" />
+                <button type="button" class="primary small forum-new" id="forum-new" data-icon="chats-teardrop" aria-expanded="false"
+                        data-i18n="forum.new_post">New Post</button>
+              </div>
+              <div class="forum-filters">
+                <div class="forum-sort-wrap">
+                  <button type="button" class="ghost small" id="forum-sort" data-icon="arrows-down-up" aria-haspopup="menu" aria-expanded="false"
+                          data-i18n="forum.sort">Sort</button>
+                  <div class="search-menu" id="forum-sort-menu" role="menu" hidden></div>
+                </div>
+                <!-- Only the posts that mention you: by name, through a role of yours, or with @everyone. -->
+                <button type="button" class="ghost small forum-mentions" id="forum-mentions" data-icon="at" aria-pressed="false"
+                        title="Only the posts that mention you" data-i18n="forum.mentions" data-i18n-title="forum.mentions_hint">Mentions</button>
+              </div>
+            </div>
+            <div id="forum-compose-slot"></div>
+            <div class="forum-scroll">
+              <ul id="forum-posts" class="forum-posts"></ul>
+              <div id="forum-empty" class="forum-empty" hidden></div>
+              <button type="button" class="ghost small forum-more" id="forum-more" hidden data-i18n="forum.more">Load more</button>
+            </div>
+          </div>
           <div id="chat-active" hidden>
             <!-- Over the chat while a file is dragged onto the window. See the drop handlers. -->
             <div class="chat-drop" id="chat-drop" hidden aria-hidden="true">
@@ -631,6 +754,9 @@
               </div>
             </div>
             <header class="voice-head">
+              <!-- In a forum: leaves the post, back to the list alone. -->
+              <button type="button" class="ghost small icon-only" id="chat-close-post" data-icon="x" hidden
+                      title="Close the post" aria-label="Close the post" data-i18n-title="forum.close_post" data-i18n-aria-label="forum.close_post"></button>
               <h2 id="chat-name"></h2>
               <!--
                 The search: words and filters as chips, in one box. Offers its filters and what was searched before when
@@ -739,6 +865,14 @@
                     data-icon="smiley"
                     title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji"
                   >Emoji</button>
+                  <!-- A question with options to vote on. See startPoll. -->
+                  <button
+                    type="button"
+                    class="composer-btn"
+                    id="chat-poll"
+                    data-icon="chart-bar-horizontal"
+                    title="Create a poll" data-i18n-title="poll.new" data-i18n="poll.new_button"
+                  >Poll</button>
                   <!-- The microphone takes the send button's place while there is nothing to send. See applyComposer. -->
                   <button
                     type="button"
@@ -1039,6 +1173,8 @@
                             data-i18n-placeholder="dm.placeholder"></textarea>
                   <button type="button" class="composer-btn" id="dm-emoji" data-icon="smiley"
                           title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji">Emoji</button>
+                  <button type="button" class="composer-btn" id="dm-poll" data-icon="chart-bar-horizontal"
+                          title="Create a poll" data-i18n-title="poll.new" data-i18n="poll.new_button">Poll</button>
                   <button type="button" class="composer-btn composer-send composer-record" id="dm-record" data-icon="microphone"
                           title="Record a voice message" data-i18n-title="voice.record" data-i18n="voice.record_button">Record</button>
                   <button type="submit" class="composer-btn composer-send" id="dm-send" data-icon="paper-plane-right"
@@ -1339,6 +1475,21 @@
                 </div>
                 <small data-i18n="server_form.shown_in_everybody_s">Shown in everybody's server list. Square works best; it is shrunk to 256 px.</small>
               </div>
+              <!--
+                The banner behind the name at the top of the channel list. Staged like the logo: the editor, a preview,
+                and Save sends it.
+              -->
+              <div class="field">
+                <span data-i18n="server_form.banner">Banner</span>
+                <div class="server-banner-row">
+                  <span class="server-banner-preview" id="server-banner-preview"></span>
+                  <div class="server-banner-buttons">
+                    <button type="button" class="ghost small" id="server-banner-pick" data-i18n="server_logo_pick.choose_image">Choose image&hellip;</button>
+                    <button type="button" class="ghost small" id="server-banner-remove" data-i18n="server_logo_remove.remove">Remove</button>
+                  </div>
+                </div>
+                <small data-i18n="server_form.banner_hint">Shown behind the server's name at the top of the channel list, for everybody. A wide picture works best; a GIF is kept moving.</small>
+              </div>
               <label class="field">
                 <span data-i18n="server_form.password">Password</span>
                 <input
@@ -1481,6 +1632,7 @@
                   <div class="admin-add">
                     <button type="button" class="ghost small" id="chan-new-text" data-i18n="server_admin.new_text">+ Text</button>
                     <button type="button" class="ghost small" id="chan-new-voice" data-i18n="server_admin.new_voice">+ Voice</button>
+                    <button type="button" class="ghost small" id="chan-new-forum" data-i18n="server_admin.new_forum">+ Forum</button>
                     <button type="button" class="ghost small" id="chan-new-group" data-i18n="server_admin.new_group">+ Group</button>
                   </div>
                 </div>

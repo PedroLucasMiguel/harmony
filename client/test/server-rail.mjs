@@ -208,6 +208,35 @@ async function run() {
   await sleep(1500);
   check('a server that is not open starts without news', (await bubble(page, PORT_B)).unread === false, JSON.stringify(await bubble(page, PORT_B)));
 
+  // --- somebody in a voice channel there: a small speaker on its bubble ---------------------------------------------
+  const speaker = (port) => page.evaluate(`return !!document.querySelector('#server-rail .rail-item[data-server*="${port}"] .rail-voice')`);
+  check('nobody in a voice channel: no speaker on the bubble', !(await speaker(PORT_B)));
+  const voiceId = (await api(b.base, '/api/channels', { token: tokenAna })).body.channels.find((c) => c.kind === 'voice').id;
+  const anaSocket = new WebSocket(`${b.base.replace('http', 'ws')}/ws`);
+  const anaInbox = [];
+  anaSocket.addEventListener('message', (e) => anaInbox.push(JSON.parse(e.data)));
+  await new Promise((done) => anaSocket.addEventListener('open', done));
+  anaSocket.send(JSON.stringify({ type: 'hello', token: tokenAna, rid: 'h' }));
+  await waitFor(page, 'true', {});
+  for (let i = 0; i < 50 && !anaInbox.some((m) => m.rid === 'h'); i += 1) await sleep(100);
+  anaSocket.send(JSON.stringify({ type: 'voice:join', channelId: voiceId, rid: 'j' }));
+  // At once: the moment somebody is in the channel, not at the rail's next redraw for some other reason.
+  await waitFor(page, `!!document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"] .rail-voice')`, { label: 'the speaker on B', timeoutMs: 1500 });
+  check('somebody joins a voice channel on a server that is not open: its bubble shows a speaker', await speaker(PORT_B));
+  check('and the open server, which shows that itself, has none', !(await speaker(PORT_A)));
+  // Opening that server, and putting it away again: the speaker is not there while it is open, and is back at once.
+  await page.evaluate(`document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]').click(); return true;`);
+  await waitFor(page, `document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]')?.getAttribute('aria-current') === 'true'`, { label: 'opening B', timeoutMs: 20_000 });
+  await sleep(1500);
+  check('on the server that is open there is no speaker on its bubble', !(await speaker(PORT_B)));
+  await page.evaluate(`document.querySelector('#server-rail .rail-item[data-server*="${PORT_A}"]').click(); return true;`);
+  await waitFor(page, `document.querySelector('#server-rail .rail-item[data-server*="${PORT_A}"]')?.getAttribute('aria-current') === 'true'`, { label: 'back to A', timeoutMs: 20_000 });
+  check('and putting it away again, the speaker is still there for the person who is in the channel', await speaker(PORT_B));
+  anaSocket.send(JSON.stringify({ type: 'voice:leave', channelId: voiceId, rid: 'l' }));
+  await waitFor(page, `!document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"] .rail-voice')`, { label: 'the speaker going', timeoutMs: 1500 });
+  check('and it goes when the channel is empty again', !(await speaker(PORT_B)));
+  anaSocket.close();
+
   await say('anybody here?');
   await waitFor(page, `document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]')?.hasAttribute('data-unread')`,
     { label: 'news on server B', timeoutMs: 15_000 });

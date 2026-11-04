@@ -28,6 +28,10 @@ const ICONS = [
   // the composer and messages
   'plus-circle', 'smiley', 'paper-plane-right', 'x', 'download-simple',
   'pencil-simple', 'push-pin', 'star', 'trash', 'arrow-bend-up-left',
+  // polls
+  'chart-bar-horizontal',
+  // forums
+  'chats-teardrop', 'image-square', 'arrows-down-up', 'chat-teardrop', 'at', 'arrow-right', 'info',
   // Music Buddy
   'playlist', 'skip-back', 'skip-forward', 'shuffle', 'repeat', 'repeat-once',
   // cropping a picture

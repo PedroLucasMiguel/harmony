@@ -133,6 +133,9 @@ const tokenHash = (token) => createHash('sha256').update(String(token)).digest('
  * on what a person's name looks like and nobody can name a font that is not
  * there. A client that does not know an id draws the ordinary font.
  */
+/** What a person can be on a server. `invisible` is online that does not show: the member list says offline. */
+export const PRESENCE_STATUSES = ['online', 'idle', 'dnd', 'invisible'];
+
 export const NAME_FONTS = [
   'pacifico', 'press-start', 'orbitron', 'playfair', 'bebas',
   'caveat', 'fredoka', 'cinzel', 'typewriter', 'marker',
@@ -202,6 +205,7 @@ export class Accounts {
       setNameFont: db.prepare('UPDATE users SET name_font = ? WHERE id = ?'),
       setBannerDim: db.prepare('UPDATE users SET banner_dim = ? WHERE id = ?'),
       setNameColor: db.prepare('UPDATE users SET name_color = ? WHERE id = ?'),
+      setPresenceStatus: db.prepare('UPDATE users SET presence_status = ? WHERE id = ?'),
       list: db.prepare(
         'SELECT id, nickname, display_name, role, avatar_hash, name_font, banner_hash, banner_dim, '
         + `join_sound_hash, name_color, created_at, banned_at, ${ROLE_IDS}, ${BADGE_IDS} `
@@ -608,6 +612,15 @@ export class Accounts {
       if (!Number.isInteger(value) || value < 0 || value > 100) return { ok: false, error: 'invalid_dim' };
     }
     this.#q.setBannerDim.run(value, userId);
+    return { ok: true, user: this.#q.byId.get(userId) };
+  }
+
+  /** What the person chose to be (see PRESENCE_STATUSES). Their own business: no permission is involved. */
+  setPresenceStatus(userId, status) {
+    const user = this.#q.byId.get(userId);
+    if (!user) return { ok: false, error: 'no_such_user' };
+    if (!PRESENCE_STATUSES.includes(status)) return { ok: false, error: 'invalid_status' };
+    this.#q.setPresenceStatus.run(status, userId);
     return { ok: true, user: this.#q.byId.get(userId) };
   }
 

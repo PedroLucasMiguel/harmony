@@ -41,6 +41,7 @@ import {
   MAX_JOIN_SOUND_SECONDS, MAX_EMOJI_BYTES, MAX_EMOJIS,
   MAX_FILE_LIMIT, DEFAULT_FILE_BYTES, SEALED_TYPE, SEARCH_PAGE, HAS_KINDS,
 } from './chat.js';
+import { Polls } from './polls.js';
 import { UploadSessions } from './upload-sessions.js';
 import { LinkPreviews } from './link-preview.js';
 import { Throttle } from './throttle.js';
@@ -97,9 +98,12 @@ const channels = new Channels(db);
 const voice = new VoiceRooms();
 const mediaSecret = channelSecret(metaStore);
 const chat = new Chat(db, { dataDir: config.dataDir, maxDiskBytes: config.maxDiskBytes });
+const polls = new Polls(db);
 // Reads pages for the cards under links. HARMONY_LINKS_ALLOW_PRIVATE lets the tests point it at a page on this computer.
 const linkPreviews = new LinkPreviews(chat, { allowPrivate: process.env.HARMONY_LINKS_ALLOW_PRIVATE === '1' });
 const linkThrottle = new Throttle({ burst: 20, perSecond: 0.5 });
+// Changing a vote is cheap, and somebody changing their mind a dozen times in a few seconds is a person; a script is not.
+const voteThrottle = new Throttle({ burst: 20, perSecond: 2 });
 
 /*
  * Music Buddy: yt-dlp to find and fetch the audio, the library to keep it as ordinary uploads, and the service that
@@ -320,6 +324,8 @@ app.get('/api/health', (req, res) => {
           // The hash, not the picture: a client compares it with the copy it
           // cached and only downloads on a change (GET /api/server/logo).
           logo: serverSettings.logo,
+          // Likewise the banner, which the rail's server card shows (GET /api/server/banner).
+          banner: serverSettings.banner,
           signalingBase: config.signalingBase,
           liveStreams: rooms.listLive().length,
           // Lets the client show "create the first account" rather than a
@@ -892,6 +898,35 @@ app.post('/api/server', requireRole('owner'), (req, res) => {
     if (previous && previous !== hash) chat.release(previous);
   }
 
+  /*
+   * The banner: the same two steps and the same order of references as the logo. Any picture or GIF, up to the size a
+   * profile banner may be.
+   */
+  if (req.body?.banner !== undefined) {
+    const hash = req.body.banner === null ? null : String(req.body.banner);
+    if (hash !== null) {
+      if (!/^[0-9a-f]{64}$/.test(hash)) {
+        return res.status(400).json({ error: 'bad_hash', message: 'That is not an uploaded file.' });
+      }
+      const upload = chat.fileInfo(hash);
+      if (!upload) {
+        return res.status(400).json({ error: 'no_such_upload', message: 'Upload the banner first.' });
+      }
+      if (mediaTypeOf(upload.content_type) !== 'image') {
+        return res.status(400).json({ error: 'not_an_image', message: 'A banner has to be an image.' });
+      }
+      if (upload.bytes > MAX_BANNER_BYTES) {
+        return res.status(400).json({
+          error: 'banner_too_large',
+          message: `Server banners are limited to ${Math.round(MAX_BANNER_BYTES / 1024 / 1024)} MB.`,
+        });
+      }
+      chat.retain(hash);
+    }
+    const previous = serverSettings.setBanner(hash);
+    if (previous && previous !== hash) chat.release(previous);
+  }
+
   if (typeof req.body?.musicEnabled === 'boolean') {
     serverSettings.setMusicEnabled(req.body.musicEnabled);
     // Switched off, it is off now: every channel's music ends, and its files are let go of.
@@ -1111,17 +1146,21 @@ app.post('/api/uploads/sessions/:id/cancel', requireLogin, guarded(async (req, r
  * content-addressed, so it can be cached forever; a new logo is a new hash,
  * which /api/health reports.
  */
-app.get('/api/server/logo', (_req, res) => {
-  const hash = serverSettings.logo;
+const sendServerPicture = (hash, missing, res) => {
   const info = hash ? chat.fileInfo(hash) : null;
-  if (!info) return res.status(404).json({ error: 'no_logo' });
+  if (!info) return res.status(404).json({ error: missing });
   res.set('Content-Type', info.content_type);
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Content-Security-Policy', "default-src 'none'; sandbox");
   res.set('Cache-Control', 'public, max-age=31536000, immutable');
   res.set('X-Harmony-Hash', hash);
   return res.sendFile(info.path);
-});
+};
+
+app.get('/api/server/logo', (_req, res) => sendServerPicture(serverSettings.logo, 'no_logo', res));
+
+/** The server's banner, served the way its logo is, for the card the rail shows over a server that is not open. */
+app.get('/api/server/banner', (_req, res) => sendServerPicture(serverSettings.banner, 'no_banner', res));
 
 app.get('/api/streams', (_req, res) => {
   res.json({
@@ -1255,6 +1294,9 @@ app.get('/api/channels', requireLogin, (req, res) => {
     // Derived from open sockets, never stored. Empty when the realtime
     // layer is not up, which is honest: with no sockets nobody is online.
     online: realtime?.onlineUserIds() ?? [],
+    statuses: realtime?.presenceView().statuses ?? {},
+    // What this person chose to be on this server, theirs alone to know.
+    status: req.user.presence_status ?? 'online',
     // Same payload the WebSocket hello carries, so the read-only fallback
     // path the client uses when the socket is down shows the same sidebar.
     rosters: view.rosters,
@@ -1555,17 +1597,21 @@ function mentionLookups() {
   return { idOf, roleOf };
 }
 
-function forClient(messages) {
+function forClient(messages, viewerId = null) {
   const list = [].concat(messages).filter(Boolean);
   const byId = chat.reactionsFor(list.map((m) => m.id));
+  // The votes of the polls among them, with what `viewerId` chose when it is known who is asking.
+  const votes = polls.resultsFor(list, viewerId);
   // The lookups read every account and every role. A page with no @ in it has nobody to look up, and most do not.
   const { idOf, roleOf } = list.some((m) => m.body?.includes('@')) ? mentionLookups() : { idOf: () => null, roleOf: () => null };
-  return list.map(
-    (m) => publicMessage(m, byId.get(m.id) ?? [], mentionsIn(m.body, idOf, roleOf)),
-  );
+  return list.map((m) => {
+    const out = publicMessage(m, byId.get(m.id) ?? [], mentionsIn(m.body, idOf, roleOf));
+    if (out.poll) out.poll = { ...out.poll, results: votes.get(m.id) ?? null };
+    return out;
+  });
 }
 
-const oneForClient = (message) => forClient([message])[0] ?? null;
+const oneForClient = (message, viewerId = null) => forClient([message], viewerId)[0] ?? null;
 
 /**
  * Push something about a message to everyone who may read where it lives.
@@ -1635,19 +1681,98 @@ app.get('/api/channels/:id/messages', requireLogin, (req, res) => {
   const channel = readableChannel(req, id);
   if (!channel) return res.status(404).json({ error: 'no_such_channel' });
 
+  // A forum's channel has no log of its own: what is read is a post's thread (`thread`), or the listing below.
+  const thread = Number.parseInt(req.query.thread ?? '', 10);
+  if (channel.kind === 'forum') {
+    const root = Number.isFinite(thread) ? chat.get(thread) : null;
+    if (!root || root.channel_id !== id || root.title === null) return res.status(404).json({ error: 'no_such_post' });
+    const untilThread = Number.parseInt(req.query.until ?? '', 10);
+    if (Number.isFinite(untilThread)) {
+      const { messages, complete } = chat.threadSince(thread, untilThread);
+      return res.json({
+        post: oneForClient(root, req.user.id),
+        messages: forClient(messages, req.user.id),
+        pinned: forClient(chat.threadPinned(thread), req.user.id),
+        complete,
+      });
+    }
+    const beforeThread = Number.parseInt(req.query.before ?? '', 10);
+    return res.json({
+      // The post itself, whatever page of the thread this is: a long thread's first page does not reach it.
+      post: oneForClient(root, req.user.id),
+      messages: forClient(
+        chat.thread(thread, { before: Number.isFinite(beforeThread) ? beforeThread : undefined }),
+        req.user.id,
+      ),
+      pinned: forClient(chat.threadPinned(thread), req.user.id),
+    });
+  }
+
   // `until`: everything from that message to the newest, for landing on one far above the opening page.
   const until = Number.parseInt(req.query.until ?? '', 10);
   if (Number.isFinite(until)) {
     const { messages, complete } = chat.since(id, until);
-    return res.json({ messages: forClient(messages), pinned: forClient(chat.pinned(id)), complete });
+    return res.json({
+      messages: forClient(messages, req.user.id), pinned: forClient(chat.pinned(id), req.user.id), complete,
+    });
   }
 
   const before = Number.parseInt(req.query.before ?? '', 10);
   return res.json({
     messages: forClient(
       chat.history(id, { before: Number.isFinite(before) ? before : undefined }),
+      req.user.id,
     ),
-    pinned: forClient(chat.pinned(id)),
+    pinned: forClient(chat.pinned(id), req.user.id),
+  });
+});
+
+/**
+ * A forum's posts, a page at a time: `q` finds words in them (or in what is written under them), `sort` is
+ * activity, new or replies, `offset` where the page starts. Each comes with its answers' count and when it was
+ * last written in; its reactions and its first file are on the message itself.
+ */
+/**
+ * The posts of a forum that mention `user` -- by name, through a role they hold, or with @everyone -- each with how
+ * many messages do, the post's own included. What somebody wrote themselves does not count. The same rule that lights
+ * a channel's unread mentions (see unreadFor), asked of every message that has an @ in it.
+ */
+function mentionsInForum(channelId, user) {
+  const ctx = roles.context(accounts.byId(user.id) ?? user);
+  const { idOf, roleOf } = mentionLookups();
+  const found = new Map();
+  for (const m of chat.atMessages(channelId)) {
+    if (m.user_id === user.id) continue;
+    const hit = mentionsIn(m.body, idOf, roleOf);
+    if (hit.everyone || hit.userIds.includes(user.id) || hit.roleIds.some((roleId) => ctx.roleIds.has(roleId))) {
+      found.set(m.post_id, (found.get(m.post_id) ?? 0) + 1);
+    }
+  }
+  return found;
+}
+
+app.get('/api/channels/:id/posts', requireLogin, (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const channel = readableChannel(req, id);
+  if (!channel || channel.kind !== 'forum') return res.status(404).json({ error: 'no_such_channel' });
+  // Which posts have a mention of this person in them, or in what is written under them, and how many times.
+  const mentioned = mentionsInForum(id, req.user);
+  const wantMentions = ['1', 'true'].includes(String(req.query.mentions ?? ''));
+  const { posts, more } = chat.posts(id, {
+    query: String(req.query.q ?? '').slice(0, 200),
+    sort: String(req.query.sort ?? 'activity'),
+    offset: Number.parseInt(req.query.offset ?? '0', 10),
+    onlyIds: wantMentions ? [...mentioned.keys()] : null,
+  });
+  const shown = forClient(posts, req.user.id);
+  return res.json({
+    posts: shown.map((message, i) => ({
+      message,
+      replyCount: posts[i].reply_count,
+      lastActivityAt: posts[i].last_activity,
+      mentionCount: mentioned.get(message.id) ?? 0,
+    })),
+    more,
   });
 });
 
@@ -1656,6 +1781,14 @@ app.post('/api/channels/:id/messages', requireLogin, (req, res) => {
   const channel = readableChannel(req, id);
   if (!channel) return res.status(404).json({ error: 'no_such_channel' });
 
+  // A forum takes posts and what is written under them, and nothing loose; a text channel takes neither.
+  const forum = channel.kind === 'forum';
+  const hasTitle = req.body?.title !== undefined && req.body?.title !== null;
+  const hasThread = req.body?.threadId !== undefined && req.body?.threadId !== null;
+  if (channel.kind === 'voice') return res.status(400).json({ error: 'not_a_text_channel' });
+  if (forum && !hasTitle && !hasThread) return res.status(400).json({ error: 'forum_needs_post' });
+  if (!forum && (hasTitle || hasThread)) return res.status(400).json({ error: 'not_a_forum' });
+
   const result = chat.post({
     channelId: id,
     user: req.user,
@@ -1663,9 +1796,13 @@ app.post('/api/channels/:id/messages', requireLogin, (req, res) => {
     attachmentHash: req.body?.attachmentHash ?? null,
     attachmentName: req.body?.attachmentName ?? null,
     replyTo: req.body?.replyTo ?? null,
+    poll: req.body?.poll ?? null,
+    title: req.body?.title ?? null,
+    threadId: req.body?.threadId ?? null,
   });
   if (!result.ok) return res.status(400).json({ error: result.error });
 
+  // The broadcast knows nobody's vote (a new poll has none); the answer to the author is theirs.
   const message = oneForClient(result.message);
   toChannelReaders(id, { type: 'message', message });
   // Writing in a channel is reading it: your own message is not news, and neither is what you answered.
@@ -1714,6 +1851,26 @@ app.get('/api/messages/:id/notified', requireLogin, (req, res) => {
  *
  * Asked before anything is looked up, so a refusal says nothing about what exists.
  */
+/**
+ * Pin a forum post to the top of its forum, or let it go: the one pinned last is first. Its own permission,
+ * `posts.pin` (admins always), apart from pinning a message inside a thread.
+ */
+app.post('/api/messages/:id/post-pin', requireLogin, (req, res) => {
+  if (!may(req, 'posts.pin')) {
+    return res.status(403).json({ error: 'forbidden', message: 'Only admins and people allowed to pin can pin or unpin posts.' });
+  }
+  const id = Number.parseInt(req.params.id, 10);
+  const target = chat.get(id);
+  if (target && !readableChannel(req, target.channel_id)) {
+    return res.status(404).json({ error: 'no_such_post' });
+  }
+  const result = chat.setPostPinned(id, req.body?.pinned !== false);
+  if (!result.ok) return res.status(404).json({ error: result.error });
+  const message = oneForClient(result.message);
+  toChannelReaders(message.channelId, { type: 'message:updated', message });
+  return res.json({ message });
+});
+
 app.post('/api/messages/:id/pin', requireLogin, (req, res) => {
   if (!may(req, 'messages.pin')) {
     return res.status(403).json({ error: 'forbidden', message: 'Only admins and people allowed to pin can pin or unpin messages.' });
@@ -1817,14 +1974,23 @@ app.post('/api/messages/:id/delete', requireLogin, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'no_such_message' });
 
   const isOwn = existing.user_id === req.user.id;
-  if (!isOwn && !may(req, 'messages.delete')) {
-    return res.status(403).json({ error: 'forbidden', message: 'Not your message.' });
+  // A forum's post is deleted with everything under it, so it has a permission of its own: your own, or `posts.delete`
+  // (admins always); the permission to delete messages is not the permission to delete a thread.
+  const isPost = existing.title !== null;
+  if (!isOwn && !may(req, isPost ? 'posts.delete' : 'messages.delete')) {
+    return res.status(403).json({ error: 'forbidden', message: isPost ? 'Not your post.' : 'Not your message.' });
   }
 
   const result = chat.remove(id);
   if (!result.ok) return res.status(404).json({ error: result.error });
   toChannelReaders(existing.channel_id, {
-    type: 'message:deleted', id, channelId: existing.channel_id,
+    type: 'message:deleted',
+    id,
+    channelId: existing.channel_id,
+    // What a post took with it: the answers under it are gone too, and a client showing one has to know.
+    ...(result.answers?.length ? { answers: result.answers } : {}),
+    ...(existing.title !== null ? { post: true } : {}),
+    ...(existing.thread_id ? { threadId: existing.thread_id } : {}),
   });
   return res.json({ ok: true });
 });
@@ -1868,13 +2034,45 @@ app.post('/api/messages/:id/react', requireLogin, (req, res) => {
   return res.json({ reactions: result.reactions });
 });
 
+/**
+ * Vote in a poll: `options` is everything the person chooses, and replaces what they chose before; an empty
+ * list takes their vote back. Anybody who can read the channel can vote, until the poll closes.
+ *
+ * Everybody who reads the channel is told the new count (and, unless the poll hides them, who is in it); the
+ * person's own choice goes only to them, on every device they have open.
+ */
+app.post('/api/messages/:id/vote', requireLogin, (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const existing = chat.get(id);
+  if (!existing) return res.status(404).json({ error: 'no_such_message' });
+  if (!readableChannel(req, existing.channel_id)) {
+    return res.status(404).json({ error: 'no_such_channel' });
+  }
+  if (!voteThrottle.take(req.user.id).allowed) return res.status(429).json({ error: 'slow_down' });
+
+  const result = polls.vote({ message: existing, userId: req.user.id, options: req.body?.options });
+  if (!result.ok) {
+    return res.status(result.error === 'not_a_poll' ? 404 : 400).json({ error: result.error });
+  }
+
+  const shared = polls.resultsOf(existing);
+  toChannelReaders(existing.channel_id, {
+    type: 'message:poll', id, channelId: existing.channel_id, results: shared,
+  });
+  const mine = { ...shared, mine: result.mine };
+  realtime?.toUser(req.user.id, {
+    type: 'message:poll', id, channelId: existing.channel_id, results: mine,
+  });
+  return res.json({ results: mine });
+});
+
 app.get('/api/channels/:id/search', requireLogin, (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   const channel = readableChannel(req, id);
   if (!channel) return res.status(404).json({ error: 'no_such_channel' });
 
   const { mode, results } = chat.search(id, req.query.q);
-  return res.json({ mode, results: forClient(results) });
+  return res.json({ mode, results: forClient(results, req.user.id) });
 });
 
 /**
@@ -1902,17 +2100,20 @@ app.get('/api/search', requireLogin, (req, res) => {
   const mentionIds = numbers(req.query.mentions);
   const after = number(req.query.after);
   const before = number(req.query.before);
+  // Inside one forum post: the post and what is written under it. Asked for alone it is a search of that post.
+  const threadId = req.query.thread === undefined || req.query.thread === '' ? null : Number(req.query.thread);
+  if (threadId !== null && !(Number.isInteger(threadId) && threadId > 0)) return res.status(400).json({ error: 'bad_thread' });
   // 1/true: only pinned messages; 0/false: only the ones that are not; anything else: both.
   const pinWanted = String(req.query.pinned ?? '');
   const pinned = ['1', 'true'].includes(pinWanted) ? true : ['0', 'false'].includes(pinWanted) ? false : null;
   if (!text.trim() && !from.length && !inChannels.length && !has.length && !mentionIds.length
-    && !Number.isFinite(after) && !Number.isFinite(before) && pinned === null) {
+    && !Number.isFinite(after) && !Number.isFinite(before) && pinned === null && threadId === null) {
     return res.status(400).json({ error: 'empty_search' });
   }
 
   const mentions = mentionIds.map((id) => accounts.byId(id)?.nickname).filter(Boolean);
   const readable = channels.list()
-    .filter((c) => c.kind === 'text' && readableChannel(req, c.id))
+    .filter((c) => (c.kind === 'text' || c.kind === 'forum') && readableChannel(req, c.id))
     .map((c) => c.id)
     .filter((id) => !inChannels.length || inChannels.includes(id));
   // Asked for a mention of somebody who is not there: nothing can match, which is not the same as no filter.
@@ -1930,8 +2131,9 @@ app.get('/api/search', requireLogin, (req, res) => {
     sort: req.query.sort === 'old' ? 'old' : 'new',
     offset: Number(req.query.offset) || 0,
     limit: Number(req.query.limit) || SEARCH_PAGE,
+    threadId,
   });
-  return res.json({ total, capped, results: forClient(results) });
+  return res.json({ total, capped, results: forClient(results, req.user.id) });
 });
 
 /**

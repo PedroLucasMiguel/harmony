@@ -817,6 +817,69 @@ const MIGRATIONS = [
       CREATE INDEX dm_members_user ON dm_members(user_id);
     `);
   }, { rebuilds: true }),
+  /*
+   * v29: polls in a channel.
+   *
+   * A poll is a message (so it is sent, pinned, searched, answered and deleted like one) with its settings
+   * in `poll`, as JSON: title, description, footer, the options' text, whether more than one may be chosen,
+   * whether the voters are hidden and when it closes. Its picture, if it has one, is the message's file.
+   * The votes are rows of their own, one per person per option: changing a vote is deleting and inserting
+   * those, in one transaction, and a deleted message takes its votes with it.
+   */
+  (db) => {
+    db.exec(`
+      ALTER TABLE messages ADD COLUMN poll TEXT;
+      CREATE TABLE poll_votes (
+        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        user_id    INTEGER NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+        option     INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (message_id, user_id, option)
+      );
+    `);
+  },
+  /*
+   * v30: forum channels.
+   *
+   * A forum's posts are messages: the post is the first message of its thread and carries the `title`; what is
+   * written under it are messages whose `thread_id` is the post's id. So everything a message can do -- a file, a
+   * poll, reactions, a mention, being pinned, edited, searched -- a post and its answers can do, with nothing of it
+   * written twice. Neither column is set in a text channel. Deleting a post takes its answers with it: that is
+   * Chat.remove's job, since the answers point at it by a plain column.
+   */
+  (db) => {
+    db.exec(`
+      ALTER TABLE messages ADD COLUMN thread_id INTEGER;
+      ALTER TABLE messages ADD COLUMN title TEXT;
+      CREATE INDEX messages_thread ON messages(thread_id, id) WHERE thread_id IS NOT NULL;
+      CREATE INDEX messages_posts  ON messages(channel_id, id DESC) WHERE title IS NOT NULL;
+    `);
+  },
+  /*
+   * v31: pinned forum posts.
+   *
+   * When a post was pinned to the top of its forum, or NULL: the one pinned last is first. Apart from `pinned`, which
+   * is a message pinned inside a thread -- a post can be both, and they are not the same pin.
+   */
+  (db) => {
+    db.exec(`
+      ALTER TABLE messages ADD COLUMN post_pinned_at INTEGER;
+      CREATE INDEX messages_posts_pinned ON messages(channel_id, post_pinned_at DESC) WHERE post_pinned_at IS NOT NULL;
+    `);
+  },
+  /*
+   * v32: a person's status on this server.
+   *
+   * What they chose -- online, idle, dnd (do not disturb) or invisible -- kept here because it is this server's and
+   * nobody else's: the same person can be busy on one and free on another. Never sent as a field of the account (an
+   * invisible person must not be given away by the member list); it is told as presence. Being idle because the app
+   * has not been touched is not stored: that is derived, from the connections (see Realtime.presenceView).
+   */
+  (db) => {
+    db.exec(`
+      ALTER TABLE users ADD COLUMN presence_status TEXT NOT NULL DEFAULT 'online';
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -591,6 +591,33 @@ async function run() {
   await alice.send('Emulation.clearDeviceMetricsOverride');
   await sleep(300);
 
+  // --- a poll, sealed like any message ---------------------------------------------------------------------------------
+  const fill = (page, sel, value, nth = 0) => page.evaluate(`const i = document.querySelectorAll(${JSON.stringify(sel)})[${nth}];
+    i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
+  await bob.evaluate("document.querySelector('#server-rail .rail-home').click(); return true;");
+  await until(bob, "document.querySelectorAll('#dm-list .dm-row').length >= 1", { label: 'the list for the poll' });
+  await bob.evaluate("document.querySelector('#dm-list .dm-row').click(); return true;");
+  await until(bob, "!document.getElementById('dm-active').hidden", { label: 'bob\'s conversation for the poll' });
+  await alice.evaluate("document.getElementById('dm-poll').click(); return true;");
+  await until(alice, "!!document.querySelector('[data-testid=\"poll-dialog\"]')", { label: 'the poll dialog in the conversation' });
+  check('the private composer has a poll button, and says what hiding the voters means here',
+    await alice.evaluate("return /only hides the names/i.test(document.querySelector('[data-testid=\"poll-dialog\"]').textContent)"), '');
+  await fill(alice, '[data-testid="poll-title"]', 'Pizza or sushi?');
+  await fill(alice, '[data-testid="poll-option"]', 'Pizza', 0);
+  await fill(alice, '[data-testid="poll-option"]', 'Sushi', 1);
+  await alice.evaluate("document.querySelector('[data-testid=\"poll-send\"]').click(); return true;");
+  await until(alice, "!!document.querySelector('#dm-log .poll-card')", { label: 'her poll' });
+  await until(bob, "!!document.querySelector('#dm-log .poll-card')", { label: 'the poll on his side' });
+  check('Bob receives it as a card, not as words', await bob.evaluate("return /Pizza or sushi/.test(document.querySelector('#dm-log .poll-title').textContent) && document.querySelectorAll('#dm-log .poll-option').length === 2"), '');
+  check('and nobody is offered to edit it', !(await alice.evaluate("return !!document.querySelector('#dm-log .chat-msg[data-poll] .msg-tool[data-icon=\"pencil-simple\"]')")), '');
+  await bob.evaluate("document.querySelectorAll('#dm-log .poll-choice')[1].click(); return true;");
+  await until(bob, "document.querySelector('#dm-log .poll-check[data-on]')", { label: 'his vote' });
+  await until(alice, "document.querySelector('#dm-log .poll-total')?.textContent === '1 vote'", { label: 'his vote on her side' });
+  check('Bob\'s vote reaches Alice, counted on the option he chose',
+    await alice.evaluate("return document.querySelectorAll('#dm-log .poll-count')[1].textContent === '1' && document.querySelectorAll('#dm-log .poll-faces .avatar').length === 1"), '');
+  check('a vote is not shown as an emoji under the message', await alice.evaluate("return !document.querySelector('#dm-log .chat-msg[data-poll] .reactions')"), '');
+  await shot(alice, '9-poll');
+
   // --- the lock and the stage ------------------------------------------------------------------------------------------
   const lock = await alice.evaluate("return Boolean(document.querySelector('#dm-active .dm-lock'))");
   check('the conversation says it is encrypted', lock, '');

@@ -20,11 +20,13 @@ const make = (tag, className, text) => {
  * @param {object} options
  * @param {File} options.file
  * @param {'avatar'|'banner'|'logo'} options.kind
+ * @param {'server'} [options.purpose]  a banner that is a server's: the same window and the same cut, but it has no
+ *   member-list strip to mark and says so in its words
  * @param {(key: string, params?: object) => string} options.t
  * @returns {Promise<Blob|null>}  the cropped picture, ready to upload; null if it was cancelled. Rejects when the file is
  *   not a picture that can be read.
  */
-export async function openImageEditor({ file, kind, t }) {
+export async function openImageEditor({ file, kind, t, purpose = null }) {
   const config = KINDS[kind];
   const source = await inspect(file).catch(() => null);
   if (!source) throw new Error(t('app.could_not_read_that_image'));
@@ -44,7 +46,7 @@ export async function openImageEditor({ file, kind, t }) {
   const form = make('form', 'image-editor-form');
   form.method = 'dialog';
 
-  const words = { avatar: ['title_avatar', 'hint'], banner: ['title_banner', 'hint_banner'], logo: ['title_logo', 'hint_logo'] }[kind];
+  const words = { avatar: ['title_avatar', 'hint'], banner: purpose === 'server' ? ['title_server_banner', 'hint_server_banner'] : ['title_banner', 'hint_banner'], logo: ['title_logo', 'hint_logo'] }[kind];
   const title = make('h3', '', t(`image_editor.${words[0]}`));
   title.id = 'ie-title';
   const hint = make('p', 'muted ie-hint', t(`image_editor.${words[1]}`));
@@ -68,7 +70,7 @@ export async function openImageEditor({ file, kind, t }) {
   outline.style.width = `${mask.w}px`;
   outline.style.height = `${mask.h}px`;
   stage.append(image, outline);
-  if (kind === 'banner') {
+  if (kind === 'banner' && purpose !== 'server') {
     // What the member list shows of a banner: the middle strip. Dashed, so it is not mistaken for the edge.
     const strip = make('div', 'ie-strip');
     strip.style.left = `${mask.x}px`;

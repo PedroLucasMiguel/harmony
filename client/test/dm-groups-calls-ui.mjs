@@ -232,6 +232,11 @@ async function run() {
   // The group's first line and her message are one block (the same person, close together): the name is on the block.
   const author = await bob.evaluate("return [...document.querySelectorAll('#dm-log .chat-msg .who')].map((w) => w.textContent)");
   check('Bob reads what Alice wrote, under her name', author.includes('alice'), JSON.stringify(author));
+  // Her picture in the group, pressed: her profile on this server.
+  await bob.evaluate("document.querySelector('#dm-log .chat-msg .msg-avatar[data-profile-user]').click(); return true;");
+  await until(bob, "!document.querySelector('.profile-card').hidden", { label: 'her profile in the group' });
+  check('pressing somebody\'s picture in a group opens their profile', (await bob.evaluate("return document.querySelector('.profile-card-name')?.textContent")) === 'alice', '');
+  await bob.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true;");
   await write(bob, 'me!');
   await until(alice, "[...document.querySelectorAll('#dm-log .chat-msg')].some((m) => m.textContent.includes('me!'))", { label: 'alice reading bob' });
   check('and Alice reads his answer', true, '');
@@ -247,6 +252,16 @@ async function run() {
   const mine = await alice.evaluate("return { names: [...document.querySelectorAll('.dm-members-list .dm-picker-name')].map((n) => n.textContent), removes: document.querySelectorAll('.dm-members-list button[data-user-id]').length, add: [...document.querySelectorAll('dialog.dm-keys button')].some((b) => b.textContent === 'Add people') }");
   check('the one who runs it sees everybody, a way to remove each of the others, and to add', mine.names.length === 3 && mine.removes === 2 && mine.add, JSON.stringify(mine));
   await shot(alice, 'group-members');
+  // Their profile, from the people dialog: the card opens over it, not behind.
+  await alice.evaluate("[...document.querySelectorAll('.dm-members-list li')].find((li) => li.textContent.includes('bob')).querySelector('[data-profile-user]').click(); return true;");
+  await until(alice, "!document.querySelector('.profile-card').hidden", { label: 'bob\'s profile over the dialog' });
+  const over = await alice.evaluate(`const card = document.querySelector('.profile-card'); const r = card.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 40);
+    return { name: card.querySelector('.profile-card-name')?.textContent, onTop: card.contains(hit), inDialog: Boolean(card.closest('dialog')), readOnly: card.querySelectorAll('.profile-card-actions button').length === 0 };`);
+  check('pressing somebody in the people dialog opens their profile, above the dialog', over.name === 'bob' && over.onTop && over.inDialog, JSON.stringify(over));
+  check('and it is only for looking', over.readOnly, JSON.stringify(over));
+  await shot(alice, 'group-member-profile');
+  await alice.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true;");
   await alice.evaluate("document.querySelector('dialog.dm-keys').close(); return true;");
   await click(bob, '#dm-members');
   await until(bob, "document.querySelector('dialog.dm-keys .dm-members-list')", { label: 'bob\'s people dialog' });

@@ -36,6 +36,10 @@ export function channelSnapshot(message) {
     attachmentName: message.attachmentName ?? null,
     attachmentBytes: message.attachmentBytes ?? null,
     mediaType: message.mediaType ?? null,
+    // In a forum: the post it is written under (or that it is, with its title), so that a star can go back to it.
+    threadId: message.threadId ?? null,
+    title: message.title ?? null,
+    postTitle: message.postTitle ?? null,
   };
   // What it answers is kept as the words it was shown with, so the copy reads on its own.
   if (message.reply) keep.reply = message.reply;

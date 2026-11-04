@@ -421,3 +421,88 @@ describe('the server logo', () => {
     assert.equal((await api('/api/server/logo')).status, 404);
   });
 });
+
+describe('the server banner', () => {
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const upload = async (bytes, type, token) => {
+    const res = await fetch(`${BASE}/api/uploads`, {
+      method: 'POST',
+      headers: { 'Content-Type': type, Authorization: `Bearer ${token}` },
+      body: bytes,
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  let hash;
+
+  before(async () => {
+    const res = await upload(PNG, 'image/png', ownerToken);
+    assert.equal(res.status, 201);
+    hash = res.body.hash;
+  });
+
+  it('starts as none', async () => {
+    assert.equal((await api('/api/server', { token: memberToken })).body.server.banner, null);
+  });
+
+  it('is the owner\'s to set, not an admin\'s or a member\'s', async () => {
+    for (const token of [memberToken, adminToken]) {
+      const res = await api('/api/server', { method: 'POST', body: { banner: hash }, token });
+      assert.equal(res.status, 403);
+    }
+  });
+
+  it('refuses something that is not an upload, not a picture, or too big', async () => {
+    const bad = await api('/api/server', { method: 'POST', body: { banner: 'nope' }, token: ownerToken });
+    assert.deepEqual([bad.status, bad.body.error], [400, 'bad_hash']);
+    const missing = await api('/api/server', { method: 'POST', body: { banner: 'a'.repeat(64) }, token: ownerToken });
+    assert.deepEqual([missing.status, missing.body.error], [400, 'no_such_upload']);
+    const text = await upload(Buffer.from('not a picture at all'), 'text/plain', ownerToken);
+    const notImage = await api('/api/server', { method: 'POST', body: { banner: text.body.hash }, token: ownerToken });
+    assert.deepEqual([notImage.status, notImage.body.error], [400, 'not_an_image']);
+    const big = await upload(Buffer.concat([PNG, Buffer.alloc(2 * 1024 * 1024 + 16, 7)]), 'image/png', ownerToken);
+    const tooBig = await api('/api/server', { method: 'POST', body: { banner: big.body.hash }, token: ownerToken });
+    assert.deepEqual([tooBig.status, tooBig.body.error], [400, 'banner_too_large']);
+  });
+
+  it('is set by the owner and every member is told its hash', async () => {
+    const res = await api('/api/server', { method: 'POST', body: { banner: hash }, token: ownerToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.server.banner, hash);
+    assert.equal((await api('/api/server', { token: memberToken })).body.server.banner, hash);
+  });
+
+  it('is told to the rail with the logo, and served without a login, as the logo is', async () => {
+    assert.equal((await api('/api/health')).body.banner, hash);
+    const res = await fetch(`${BASE}/api/server/banner`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /^image\//);
+    assert.equal(res.headers.get('x-harmony-hash'), hash);
+  });
+
+  it('is its own setting: the logo and the name are not touched by it', async () => {
+    const res = await api('/api/server', { token: ownerToken });
+    assert.equal(res.body.server.name, 'Still Here');
+    assert.equal(res.body.server.logo, null);
+  });
+
+  it('SURVIVES A RESTART', async () => {
+    await stopHarmony();
+    await startHarmony();
+    assert.equal((await api('/api/server', { token: ownerToken })).body.server.banner, hash);
+  });
+
+  it('can be taken away again, and the same picture can be put back', async () => {
+    const gone = await api('/api/server', { method: 'POST', body: { banner: null }, token: ownerToken });
+    assert.equal(gone.body.server.banner, null);
+    const back = await api('/api/server', { method: 'POST', body: { banner: hash }, token: ownerToken });
+    assert.equal(back.body.server.banner, hash);
+    // The same one again: the reference is counted before the old is let go of, so it is still there.
+    const again = await api('/api/server', { method: 'POST', body: { banner: hash }, token: ownerToken });
+    assert.equal(again.body.server.banner, hash);
+    await api('/api/server', { method: 'POST', body: { banner: null }, token: ownerToken });
+    assert.equal((await fetch(`${BASE}/api/server/banner`)).status, 404);
+  });
+});

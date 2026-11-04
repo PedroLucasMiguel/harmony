@@ -36,6 +36,8 @@ A [five-minute tour](media/harmony-demo.mp4) of everything below, recorded from 
   in the member list and voice channels, a font for your name from ten that
   ship with the app, and a join sound of up to 10 seconds that plays for the
   room when you arrive.
+- **Server banner**: the owner gives the server a picture or GIF (cut in the same window as a profile banner) that sits
+  behind the server's name at the top of the channel list, Discord-style; the strip across the top keeps the buttons.
 - **Music Buddy** (off until the owner turns it on): people the owner allows put music on for the voice channel
   or private call they are in, from YouTube links and playlists, Spotify links and playlists (looked up on YouTube),
   or a search; a track can be up to four hours long, for a podcast.
@@ -43,6 +45,43 @@ A [five-minute tour](media/harmony-demo.mp4) of everything below, recorded from 
   nobody has to reach for it; the queue can be reordered live, skipped,
   shuffled and repeated. It fetches audio with yt-dlp, which is the owner's call: see
   [DEPLOYMENT.md](DEPLOYMENT.md#music-buddy-optional).
+- **A title bar of its own**: a slim bar across the top, drawn in the theme in use, with back and forward through the
+  channels and forum posts you have opened (also Command-[ and ] on a Mac, Alt with the arrows elsewhere) and the
+  server's name at the middle; the system's window buttons sit over its ends. `HARMONY_NATIVE_FRAME=1` keeps the
+  system's own frame instead.
+  A button at its end opens About: the version, who made Harmony, the credits and what it is built on.
+- **Who reacted**: rest the pointer on a reaction under a message (channel, forum or private) to see who put it
+  there, and follow "and N others" (or shift-click, or long-press on a touch screen) for a window listing everybody,
+  an emoji at a time. A plain click is still the reaction itself.
+- **#channel links**: write `#release-notes` in a message to point at a channel (its name in lower case, spaces as
+  dashes); pressed, it opens that text channel or forum. Typing `#` offers the channels to complete, as `@` does for
+  people. A `#word` that is no channel you can see stays plain text.
+- **Profiles from the private messages**: click somebody's picture or name in a conversation (or the heading) to see
+  their profile on the server the conversation is on -- banner, badges and roles of that server, with its name on the
+  card -- whichever server is open. Read-only, and with no status. The same from a group, on a member's picture or
+  name in the conversation or in the dialog that lists the group's people.
+- **Status, per server**: online, idle, do not disturb or invisible, from the dot on your picture. It is kept by each
+  server separately -- busy on one, free on another -- and shown as a dot on the member list (yellow, red, or none for
+  invisible, which looks offline to everybody else). The app left alone for five minutes counts as idle, except on a
+  server where you are in a voice channel. Do not disturb silences the sound of mentions on that server only; their
+  markers and counts are still there. Private messages show no status and notify as always.
+- **Forum channels**: a channel of posts, as in Discord. Each post has a title, words and pictures, videos or files;
+  the list shows who wrote it, a first line, its first picture, the reactions it has had, how many have answered and
+  when it was last written in, and can be searched and sorted (recent activity, date posted, most answers). Opening a
+  post puts its thread beside the list: the post, a line, and the answers, which are ordinary messages (files, voice
+  messages, polls, replies, reactions, pins, stars, dropping a file) with a search of the post of their own.
+  Posts that mention you (by name, through a role of yours or with @everyone) are lit and counted, and a button keeps
+  only those. Admins, and roles given the permissions, can pin posts to the top of the forum (the one pinned last
+  first, the rest after it, newest first) and delete any post; everybody can delete their own. A deleted post takes
+  every answer, vote and file with it.
+- **Polls**: a question with two to twelve options, in a text channel, a private message or a private group,
+  from the poll button beside the message box. A poll can have a description, a picture and a footer, take one answer
+  or several, hide who voted, and close at a time you pick. Everybody sees the count of each option, the faces of
+  who chose it (unless hidden) and a list of who voted for what. In a channel the server counts the votes and keeps
+  the voters hidden from everybody when asked. In a private conversation the server cannot read anything: the poll and
+  the votes are sealed like messages and every app counts them, so "hide who voted" only hides the names in the app,
+  and the end time is kept by each app's clock. An app that does not know polls (a Ciranda client) sees the question
+  and the options as words.
 - **Private messages**: end-to-end encrypted conversations between two members
   of a server, opened from the button in the top bar or by right-clicking
   someone in the member list. Text, files, replies, edits and reactions are

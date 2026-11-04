@@ -31,6 +31,10 @@ const lift = (fn) => async (...args) => unwrap(await fn(...args));
 
 const desktop = () => ({
   platform: raw.platform,
+  titleBar: Boolean(raw.titleBar),
+  setTitleBar: lift(raw.setTitleBar),
+  isFullScreen: lift(raw.isFullScreen),
+  onFullScreen: (handler) => raw.onFullScreen(handler),
 
   // Everything; the web build is the one that says no. See web/bridge.js.
   capabilities: {
@@ -222,6 +226,9 @@ const desktop = () => ({
     dmDownload: lift(raw.api.dmDownload),
     postMessage: lift(raw.api.postMessage),
     pinMessage: lift(raw.api.pinMessage),
+    forumPosts: lift(raw.api.forumPosts),
+    voteMessage: lift(raw.api.voteMessage),
+    postPin: lift(raw.api.postPin),
     deleteMessage: lift(raw.api.deleteMessage),
     editMessage: lift(raw.api.editMessage),
     setAttachment: lift(raw.api.setAttachment),
