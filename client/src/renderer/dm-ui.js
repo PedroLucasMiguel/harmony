@@ -27,6 +27,8 @@ import { createStarsUi } from './stars-ui.js';
 import { keepEnd } from './chat-follow.js';
 import { expiring } from './expiring.js';
 import { firstLink, linkEmbed } from './link-embed.js';
+import { createTyping } from './typing-ui.js';
+import { messageTime } from './message-time.js';
 
 /** How many people a group holds, as the server limits it (and as a call can carry). */
 const MAX_GROUP = 16;
@@ -77,7 +79,7 @@ export function createDmUi(deps) {
   const {
     state, harmony, t, stars,
     openEmojiPicker, closeEmojiPicker, ask, askConfirm, formatBytes, playCue, applyStage,
-    closeChat, showError,
+    closeChat, showError, showPicture,
   } = deps;
 
   const $ = (id) => document.getElementById(id);
@@ -87,6 +89,8 @@ export function createDmUi(deps) {
     panelNote: $('dm-panel-note'),
     panelActions: $('dm-panel-actions'),
     list: $('dm-list'),
+    find: $('dm-find'),
+    findBox: $('dm-find-box'),
     empty: $('dm-empty'),
     active: $('dm-active'),
     headAvatar: $('dm-head-avatar'),
@@ -123,6 +127,7 @@ export function createDmUi(deps) {
     recorder: $('dm-recorder'),
     file: $('dm-file'),
     note: $('dm-note'),
+    typing: $('dm-typing'),
     none: $('dm-none'),
   };
 
@@ -141,6 +146,20 @@ export function createDmUi(deps) {
   el.record.addEventListener('click', () => {
     el.note.textContent = '';
     voiceBar.start();
+  });
+
+  el.find.addEventListener('input', () => renderPanel());
+  el.find.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && el.find.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      el.find.value = '';
+      renderPanel();
+    } else if (event.key === 'Enter') {
+      // The first thing that is there: a conversation, or somebody to start one with.
+      event.preventDefault();
+      el.list.querySelector('.dm-row:not([aria-disabled])')?.click();
+    }
   });
 
   /** With nothing to send the microphone is where the send button is. */
@@ -216,6 +235,43 @@ export function createDmUi(deps) {
   const renderBody = (...args) => within(() => deps.renderBody(...args));
   const appendEmoji = (...args) => within(() => deps.appendEmoji(...args));
   const peerName = (id) => displayOf(id, 'someone');
+  /** Who is typing in which conversation: "<server key>:<conversation id>". */
+  const typingKey = (h, id) => `${h.key}:${id}`;
+  const typing = createTyping({
+    t,
+    nameOf: peerName,
+    changed: (key) => {
+      if (home && currentId !== null && key === typingKey(home, currentId)) renderTyping();
+      paintRowTyping(key);
+    },
+  });
+  /** What a row of the list says in place of its last message while somebody is typing in it: '' when nobody is. */
+  function rowTypingText(h, key, group) {
+    // A pair is somebody's name already; a group says who.
+    const names = typing.people(key);
+    if (!names.length) return '';
+    if (!group) return t('typing.short');
+    scope = h;
+    try {
+      return typing.text(key);
+    } finally {
+      scope = null;
+    }
+  }
+  /** The row of `key` in the list, if it is drawn, says who is typing in it. */
+  function paintRowTyping(key) {
+    for (const li of el.list.querySelectorAll('.dm-row[data-id]')) {
+      if (`${li.dataset.server}:${li.dataset.id}` !== key) continue;
+      const h = homes.get(li.dataset.server);
+      const words = h ? rowTypingText(h, key, li.dataset.kind === 'group') : '';
+      const line = li.querySelector('.dm-row-typing');
+      if (line) line.textContent = words;
+      li.toggleAttribute('data-typing', Boolean(words));
+    }
+  }
+  function renderTyping() {
+    el.typing.textContent = home && currentId !== null ? typing.text(typingKey(home, currentId)) : '';
+  }
   const isGroup = (c) => c?.kind === 'group';
   /** What a conversation is called: a group's name, or the other person's. */
   const conversationName = (c) => (isGroup(c) ? (c.title || t('dm.group.untitled')) : peerName(c.peer));
@@ -445,25 +501,103 @@ export function createDmUi(deps) {
     el.panelActions.replaceChildren(...actions);
     el.panelActions.hidden = actions.length === 0;
 
-    const rows = all
+    const needle = el.find.value.trim().toLowerCase();
+    const every = all
       .flatMap((h) => (h.session.ready ? h.session.list().map((c) => ({ h, c })) : []))
       .sort((a, b) => b.c.lastAt - a.c.lastAt);
-    el.empty.hidden = rows.length > 0 || !all.some((h) => h.session.ready);
-    if (el.newGroup) el.newGroup.hidden = !all.some((h) => h.session.ready);
-    el.list.replaceChildren(...rows.map(({ h, c }) => {
+    const inScope = (h, fn) => {
       scope = h;
       try {
-        return conversationRow(c, h, several);
+        return fn();
       } finally {
         scope = null;
       }
-    }));
+    };
+    // A conversation matches by its name, or in a group by the name of anyone in it.
+    const matches = ({ h, c }) => !needle || inScope(h, () => (
+      conversationName(c).toLowerCase().includes(needle)
+      || (isGroup(c) && (c.userIds ?? []).some((id) => peerName(id).toLowerCase().includes(needle)))
+    ));
+    const rows = every.filter(matches);
+    const ready = all.some((h) => h.session.ready);
+    el.findBox.hidden = !ready;
+    el.empty.hidden = every.length > 0 || !ready || Boolean(needle);
+    if (el.newGroup) el.newGroup.hidden = !ready;
+
+    const items = rows.map(({ h, c }) => inScope(h, () => conversationRow(c, h, several)));
+    if (needle) {
+      // Anyone else on the server, to start a conversation with: not those already in the list above.
+      const people = all
+        .filter((h) => h.session.ready)
+        .flatMap((h) => {
+          const have = new Set(rows.filter((r) => r.h === h && !isGroup(r.c)).map((r) => r.c.peer));
+          return [...(h.users?.() ?? new Map()).values()]
+            .filter((u) => u.id !== h.meId && !have.has(u.id))
+            .filter((u) => inScope(h, () => peerName(u.id).toLowerCase().includes(needle)))
+            .map((u) => ({ h, u }));
+        })
+        .sort((a, b) => inScope(a.h, () => peerName(a.u.id)).localeCompare(inScope(b.h, () => peerName(b.u.id))));
+      if (people.length) {
+        const head = document.createElement('li');
+        head.className = 'dm-find-head muted';
+        head.textContent = t('dm.find_people');
+        items.push(head, ...people.map(({ h, u }) => inScope(h, () => personRow(u, h, several))));
+      }
+      if (!items.length) {
+        const none = document.createElement('li');
+        none.className = 'dm-find-none muted';
+        none.textContent = t('dm.find_none');
+        items.push(none);
+      }
+    }
+    el.list.replaceChildren(...items);
+  }
+
+  /** Somebody there is no conversation with yet: a click starts one. */
+  function personRow(user, h, tagged) {
+    const li = document.createElement('li');
+    li.className = 'dm-row dm-person';
+    li.dataset.user = String(user.id);
+    li.dataset.server = h.key;
+    li.append(avatarEl(faceOf(user.id, ''), 'tiny'));
+    const body = document.createElement('div');
+    body.className = 'dm-row-body';
+    const top = document.createElement('div');
+    top.className = 'dm-row-top';
+    const name = document.createElement('span');
+    name.className = 'dm-row-name';
+    name.textContent = peerName(user.id);
+    nameFont(name, user.id);
+    top.append(name);
+    if (tagged) {
+      const tag = document.createElement('span');
+      tag.className = 'dm-row-server';
+      tag.textContent = serverLabel(h.server);
+      top.append(tag);
+    }
+    body.append(top);
+    // Somebody who has never opened private messages has no key to write to yet.
+    if (!h.session.vault.peerHasKey(user.id)) {
+      const why = document.createElement('div');
+      why.className = 'dm-row-text';
+      why.textContent = t('dm.group.no_key');
+      body.append(why);
+      li.setAttribute('aria-disabled', 'true');
+    } else {
+      li.addEventListener('click', () => {
+        el.find.value = '';
+        openWith(user.id, h);
+      });
+    }
+    li.append(body);
+    return li;
   }
 
   function conversationRow(c, h, tagged = false) {
     const li = document.createElement('li');
     li.className = 'dm-row';
     li.dataset.id = String(c.id);
+    li.dataset.kind = c.kind ?? 'pair';
     li.dataset.server = h.key;
     if (c.unread) li.setAttribute('data-unread', '');
     if (c.id === currentId && h === home) li.setAttribute('data-current', '');
@@ -506,7 +640,13 @@ export function createDmUi(deps) {
       // In a group, who said it: the line is of everybody.
       else text.textContent = isGroup(c) ? t('dm.group.sender_prefix', { name: peerName(c.last.userId), text: said }) : said;
     }
-    line.append(text);
+    // Instead of the last message, while somebody is typing: see paintRowTyping.
+    const typingNow = document.createElement('span');
+    typingNow.className = 'dm-row-typing';
+    const words = rowTypingText(h, typingKey(h, c.id), isGroup(c));
+    typingNow.textContent = words;
+    if (words) li.setAttribute('data-typing', '');
+    line.append(text, typingNow);
     if (c.unread) {
       const count = document.createElement('span');
       count.className = 'dm-row-count';
@@ -594,8 +734,8 @@ export function createDmUi(deps) {
   }
 
   /** Somebody's name was right-clicked: open the conversation with them, making it if there is none. */
-  async function openWith(userId) {
-    const mine = openHome();
+  async function openWith(userId, from = null) {
+    const mine = from ?? openHome();
     if (mine) bind(mine);
     if (!session) return;
     if (session.state === KeyState.Locked) return showUnlock();
@@ -730,6 +870,7 @@ export function createDmUi(deps) {
     el.call.hidden = !deps.calls;
     syncCall(c);
     renderBanner(c);
+    renderTyping();
     pins.draw();
 
     const log = el.log;
@@ -924,7 +1065,7 @@ export function createDmUi(deps) {
 
     const time = document.createElement('span');
     time.className = 'when';
-    time.textContent = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    time.textContent = messageTime(message.createdAt);
     time.title = new Date(message.createdAt).toLocaleString();
 
     const tools = document.createElement('span');
@@ -1136,6 +1277,12 @@ export function createDmUi(deps) {
         node.controls = true;
       }
       node.src = opened.url;
+      if (message.mediaType === 'image' && showPicture) {
+        // A picture opens full size when it is clicked, as in a channel.
+        node.className = 'expandable';
+        node.title = t('app.click_to_expand');
+        node.addEventListener('click', () => showPicture({ url: opened.url, name: f.name, save: () => saveFile(message) }));
+      }
       wrap.prepend(node);
     }).catch(() => {});
     return wrap;
@@ -1196,6 +1343,7 @@ export function createDmUi(deps) {
     if (!body && !pendingFile) return;
     busy = true;
     el.send.disabled = true;
+    typing.rest(typingKey(home, currentId));
     // Sending takes you to what you sent, wherever you were reading: until it is drawn, the log follows.
     sendingUntil = Infinity;
     const ok = await attempt(() => session.send(currentId, { body, file: pendingFile, reply: replyTo }));
@@ -1641,11 +1789,19 @@ export function createDmUi(deps) {
    * one: the app's handler passes everything through here first.
    */
   function handleEvent(msg) {
+    if (msg.type === 'typing' && msg.scope === 'dm') {
+      const where = msg.server ? homes.get(msg.server) : home;
+      if (where && msg.stopped) typing.remove(typingKey(where, msg.id), msg.userId);
+      else if (where) typing.note(typingKey(where, msg.id), msg.userId);
+      return true;
+    }
     if (!(msg.type?.startsWith('dm:') || msg.type === 'keys:changed')) return false;
     // Every connection says which server it is; a frame without one is the bound one's.
     const mine = msg.server ? homes.get(msg.server) : home;
     if (!mine) return false;
     mine.session.handle(msg).then(async ({ incoming, conversation }) => {
+      // What they were writing has arrived.
+      if (incoming) typing.remove(typingKey(mine, conversation.id), incoming.userId);
       if (!incoming) return;
       if (mine === home && conversation.id === currentId && isLookingAtIt()) {
         // Somebody at the bottom of the conversation, looking at it, has seen the news the line stood over.
@@ -1772,6 +1928,17 @@ export function createDmUi(deps) {
     }
   });
   el.input.addEventListener('input', () => {
+    // Somebody is writing: the others are told, a few seconds apart at most. Not for rewriting, and not where nothing
+    // would be delivered.
+    const c = conversationOpen();
+    if (c && home && !editing && !(!isGroup(c) && session.blocked.has(c.peer))) {
+      const server = home.server;
+      const key = typingKey(home, c.id);
+      const say = (extra) => () => harmony.realtime.request(server, 'typing', { scope: 'dm', id: c.id, ...extra });
+      // Typing, or having emptied the box: the second is stopping, and is said at once.
+      if (el.input.value.trim()) typing.ping(key, say({}), say({ stopped: true }));
+      else typing.quiet(key, say({ stopped: true }));
+    }
     el.input.style.height = 'auto';
     el.input.style.height = `${Math.min(el.input.scrollHeight, 160)}px`;
     syncRecord();

@@ -102,6 +102,14 @@ const DEFAULTS = {
   micNoiseSuppression: false,
   // Strong noise suppression (renderer/denoise.js): an option beside the browser's, which stays the default.
   micAiSuppression: false,
+  /*
+   * Ours, not the browser's (renderer/mic-dsp.js). Off by default: it changes the level of a voice, which
+   * somebody whose microphone is fine did not ask for. For the microphone that is too quiet even at the
+   * top of the input volume. While it is on the browser's own gain control is not asked for.
+   */
+  micAutoGain: false,
+  // The gate's threshold found from the sound instead of set with the slider. Off by default, like the gate.
+  micAutoSensitivity: false,
   // The join / leave / went-live tones. On, because the whole point of
   // them is to tell you about something you were not looking at.
   voiceSounds: true,

@@ -18,6 +18,8 @@
 // for the meter. That message is the only thing the page can delay, and it
 // delays a drawing, not a sound.
 
+import { AutoThreshold, Agc, softLimit } from './mic-dsp.js';
+
 const WINDOW_BLOCKS = 8; // 8 x 128 samples = the 1024 the analyser used
 const HOLD_SECONDS = 0.3;
 const OPEN_TAU = 0.005;
@@ -40,6 +42,16 @@ class MicGate extends AudioWorkletProcessor {
     this.openUntil = 0;
     this.gain = 1;
     this.sinceReport = 0;
+    // The automatic sensitivity and the automatic gain (mic-dsp.js), switched from the page.
+    this.auto = false;
+    this.agcOn = false;
+    this.found = new AutoThreshold();
+    this.agc = new Agc();
+    this.threshold = 0;
+    this.port.onmessage = (event) => {
+      if ('auto' in event.data) this.auto = Boolean(event.data.auto);
+      if ('agc' in event.data) this.agcOn = Boolean(event.data.agc);
+    };
   }
 
   process(inputs, outputs, parameters) {
@@ -62,12 +74,38 @@ class MicGate extends AudioWorkletProcessor {
     const rms = Math.sqrt(total / WINDOW_BLOCKS);
     this.level = Math.max(rms, this.level * Math.pow(LEVEL_FALL, seconds / LEVEL_FALL_SECONDS));
 
-    const threshold = parameters.threshold[0];
-    if (threshold <= 0) {
+    const threshold = this.auto ? this.found.value : parameters.threshold[0];
+    this.threshold = threshold;
+    if (this.auto) this.found.update(rms, seconds);
+    if (threshold <= 0 && !this.auto) {
       this.open = true;
     } else {
       if (rms >= threshold) this.openUntil = currentTime + HOLD_SECONDS;
       this.open = currentTime < this.openUntil;
+    }
+
+    // Brings the voice to a steady level, from this block alone, ramped across it.
+    let agcFrom = 1;
+    let agcStep = 0;
+    if (this.agcOn) {
+      let blockSum = 0;
+      let blockPeak = 0;
+      let samples = 0;
+      for (const channel of input) {
+        for (let i = 0; i < channel.length; i += 1) {
+          const v = channel[i];
+          blockSum += v * v;
+          const a = v < 0 ? -v : v;
+          if (a > blockPeak) blockPeak = a;
+        }
+        samples += channel.length;
+      }
+      const ramp = this.agc.next(Math.sqrt(blockSum / Math.max(1, samples)), blockPeak, seconds);
+      agcFrom = ramp.from;
+      agcStep = (ramp.to - ramp.from) / frames;
+    } else {
+      this.agc.gain = 1;
+      this.agc.applied = 1;
     }
 
     const target = this.open ? 1 : 0;
@@ -78,7 +116,8 @@ class MicGate extends AudioWorkletProcessor {
       let g = this.gain;
       for (let i = 0; i < to.length; i += 1) {
         g += (target - g) * coefficient;
-        to[i] = from ? from[i] * g : 0;
+        const gained = from ? from[i] * g * (agcFrom + agcStep * i) : 0;
+        to[i] = this.agcOn ? softLimit(gained) : gained;
       }
       if (c === output.length - 1) this.gain = g;
     }
@@ -86,7 +125,7 @@ class MicGate extends AudioWorkletProcessor {
     this.sinceReport += seconds;
     if (this.sinceReport >= REPORT_SECONDS) {
       this.sinceReport = 0;
-      this.port.postMessage({ level: this.level, open: this.open });
+      this.port.postMessage({ level: this.level, open: this.open, threshold: this.threshold, agc: this.agcOn ? this.agc.applied : 1 });
     }
     return true;
   }

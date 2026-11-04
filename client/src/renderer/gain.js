@@ -250,7 +250,7 @@ function gateNode(capture) {
  * The same chain with the gate on the audio thread -- see gate-worklet.js.
  * Throws if the engine will not run it, and the caller falls back.
  */
-function workletMicChain(stream, { gain = 1, threshold = 0 }, capture) {
+function workletMicChain(stream, { gain = 1, threshold = 0, auto = false, agc = false }, capture) {
   const source = capture.createMediaStreamSource(stream);
   let gate;
   try {
@@ -273,9 +273,14 @@ function workletMicChain(stream, { gain = 1, threshold = 0 }, capture) {
 
   let level = 0;
   let open = true;
+  let used = threshold;
+  let gainNow = 1;
+  gate.port.postMessage({ auto: Boolean(auto), agc: Boolean(agc) });
   gate.port.onmessage = (event) => {
     level = event.data.level;
     open = event.data.open;
+    used = event.data.threshold ?? used;
+    gainNow = event.data.agc ?? 1;
   };
 
   return {
@@ -287,11 +292,23 @@ function workletMicChain(stream, { gain = 1, threshold = 0 }, capture) {
     setThreshold(value) {
       cutoff.value = Math.max(0, Number(value) || 0);
     },
+    setAuto(on) {
+      gate.port.postMessage({ auto: Boolean(on) });
+    },
+    setAgc(on) {
+      gate.port.postMessage({ agc: Boolean(on) });
+    },
     get level() {
       return level;
     },
     get open() {
       return open;
+    },
+    get threshold() {
+      return used;
+    },
+    get agcGain() {
+      return gainNow;
     },
     close() {
       gate.port.onmessage = null;
@@ -325,16 +342,18 @@ const WORKER_PROOF_MS = 3000;
  * @param {(state: 'ready'|'failed'|'unsupported') => void} [options.onAi]  what became of it
  * @returns {Promise<object>}
  */
-export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = false, onBroken, onAi } = {}) {
+export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = false, auto = false, agc = false, onBroken, onAi } = {}) {
   const input = stream.getAudioTracks()[0];
   if (!input || !canProcessInWorker()) return Promise.reject(new Error('no audio frames to process'));
 
   return new Promise((resolve, reject) => {
-    const worker = new Worker('gate-worker.js');
+    const worker = new Worker('gate-worker.js', { type: 'module' });
     let generator;
     let level = 0;
     let cpu = null;
-    let open = threshold <= 0;
+    let open = threshold <= 0 && !auto;
+    let cutoff = auto ? null : threshold;
+    let gainNow = 1;
     let started = false;
     let timer = null;
 
@@ -352,11 +371,25 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = fals
       setDenoise(on) {
         worker.postMessage({ denoise: Boolean(on) });
       },
+      setAuto(on) {
+        worker.postMessage({ auto: Boolean(on) });
+      },
+      setAgc(on) {
+        worker.postMessage({ agc: Boolean(on) });
+      },
       get level() {
         return level;
       },
       get open() {
         return open;
+      },
+      /** The threshold the gate is using right now: the one that was set, or the one it found. */
+      get threshold() {
+        return cutoff;
+      },
+      /** The gain the automatic gain control is applying, as a factor (1 when it is off). */
+      get agcGain() {
+        return gainNow;
       },
       /** The share of one core the worker has been taking, in percent, or null before it has said. */
       get cpu() {
@@ -393,6 +426,8 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = fals
       }
       level = event.data.level;
       open = event.data.open;
+      cutoff = event.data.threshold ?? cutoff;
+      gainNow = event.data.agc ?? 1;
       if (!started) {
         started = true;
         clearTimeout(timer);
@@ -404,7 +439,7 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = fals
     try {
       const processor = new MediaStreamTrackProcessor({ track: input });
       generator = new MediaStreamTrackGenerator({ kind: 'audio' });
-      worker.postMessage({ threshold: Math.max(0, threshold), gain: Math.max(0, Math.min(MAX_GAIN, gain)), denoise: Boolean(denoise) });
+      worker.postMessage({ threshold: Math.max(0, threshold), gain: Math.max(0, Math.min(MAX_GAIN, gain)), denoise: Boolean(denoise), auto: Boolean(auto), agc: Boolean(agc) });
       worker.postMessage(
         { readable: processor.readable, writable: generator.writable },
         [processor.readable, generator.writable],
@@ -438,7 +473,7 @@ export function workerMicChain(stream, { gain = 1, threshold = 0, denoise = fals
  * @returns {Promise<{level: number, open: boolean, setThreshold: Function, close: Function}>}
  *   rejects if the engine will not run the worklet, and the caller falls back to the chain
  */
-export async function createMicValve(stream, { threshold = 0, onChange } = {}) {
+export async function createMicValve(stream, { threshold = 0, auto = false, onChange } = {}) {
   const capture = captureContext();
   await loadGate(capture);
   const source = capture.createMediaStreamSource(stream);
@@ -458,11 +493,14 @@ export async function createMicValve(stream, { threshold = 0, onChange } = {}) {
   silence.connect(capture.destination);
 
   let level = 0;
+  let used = threshold;
+  gate.port.postMessage({ auto: Boolean(auto) });
   // Shut until the sound says otherwise, as the gate in the chain is: a room
   // must not be broadcast for the length of one report.
-  let open = threshold <= 0;
+  let open = threshold <= 0 && !auto;
   gate.port.onmessage = (event) => {
     level = event.data.level;
+    used = event.data.threshold ?? used;
     if (event.data.open === open) return;
     open = event.data.open;
     onChange?.(open);
@@ -475,8 +513,14 @@ export async function createMicValve(stream, { threshold = 0, onChange } = {}) {
     get open() {
       return open;
     },
+    get threshold() {
+      return used;
+    },
     setThreshold(value) {
       cutoff.value = Math.max(0, Number(value) || 0);
+    },
+    setAuto(on) {
+      gate.port.postMessage({ auto: Boolean(on) });
     },
     close() {
       gate.port.onmessage = null;

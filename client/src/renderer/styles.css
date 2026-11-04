@@ -10946,3 +10946,65 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
     min-width: 0;
   }
 }
+
+/* Who is typing, over the box: a line of its own, always there, so the log does not jump as it comes and goes. */
+.typing {
+  min-height: 1.3em;
+  padding: 0 0.4rem 0.15rem;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: calc(0.78rem * var(--text-scale, 1));
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The box above the conversations: who to talk to. */
+#view-dms .dm-find {
+  flex: none;
+  padding: 0.6rem 1rem 0;
+}
+#view-dms .dm-find-input {
+  box-sizing: border-box;
+  padding: 0.5rem 0.75rem;
+  font-size: calc(0.88rem * var(--text-scale, 1));
+}
+#view-dms .dm-find-head {
+  padding: 0.6rem 0.6rem 0.2rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+#view-dms .dm-find-none {
+  padding: 0.8rem 0.6rem;
+}
+#view-dms .dm-person[aria-disabled] {
+  cursor: default;
+  opacity: 0.6;
+}
+#view-dms .dm-person[aria-disabled]:hover {
+  background: transparent;
+}
+
+/* Automatic sensitivity: the slider has nothing to set, and the marker on the meter is what was found. */
+.mic-tuning[data-auto] #mic-gate {
+  opacity: 0.4;
+}
+.mic-tuning .mic-auto-row {
+  margin-top: 0.6rem;
+}
+
+/* Somebody is typing in a conversation: the row says so where its last message was. */
+.dm-row-typing {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  font-style: italic;
+  font-size: calc(0.82rem * var(--text-scale, 1));
+}
+.dm-row:not([data-typing]) .dm-row-typing,
+.dm-row[data-typing] .dm-row-text {
+  display: none;
+}

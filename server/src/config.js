@@ -72,7 +72,7 @@ export const config = {
   // when YouTube asks the server's address to sign in.
   ytdlpBin: process.env.HARMONY_YTDLP_BIN || 'yt-dlp',
   ytdlpCookies: process.env.HARMONY_YTDLP_COOKIES || null,
-  musicMaxSeconds: num(process.env.HARMONY_MUSIC_MAX_SECONDS, 900),
+  musicMaxSeconds: num(process.env.HARMONY_MUSIC_MAX_SECONDS, 14_400),
   musicQueueMax: num(process.env.HARMONY_MUSIC_QUEUE_MAX, 200),
 
   // How long an unpublished username stays reserved. This only has to cover the

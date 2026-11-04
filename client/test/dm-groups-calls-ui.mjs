@@ -18,6 +18,7 @@ import { attach, findPage, launchApp, reporter, sleep, waitFor } from './cdp.mjs
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const serverEntry = resolve(repoRoot, 'server', 'src', 'index.js');
+const FAKE_YTDLP = resolve(repoRoot, 'server', 'test', 'fixtures', 'fake-ytdlp.mjs');
 
 const MEDIAMTX_BIN = process.env.MEDIAMTX_BIN ?? join(homedir(), 'mediamtx', 'mediamtx');
 if (!existsSync(MEDIAMTX_BIN)) {
@@ -79,6 +80,10 @@ function startServer() {
         HARMONY_MEDIAMTX_API: `http://127.0.0.1:${MTX_API_PORT}`,
         HARMONY_SIGNALING_URL: `http://127.0.0.1:${MTX_WEBRTC_PORT}`,
         HARMONY_POLL_INTERVAL_MS: '400',
+        // Music Buddy in a call: yt-dlp is the fake in server/test/fixtures, so nothing leaves the machine.
+        HARMONY_YTDLP_BIN: FAKE_YTDLP,
+        FAKE_DURATION: '60',
+        HARMONY_MUSIC_NO_THUMBNAILS: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -104,6 +109,7 @@ const register = async (nickname, extra = {}) => {
     body: JSON.stringify({ nickname, password: 'hunter22', ...extra }),
   });
   if (!res.ok) throw new Error(`register ${nickname}: ${res.status}`);
+  return (await res.json()).token;
 };
 
 const setInput = (id, value) => `{
@@ -184,7 +190,7 @@ async function run() {
   console.log('Starting MediaMTX, the server and three clients…\n');
   await startMediaMtx();
   await startServer();
-  await register('alice', { ownerKey });
+  const aliceToken = await register('alice', { ownerKey });
   await register('bob');
   await register('carol');
   const alice = await signIn('alice');
@@ -256,6 +262,7 @@ async function run() {
   await click(alice, '#dm-call');
   await until(alice, "document.querySelector('.view[data-active]')?.id === 'view-channels' && !document.getElementById('voice-active').hidden", { label: 'alice in the call', timeoutMs: 40_000 });
   check('starting a call takes Alice to the page with its pictures and controls', true, '');
+  await until(alice, "/Ringing/.test(document.getElementById('voice-name').textContent)", { label: 'the ringing label' });
   const calling = await alice.evaluate("return document.getElementById('voice-name').textContent");
   check('which says who it is with, and that it is ringing', /Weekend plans/.test(calling) && /Ringing/.test(calling), calling);
   await until(bob, "document.querySelector('#incoming-calls .incoming-call')", { label: 'bob\'s phone ringing' });
@@ -276,7 +283,46 @@ async function run() {
   check('Bob answers and both are in the call, and see each other in the roster', true, '');
   const answered = await alice.evaluate("return document.getElementById('voice-name').textContent");
   check('and it no longer says it is ringing', !/Ringing/.test(answered), answered);
-  check('a call has no soundboard or music', await alice.evaluate("return document.getElementById('voice-soundboard').hidden"), '');
+  check('a call has no soundboard', await alice.evaluate("return document.getElementById('voice-soundboard').hidden"), '');
+
+  // --- music in the call --------------------------------------------------------------------------------------------
+  const strip = (page) => page.evaluate(`{
+    const s = document.getElementById('music-strip');
+    return { shown: !s.hidden, title: document.getElementById('music-title').textContent, transport: !document.getElementById('music-strip-transport').hidden };
+  }`);
+  const audioOf = (page) => page.evaluate(`{
+    const a = document.getElementById('music-audio');
+    return a ? { src: a.src, paused: a.paused, at: a.currentTime, error: a.error?.message ?? null } : null;
+  }`);
+  check('with the feature off, nobody has the button, in a call either',
+    await alice.evaluate("return document.getElementById('voice-music').hidden") && await bob.evaluate("return document.getElementById('voice-music').hidden"), '');
+  const on = await fetch(`${BASE}/api/server`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aliceToken}` }, body: JSON.stringify({ musicEnabled: true }),
+  });
+  check('the owner switches it on', on.status === 200, String(on.status));
+  await until(alice, "!document.getElementById('voice-music').hidden", { label: 'the button, for the owner, in the call' });
+  check('then the owner has the Music Buddy button in a call', true, '');
+  check('and Bob, who may not play, does not', await bob.evaluate("return document.getElementById('voice-music').hidden"), '');
+  await click(alice, '#voice-music');
+  await alice.evaluate(`${setInput('music-input', 'podcast')} return true;`);
+  await alice.evaluate("document.getElementById('music-find').requestSubmit(); return true;");
+  await until(alice, "document.querySelectorAll('#music-results .music-result').length === 3", { label: 'the results' });
+  await alice.evaluate("document.querySelector('#music-results .music-result .primary').click(); return true;");
+  await until(bob, "!document.getElementById('music-strip').hidden", { label: 'the strip, for Bob', timeoutMs: 30_000 });
+  await until(alice, "!document.getElementById('music-strip').hidden", { label: 'the strip, for Alice', timeoutMs: 30_000 });
+  check('what Alice adds shows as playing on the call for Bob too', /^podcast 1$/.test((await strip(bob)).title), JSON.stringify(await strip(bob)));
+  await until(bob, "document.getElementById('music-audio') && !document.getElementById('music-audio').paused && document.getElementById('music-audio').currentTime > 0.3", { label: 'Bob hearing it', timeoutMs: 30_000 });
+  await until(alice, "document.getElementById('music-audio') && !document.getElementById('music-audio').paused && document.getElementById('music-audio').currentTime > 0.3", { label: 'Alice hearing it', timeoutMs: 30_000 });
+  const [heard, hearing] = [await audioOf(alice), await audioOf(bob)];
+  check('they play the same file, each its own copy, without an error',
+    heard.src === hearing.src && !heard.error && !hearing.error && Math.abs(heard.at - hearing.at) < 1.5, JSON.stringify({ heard, hearing }));
+  check('Bob can listen but has no transport to steer it with', !(await strip(bob)).transport && (await strip(alice)).transport, '');
+  await alice.evaluate("document.getElementById('music-s-play').click(); return true;");
+  await until(bob, "document.getElementById('music-audio')?.paused === true", { label: 'Bob\'s music pausing' });
+  check('what Alice steers is steered for Bob', true, '');
+  await alice.evaluate("document.getElementById('music-s-play').click(); return true;");
+  await until(bob, "document.getElementById('music-audio') && !document.getElementById('music-audio').paused", { label: 'Bob\'s music going on' });
+  await alice.evaluate("{ const pop = document.getElementById('music-pop'); if (!pop.hidden) document.getElementById('voice-music').click(); } return true;");
 
   // The conversation says a call is going on, to one who is not in it.
   await openList(carol);
@@ -295,12 +341,17 @@ async function run() {
   await click(carol, '#dm-banner button.primary');
   await until(carol, "!document.getElementById('voice-active').hidden && document.querySelectorAll('#voice-roster li').length === 3", { label: 'carol joining', timeoutMs: 40_000 });
   check('Carol joins it later from the conversation, and there are three of them', true, '');
+  await until(carol, "document.getElementById('music-audio') && !document.getElementById('music-audio').paused", { label: 'Carol hearing the music in the middle', timeoutMs: 30_000 });
+  const mid = await audioOf(carol);
+  check('and she joins the music in the middle of it', mid.at > 1 && !mid.error, JSON.stringify(mid));
 
   // --- hanging up, and the line it leaves --------------------------------------------------------------------------
   await click(carol, '#voice-leave');
   await click(bob, '#voice-leave');
   await click(alice, '#voice-leave');
   await until(alice, "document.getElementById('voice-active').hidden", { label: 'alice out' });
+  check('the music is over with the call: no strip and no sound for any of them',
+    (await Promise.all([alice, bob, carol].map((p) => p.evaluate("return document.getElementById('music-strip').hidden && !document.getElementById('music-audio')")))).every(Boolean), '');
   await openList(alice);
   await openRow(alice, 'Weekend plans');
   await until(alice, "[...document.querySelectorAll('#dm-log .chat-msg')].some((m) => /^Call · /.test(m.querySelector('.text')?.textContent ?? ''))", { label: 'the line of the call' });
@@ -320,7 +371,26 @@ async function run() {
     await page.evaluate("[...document.querySelectorAll('#member-menu-body button')].find((b) => b.textContent === 'Send a private message').click(); return true;");
     await until(page, `!document.getElementById('dm-active').hidden && document.getElementById('dm-name').textContent === ${JSON.stringify(name)}`, { label: `the conversation with ${name}` });
   };
-  await openWith(bob, 'alice');
+  // Bob finds Alice with the search box on the list rather than the member list.
+  await openList(bob);
+  const find = (value) => bob.evaluate(`{ const i = document.getElementById('dm-find'); i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event('input', { bubbles: true })); } return true;`);
+  const listed = () => bob.evaluate("return [...document.querySelectorAll('#dm-list > li')].map((li) => li.className.includes('dm-find-head') ? '#head' : li.className.includes('dm-find-none') ? '#none' : li.querySelector('.dm-row-name')?.textContent)");
+  check('the list has a box to find somebody', await bob.evaluate("return !document.getElementById('dm-find-box').hidden"), '');
+  await find('week');
+  check('a name that is a conversation narrows the list to it, and offers nobody else', JSON.stringify(await listed()) === '["Weekend plans"]', JSON.stringify(await listed()));
+  await find('ALI');
+  await shot(bob, 'find-people');
+  check('a part of somebody\'s name, in any case, finds the group they are in and offers them, by name', JSON.stringify(await listed()) === '["Weekend plans","#head","alice"]', JSON.stringify(await listed()));
+  await find('zzz');
+  check('and when nobody matches it says so', JSON.stringify(await listed()) === '["#none"]', JSON.stringify(await listed()));
+  await find('ali');
+  await bob.evaluate("document.querySelector('#dm-list .dm-person').click(); return true;");
+  await until(bob, "!document.getElementById('dm-active').hidden && document.getElementById('dm-name').textContent === 'alice'", { label: 'the conversation with alice' });
+  check('clicking her opens the conversation with her, and clears the box', await bob.evaluate("return document.getElementById('dm-find').value === ''"), '');
+  await find('ali');
+  check('and once there is a conversation she is not offered twice', JSON.stringify(await listed()) === '["alice","Weekend plans"]' || JSON.stringify(await listed()) === '["Weekend plans","alice"]', JSON.stringify(await listed()));
+  await shot(bob, 'find');
+  await find('');
   const pair = await bob.evaluate("return { name: document.getElementById('dm-name').textContent, members: document.getElementById('dm-members').hidden, call: !document.getElementById('dm-call').hidden, safety: !document.getElementById('dm-safety').hidden }");
   check('a conversation of two has a call button and its safety number, and no list of people', pair.name === 'alice' && pair.members && pair.call && pair.safety, JSON.stringify(pair));
 

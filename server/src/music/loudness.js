@@ -11,7 +11,7 @@
 // second of sound at a time with a turn for everything else in between, so a track being measured never holds up the
 // voice channel's messages. Anything unexpected is "not measured" (null): the track is then played as it is.
 
-import { readFile } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 
 import { OpusDecoder } from 'opus-decoder';
 
@@ -176,6 +176,29 @@ export class Meter {
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
+ * A long track -- a podcast of hours -- is measured from its first quarter of an hour, not all of it: the whole would
+ * be hundreds of megabytes read into memory and minutes of decoding for a number that the first minutes already give.
+ * 20 ms is what a frame of what YouTube serves is, so this many frames is a quarter of an hour of sound, and the bytes
+ * are what it takes at the highest rate that is served, with room to spare.
+ */
+const MEASURE_FRAMES = 45_000;
+const MEASURE_BYTES = 24 * 1024 * 1024;
+
+const size = async (path) => (await stat(path)).size;
+
+/** The start of a file, at most MEASURE_BYTES of it. */
+async function head(path) {
+  const file = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(MEASURE_BYTES);
+    const { bytesRead } = await file.read(buffer, 0, MEASURE_BYTES, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await file.close();
+  }
+}
+
+/**
  * Measure a track.
  * @param {string} path  a WebM file holding Opus
  * @returns {Promise<{lufs: number, peakDb: number}|null>}  null: it could not be measured
@@ -183,18 +206,24 @@ const turn = () => new Promise((resolve) => setImmediate(resolve));
 export async function measureFile(path) {
   let decoder;
   try {
-    const found = opusFramesOf(await readFile(path));
+    const found = opusFramesOf(await head(path));
     if (!found || ![1, 2].includes(found.channels)) return null;
     decoder = new OpusDecoder({ channels: found.channels, sampleRate: RATE, streamCount: 1, coupledStreamCount: found.channels - 1 });
     await decoder.ready;
     const meter = new Meter(found.channels);
-    for (let i = 0; i < found.frames.length; i += 1) {
+    const frames = Math.min(found.frames.length, MEASURE_FRAMES);
+    for (let i = 0; i < frames; i += 1) {
       const out = decoder.decodeFrame(found.frames[i]);
       if (out.samplesDecoded > 0) meter.push(out.channelData);
       // About a second of sound between turns for the rest of the server.
       if (i % 50 === 49) await turn(); // eslint-disable-line no-await-in-loop
     }
-    return meter.result();
+    const result = meter.result();
+    // What was not listened to may have louder peaks than what was: the track is then never turned UP, only down.
+    if (result && (found.frames.length > MEASURE_FRAMES || (await size(path)) > MEASURE_BYTES)) {
+      return { lufs: result.lufs, peakDb: Math.max(result.peakDb, -1) };
+    }
+    return result;
   } catch {
     return null;
   } finally {

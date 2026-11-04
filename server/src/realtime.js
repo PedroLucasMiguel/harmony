@@ -32,6 +32,8 @@ export class Realtime {
   #timer = null;
   /** Music Buddy's controls, per person: pressing them is cheap to do and not cheap to serve (a track is fetched). */
   #musicThrottle = new Throttle({ burst: 60, perSecond: 5 });
+  /** "Is typing": a person's keystrokes, a few a second at most, and the client sends one every few seconds. */
+  #typingThrottle = new Throttle({ burst: 8, perSecond: 1 });
   /** Ringing somebody: a person pressing it again and again is not calling, they are ringing a bell. */
   #callThrottle = new Throttle({ burst: 10, perSecond: 0.5 });
 
@@ -253,6 +255,7 @@ export class Realtime {
       'voice:mute': this.#voiceMute,
       'voice:publishing': this.#voicePublishing,
       'voice:refresh': this.#voiceRefresh,
+      typing: this.#typing,
       'call:start': this.#callStart,
       'call:join': this.#callJoin,
       'call:decline': this.#callDecline,
@@ -363,6 +366,42 @@ export class Realtime {
     };
   }
 
+  // ------------------------------------------------------------ typing
+
+  /**
+   * Somebody is writing in a text channel or a private conversation: told, for a few seconds, to those who can see
+   * it. Nothing is kept and nothing is said about what is typed; a person who stops simply stops being told.
+   * Refused quietly: a typing notice is never worth an error.
+   */
+  #typing(user, msg) {
+    const ok = { type: 'typing:ok' };
+    if (!this.#typingThrottle.take(user.id).allowed) return ok;
+    const id = Number(msg.id);
+    // "Stopped": they paused, or emptied the box. Told too, so that nobody is shown typing who is not.
+    const stopped = msg.stopped === true;
+    if (msg.scope === 'channel') {
+      const channel = this.#deps.channels.get(id);
+      if (!channel || channel.kind !== 'text' || !this.#canSeeChannel(user, channel)) return ok;
+      const groups = new Map(this.#deps.channels.groups().map((g) => [g.id, g]));
+      this.broadcastWhere({
+        type: 'typing', scope: 'channel', id, userId: user.id, stopped,
+      }, (other) => other.id !== user.id && this.#deps.roles.canSee(
+        this.#deps.roles.context(this.#deps.accounts.byId(other.id) ?? other), channel, groups,
+      ));
+    } else if (msg.scope === 'dm') {
+      const dms = this.#deps.dms;
+      const conversation = dms?.forUser(user.id, id);
+      if (!conversation) return ok;
+      const members = dms.members(conversation);
+      // Nothing passes between two who have blocked one another, and that includes this.
+      if (conversation.kind !== 'group' && dms.isBlocked(members[0], members[1])) return ok;
+      for (const other of members) {
+        if (other !== user.id) this.toUser(other, { type: 'typing', scope: 'dm', id, userId: user.id, stopped });
+      }
+    }
+    return ok;
+  }
+
   // ------------------------------------------------------------- calls
 
   /**
@@ -387,6 +426,8 @@ export class Realtime {
       ...this.#deps.issueTokens(joined.roomId, user.id, joined.mid),
       roster: this.#deps.calls.rooms.roster(joined.roomId),
       call: this.#deps.calls.state(conversation.id),
+      // Where the music is, so somebody who joins in the middle of a song is in the middle of it too.
+      music: this.#deps.music?.snapshot(joined.roomId) ?? null,
     };
   }
 
@@ -467,6 +508,8 @@ export class Realtime {
     for (const id of stillIn) {
       this.toUser(id, { type: 'call:ended', conversationId: conversation.id, roomId: roomOf(conversation.id) });
     }
+    // The call is over, and so is its music.
+    this.#deps.music?.onRoster(roomOf(conversation.id), []);
   }
 
   // --------------------------------------------------------- soundpad
@@ -527,7 +570,8 @@ export class Realtime {
     const fail = (error) => ({ error: { type: 'voice:error', error } });
     if (!this.#deps.music || !this.#deps.musicEnabled?.()) return fail('music_off');
     const channelId = Number(msg.channelId);
-    if (!this.#deps.voice.find(channelId, user.id)) return fail('not_in_channel');
+    // The music of a private call is the call's, in the same way: whoever is in it hears it.
+    if (!this.#roomsFor(channelId)?.find(channelId, user.id)) return fail('not_in_channel');
     if (needsPermission && !this.#deps.roles.context(user).can('music.control')) return fail('forbidden');
     if (!this.#musicThrottle.take(user.id).allowed) return fail('slow_down');
     return { channelId };
@@ -566,7 +610,7 @@ export class Realtime {
 
   /** To everyone in a voice channel, and nobody else: what is playing is for the people hearing it. */
   toChannel(channelId, payload) {
-    for (const member of this.#deps.voice.roster(channelId)) this.toUser(member.userId, payload);
+    for (const member of this.#roomsFor(channelId)?.roster(channelId) ?? []) this.toUser(member.userId, payload);
   }
 
   // ------------------------------------------------------------- admin
@@ -705,6 +749,8 @@ export class Realtime {
     // A call's roster is for the people on the call, and for nobody who merely has the conversation open.
     if (isCallRoom(channelId)) {
       const roster = this.#deps.calls?.rooms.roster(channelId) ?? [];
+      // Nobody left on the call: the music is over, and lets go of its files.
+      this.#deps.music?.onRoster(channelId, roster);
       for (const member of roster) this.toUser(member.userId, { type: 'voice:roster', channelId, roster, occupiedFor: null });
       return undefined;
     }

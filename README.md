@@ -37,8 +37,9 @@ A [five-minute tour](media/harmony-demo.mp4) of everything below, recorded from 
   ship with the app, and a join sound of up to 10 seconds that plays for the
   room when you arrive.
 - **Music Buddy** (off until the owner turns it on): people the owner allows put music on for the voice channel
-  they are in, from YouTube links and playlists, Spotify links and playlists (looked up on YouTube), or a search.
-  Everybody in the channel hears it in sync, with a volume of their own, and every song is brought to one loudness so
+  or private call they are in, from YouTube links and playlists, Spotify links and playlists (looked up on YouTube),
+  or a search; a track can be up to four hours long, for a podcast.
+  Everybody in the channel or call hears it in sync, with a volume of their own, and every song is brought to one loudness so
   nobody has to reach for it; the queue can be reordered live, skipped,
   shuffled and repeated. It fetches audio with yt-dlp, which is the owner's call: see
   [DEPLOYMENT.md](DEPLOYMENT.md#music-buddy-optional).

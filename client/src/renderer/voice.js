@@ -574,6 +574,10 @@ export class VoiceSession {
         ai: this.aiState,
         // The share of one core the microphone worker takes (volume, gate, strong suppression), in percent.
         micWorkerCpu: this.#micChain?.cpu ?? null,
+        // The gate's threshold now (set, or found when it is automatic) and the gain the automatic control applies.
+        gateThreshold: this.micThresholdNow === null ? null : Number(this.micThresholdNow.toFixed(4)),
+        agcGain: this.micAgc ? Number((this.#micChain?.agcGain ?? 1).toFixed(2)) : null,
+        autoSensitivity: this.micAuto,
         micLevel: Number((this.#micMeter?.read().level ?? 0).toFixed(4)),
         gate: this.#micChain || this.#valve ? (this.micOpen ? 'open' : 'closed') : 'none',
       },
@@ -748,6 +752,13 @@ export class VoiceSession {
    * not asked for, since two of them in a row only mangle the voice.
    */
   micAi = false;
+  /**
+   * Automatic gain control, ours (mic-dsp.js): the voice is brought to a steady level whatever the microphone
+   * gives. Off by default. While it is on the browser's own is not asked for.
+   */
+  micAgc = false;
+  /** The gate's threshold is found from the sound instead of set: the "automatic" sensitivity. */
+  micAuto = false;
   /** 'off', 'loading', 'ready', or why it is not running: 'failed', 'unsupported', 'no-worker'. */
   aiState = 'off';
   /** Told when `aiState` changes. */
@@ -758,6 +769,8 @@ export class VoiceSession {
       ...MIC_CONSTRAINTS,
       echoCancellation: this.micEchoCancellation,
       noiseSuppression: this.micNoiseSuppression,
+      // One gain control at a time: ours when it is on, the browser's when it is not.
+      autoGainControl: !this.micAgc,
       ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
     };
   }
@@ -772,11 +785,15 @@ export class VoiceSession {
    * @returns {Promise<boolean>} false if the live microphone could not be
    *   reopened, in which case the old one is still published.
    */
-  async setMicProcessing({ echoCancellation, noiseSuppression, aiSuppression = false }) {
+  async setMicProcessing({ echoCancellation, noiseSuppression, aiSuppression = false, autoGain = false }) {
     // The browser's is not asked for while the strong one is on.
     const browserNoise = Boolean(noiseSuppression) && !aiSuppression;
-    const same = Boolean(echoCancellation) === this.micEchoCancellation && browserNoise === this.micNoiseSuppression;
+    const same = Boolean(echoCancellation) === this.micEchoCancellation && browserNoise === this.micNoiseSuppression
+      && Boolean(autoGain) === this.micAgc;
     const aiChanged = Boolean(aiSuppression) !== this.micAi;
+    const agcChanged = Boolean(autoGain) !== this.micAgc;
+    this.micAgc = Boolean(autoGain);
+    this.#micChain?.setAgc?.(this.micAgc);
     this.micEchoCancellation = Boolean(echoCancellation);
     this.micNoiseSuppression = browserNoise;
     this.micAi = Boolean(aiSuppression);
@@ -786,7 +803,7 @@ export class VoiceSession {
     return this.#serial(async () => {
       if (!this.#mic) return true;
       if (!same) return this.#switchMic(this.micDeviceId, { releaseFirst: true });
-      if (aiChanged && this.#micWiringStale()) await this.#rewireMic();
+      if ((aiChanged || agcChanged) && this.#micWiringStale()) await this.#rewireMic();
       return true;
     });
   }
@@ -878,6 +895,8 @@ export class VoiceSession {
           gain: this.micGain,
           threshold: this.micThreshold,
           denoise: this.micAi,
+          auto: this.micAuto,
+          agc: this.micAgc,
           onBroken: () => this.#workerStopped(),
           onAi: (state, detail) => {
             if (!this.micAi) return;
@@ -902,6 +921,8 @@ export class VoiceSession {
     this.#micChain = await createMicChain(stream, {
       gain: this.micGain,
       threshold: this.micThreshold,
+      auto: this.micAuto,
+      agc: this.micAgc,
     });
     const track = this.#micChain?.track;
     if (!track) {
@@ -918,7 +939,8 @@ export class VoiceSession {
    * valve, where every opening and closing of the gate is a click).
    */
   #wantsWorker() {
-    return !this.#workerFailed && canProcessInWorker() && (this.micGain !== 1 || this.micThreshold > 0 || this.micAi);
+    return !this.#workerFailed && canProcessInWorker()
+      && (this.micGain !== 1 || this.#gated || this.micAi || this.micAgc);
   }
 
   /** The worker died in the middle of a call: the sound is put back through what the engine can do. */
@@ -938,12 +960,12 @@ export class VoiceSession {
    * on a machine that is busy a thread like that leaves gaps in the sound.
    */
   #wantsChain() {
-    return this.micGain !== 1 || (this.micThreshold > 0 && this.#valveFailed);
+    return this.micGain !== 1 || this.micAgc || (this.#gated && this.#valveFailed);
   }
 
   /** @returns {Promise<boolean>} false if the gate was wanted and could not be run */
   async #openValve(stream) {
-    if (this.micThreshold <= 0) return true;
+    if (!this.#gated) return true;
     const track = stream.getAudioTracks()[0];
     if (!track) return true;
     const tap = track.clone();
@@ -952,6 +974,7 @@ export class VoiceSession {
     try {
       this.#valve = await createMicValve(new MediaStream([tap]), {
         threshold: this.micThreshold,
+        auto: this.micAuto,
         onChange: () => this.#applyTransmit(),
       });
     } catch (err) {
@@ -984,7 +1007,7 @@ export class VoiceSession {
     if (this.#micChain?.kind === 'worker') return true;
     const chain = this.#wantsChain();
     if (chain !== Boolean(this.#micChain)) return true;
-    return !chain && (this.micThreshold > 0) !== Boolean(this.#valve);
+    return !chain && this.#gated !== Boolean(this.#valve);
   }
 
   /**
@@ -1019,8 +1042,33 @@ export class VoiceSession {
   setMicThreshold(value) {
     this.micThreshold = Math.max(0, Number(value) || 0);
     this.#micChain?.setThreshold(this.micThreshold);
-    if (this.#valve && this.micThreshold > 0) this.#valve.setThreshold(this.micThreshold);
+    if (this.#valve && this.#gated) this.#valve.setThreshold(this.micThreshold);
     else if (this.#micWiringStale()) void this.#serial(() => this.#rewireMic());
+    return this.micThreshold;
+  }
+
+  /** Whether there is a gate at all: a threshold that was set, or one that is found. */
+  get #gated() {
+    return this.micThreshold > 0 || this.micAuto;
+  }
+
+  /** The "automatic" sensitivity: the gate's threshold is found from the sound (mic-dsp.js). */
+  setMicAuto(on) {
+    this.micAuto = Boolean(on);
+    this.#micChain?.setAuto?.(this.micAuto);
+    this.#valve?.setAuto?.(this.micAuto);
+    if (this.#micWiringStale()) void this.#serial(() => this.#rewireMic());
+    return this.micAuto;
+  }
+
+  /**
+   * The threshold the gate is using right now, as an RMS: the one that was set, the one it has found, or
+   * null with no gate (or with a gate that is not telling).
+   */
+  get micThresholdNow() {
+    if (!this.#gated) return null;
+    const used = (this.#micChain ?? this.#valve)?.threshold;
+    if (this.micAuto) return used ?? null;
     return this.micThreshold;
   }
 

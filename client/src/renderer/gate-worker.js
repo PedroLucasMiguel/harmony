@@ -24,6 +24,8 @@
 // switches it on and off, and {ai: 'ready'|'failed'|'unsupported'} says what became of it. It
 // is only loaded when asked for, and only runs at 48 kHz, which is what a microphone gives.
 
+import { AutoThreshold, Agc, softLimit } from './mic-dsp.js';
+
 const WINDOW = 1024;
 const HOLD_SECONDS = 0.3;
 const OPEN_TAU = 0.005;
@@ -37,6 +39,9 @@ const CPU_REPORT_MS = 2000;
 
 let threshold = 0;
 let volume = 1;
+/** The threshold is found from the sound instead of set (mic-dsp.js), and the voice is brought to a steady level. */
+let wantAuto = false;
+let wantAgc = false;
 let wantDenoise = false;
 /** @type {Promise<object|null>|null} */
 let denoiserLoading = null;
@@ -71,6 +76,8 @@ self.onmessage = (event) => {
   }
   if ('threshold' in message) threshold = Math.max(0, Number(message.threshold) || 0);
   if ('gain' in message) volume = Math.max(0, Number(message.gain) || 0);
+  if ('auto' in message) wantAuto = Boolean(message.auto);
+  if ('agc' in message) wantAgc = Boolean(message.agc);
   if ('denoise' in message) {
     wantDenoise = Boolean(message.denoise);
     if (wantDenoise) loadDenoiser();
@@ -91,7 +98,10 @@ async function run(readable, writable) {
   let samples = new Float32Array(0);
   let mono = new Float32Array(0);
   let clean = new Float32Array(0);
-  let open = threshold <= 0;
+  const autoThreshold = new AutoThreshold();
+  const agc = new Agc();
+  let thresholdNow = threshold;
+  let open = threshold <= 0 && !wantAuto;
   let gate = open ? 1 : 0;
   let smoothVolume = volume;
   let clock = 0;
@@ -146,9 +156,33 @@ async function run(readable, writable) {
     // mean square: a root for every one of 48000 samples a second is what it was, and now is one per report.
     const fall = Math.pow(LEVEL_FALL, second / LEVEL_FALL_SECONDS);
     const fallSquare = fall * fall;
-    const thresholdSquare = threshold * threshold;
+    // Found, or set: the automatic one is told what the last piece sounded like, below.
+    thresholdNow = wantAuto ? autoThreshold.value : threshold;
+    const thresholdSquare = thresholdNow * thresholdNow;
     const volumeNow = volume;
-    const gateWanted = threshold > 0;
+    const gateWanted = wantAuto || threshold > 0;
+
+    // The gain that brings the voice to a steady level, for this piece: worked out from the piece itself
+    // (after the suppressor, before the volume), and ramped across it so there is no step to hear.
+    let agcFrom = 1;
+    let agcStep = 0;
+    if (wantAgc) {
+      let sum = 0;
+      let peak = 0;
+      for (let i = 0; i < samples.length; i += 1) {
+        const v = samples[i];
+        sum += v * v;
+        const a = v < 0 ? -v : v;
+        if (a > peak) peak = a;
+      }
+      const ramp = agc.next(Math.sqrt(sum / Math.max(1, samples.length)), peak, frames * second);
+      agcFrom = ramp.from;
+      agcStep = (ramp.to - ramp.from) / frames;
+    } else {
+      // Off, and switched on again later, it starts from where the voice is, not from where it was.
+      agc.gain = 1;
+      agc.applied = 1;
+    }
 
     for (let i = 0; i < frames; i += 1) {
       let sum = samples[i];
@@ -179,10 +213,16 @@ async function run(readable, writable) {
       gate += ((open ? 1 : 0) - gate) * (open ? openStep : closeStep);
       smoothVolume += (volumeNow - smoothVolume) * volumeStep;
 
-      const g = gate * smoothVolume;
-      for (let c = 0; c < channels; c += 1) samples[c * frames + i] *= g;
+      const g = gate * smoothVolume * (agcFrom + agcStep * i);
+      if (wantAgc) {
+        // The last thing before the sound goes out: nothing is clipped flat, whatever the volume asks for.
+        for (let c = 0; c < channels; c += 1) samples[c * frames + i] = softLimit(samples[c * frames + i] * g);
+      } else {
+        for (let c = 0; c < channels; c += 1) samples[c * frames + i] *= g;
+      }
     }
     level = Math.sqrt(levelSquare);
+    if (wantAuto) autoThreshold.update(Math.sqrt(total > 0 ? total / WINDOW : 0), frames * second);
     busy += performance.now() - startedAt;
 
     const out = new AudioData({
@@ -200,7 +240,7 @@ async function run(readable, writable) {
     sinceReport += frames * second;
     if (sinceReport >= REPORT_SECONDS) {
       sinceReport = 0;
-      self.postMessage({ level, open });
+      self.postMessage({ level, open, threshold: thresholdNow, agc: wantAgc ? agc.applied : 1 });
     }
     // How much of one core this worker took, now and then: what a report of "the processor is busy" needs.
     const now = performance.now();

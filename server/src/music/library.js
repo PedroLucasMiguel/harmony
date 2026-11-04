@@ -116,6 +116,9 @@ export class MusicLibrary {
     const got = await this.#ytdlp.fetchAudio(id);
     try {
       const hash = await hashFile(got.path);
+      // A long track is a big file: it is let in only where there is room for it, as an upload is (oldest unused
+      // files go first), instead of filling the disk.
+      if (!this.#chat.fileInfo(hash) && !this.#chat.makeRoom(got.bytes)) throw new MusicError('server_full', 'no room for it');
       const kept = this.#chat.adopt(got.path, { hash, bytes: got.bytes, claimedType: 'audio/webm' });
       if (!kept.ok) throw new MusicError('failed', 'could not keep the file');
       const thumbHash = await this.thumbnail(id);

@@ -15,18 +15,25 @@ import { join } from 'node:path';
 
 import { MAX_QUERY, isVideoId, playlistUrl, watchUrl } from './classify.js';
 
-/** How long a search or a playlist listing may take, and a download. */
+/** How long a search or a playlist listing may take. */
 const RESOLVE_TIMEOUT_MS = 60_000;
-const DOWNLOAD_TIMEOUT_MS = 180_000;
+/** A download may take this long at the least, and a quarter of a second for every second of the longest track allowed. */
+const DOWNLOAD_TIMEOUT_MIN_MS = 180_000;
+const DOWNLOAD_MS_PER_SECOND = 250;
 
-/** The biggest file taken: the upload store's own cap is 25 MB, and this leaves it room. */
-const MAX_FILESIZE = '24M';
+/**
+ * The biggest file taken, from the longest track allowed: what YouTube serves as Opus is 50 to 160 kbps, so 280 kbps
+ * (35 kB a second) is room for any of it. A podcast of four hours is about 500 MB; a song is a few.
+ */
+const BYTES_PER_SECOND = 35_000;
+const MIN_FILESIZE_MB = 24;
+export const maxFilesizeFor = (seconds) => `${Math.max(MIN_FILESIZE_MB, Math.ceil((seconds * BYTES_PER_SECOND) / 1_048_576))}M`;
 
 /** What is asked for: Opus in WebM, best first. */
 const AUDIO_FORMAT = 'bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]';
 
 export class MusicError extends Error {
-  /** @param {'unavailable'|'timeout'|'too_long'|'no_audio'|'failed'|'bad_input'} code */
+  /** @param {'unavailable'|'timeout'|'too_long'|'no_audio'|'failed'|'bad_input'|'server_full'} code */
   constructor(code, message) {
     super(message ?? code);
     this.code = code;
@@ -78,7 +85,7 @@ export class YtDlp {
    * @param {number} [options.concurrency]
    * @param {Function} [options.exec]    execFile, replaceable in a test
    */
-  constructor({ bin = 'yt-dlp', cookies = null, maxSeconds = 900, tmpDir, concurrency = 2, exec = execFile }) {
+  constructor({ bin = 'yt-dlp', cookies = null, maxSeconds = 14_400, tmpDir, concurrency = 2, exec = execFile }) {
     this.#bin = bin;
     this.#cookies = cookies;
     this.#maxSeconds = maxSeconds;
@@ -222,12 +229,12 @@ export class YtDlp {
     try {
       const { stdout } = await this.#run([
         '--no-playlist', '--no-mtime', '-f', AUDIO_FORMAT,
-        '--max-filesize', MAX_FILESIZE,
+        '--max-filesize', maxFilesizeFor(this.#maxSeconds),
         '--match-filter', `duration<=${Math.trunc(this.#maxSeconds)}`,
         '-o', join(dir, '%(id)s.%(ext)s'),
         '--print-json', '--',
         watchUrl(id),
-      ], { timeout: DOWNLOAD_TIMEOUT_MS });
+      ], { timeout: Math.max(DOWNLOAD_TIMEOUT_MIN_MS, this.#maxSeconds * DOWNLOAD_MS_PER_SECOND) });
 
       // A filter that rules a video out is not an error to yt-dlp: it prints nothing and downloads nothing.
       const line = stdout.trim().split('\n').filter(Boolean).at(-1);

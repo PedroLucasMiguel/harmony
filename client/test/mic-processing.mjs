@@ -267,6 +267,46 @@ async function run() {
   a = await asked();
   check('the next call opens with noise suppression on', a.noiseSuppression === true, JSON.stringify(a));
   check('and echo cancellation still off', a.echoCancellation === false, JSON.stringify(a));
+
+  // --- automatic gain control: ours, off by default, and the browser's gives way while it is on ----------------
+  await open();
+  check('the browser\'s own gain control is asked for by default', a.autoGainControl === true, JSON.stringify(a));
+  check('ours is off by default and nothing is saved as on',
+    await pedro.evaluate("const d = await harmony.settings.get().then((s) => s.data ?? s); return document.getElementById('mic-auto-gain').checked === false && d.micAutoGain === false"), '');
+  before = await count();
+  await flip('mic-auto-gain');
+  a = await asked();
+  check('turning it on reopens the microphone, without the browser\'s gain control',
+    (await count()) === before + 1 && a.autoGainControl === false, `${await count()} ${JSON.stringify(a)}`);
+  check('it is saved, and the call is still published',
+    await pedro.evaluate("const d = await harmony.settings.get().then((s) => s.data ?? s); return d.micAutoGain === true && !document.getElementById('voice-active').hidden"), '');
+  const kind = await pedro.evaluate('return window.__harmony().voice.micGate');
+  check('the microphone is processed in the worker for it', kind === 'worker', String(kind));
+  before = await count();
+  await flip('mic-auto-gain');
+  a = await asked();
+  check('turned off, the browser\'s comes back', (await count()) === before + 1 && a.autoGainControl === true, JSON.stringify(a));
+
+  // --- automatic sensitivity ---------------------------------------------------------------------------------------
+  const sens = () => pedro.evaluate(`return {
+    on: document.getElementById('mic-auto-sensitivity').checked,
+    slider: document.getElementById('mic-gate').disabled,
+    label: document.getElementById('mic-gate-label').textContent,
+    mark: !document.getElementById('mic-meter-mark').hidden }`);
+  const offState = await sens();
+  check('automatic sensitivity is off by default, and the slider is free', offState.on === false && offState.slider === false, JSON.stringify(offState));
+  before = await count();
+  await flip('mic-auto-sensitivity');
+  const onState = await sens();
+  check('turning it on takes the slider away and says Auto', onState.on && onState.slider && onState.label === 'Auto', JSON.stringify(onState));
+  check('it does not reopen the microphone', (await count()) === before, String(await count()));
+  check('and is saved', await pedro.evaluate("const d = await harmony.settings.get().then((s) => s.data ?? s); return d.micAutoSensitivity === true"), '');
+  await sleep(1500);
+  const gateKind = await pedro.evaluate('return window.__harmony().voice.micGate');
+  check('the gate runs in the worker for it', gateKind === 'worker', String(gateKind));
+  await flip('mic-auto-sensitivity');
+  const back = await sens();
+  check('turned off, the slider is back', back.on === false && back.slider === false && back.label !== 'Auto', JSON.stringify(back));
 }
 
 run()

@@ -638,6 +638,15 @@ describe('YtDlp and MusicLibrary (against a fake yt-dlp)', () => {
     assert.equal(existsSync(got.path), false);
   });
 
+  it('allows four hours by default, with a file size to fit and time to download it', async () => {
+    const long = new YtDlp({ bin: FAKE, tmpDir: join(dir, 'tmp-long') });
+    const got = await long.fetchAudio(V);
+    const call = calls().at(-1);
+    assert.equal(call[call.indexOf('--match-filter') + 1], 'duration<=14400');
+    assert.equal(call[call.indexOf('--max-filesize') + 1], '481M');
+    got.done();
+  });
+
   it('says what went wrong: too long, unavailable', async () => {
     await assert.rejects(() => ytdlp.fetchAudio('longlonglon'), (e) => e.code === 'too_long');
     await assert.rejects(() => ytdlp.fetchAudio('badbadbadba'), (e) => e instanceof MusicError && e.code === 'failed');
@@ -654,6 +663,14 @@ describe('YtDlp and MusicLibrary (against a fake yt-dlp)', () => {
     assert.equal(again.hash, a.hash);
     assert.equal(calls().filter((c) => c.includes('--print-json')).length, before + 1, 'still one');
     assert.equal(again.durationMs, 30_000);
+  });
+
+  it('does not keep a track there is no room for, and says so', async () => {
+    // A server of its own, with a disk of one byte: nothing the fake serves is in it already.
+    const tightDir = ensureDataDir(join(dir, 'tight'));
+    const tightDb = openDatabase({ dataDir: tightDir });
+    const full = new MusicLibrary({ db: tightDb, chat: new Chat(tightDb, { dataDir: tightDir, maxDiskBytes: 1 }), ytdlp, thumbnails: false });
+    await assert.rejects(() => full.ensure('yt:CCCCCCCCCCC'), (e) => e instanceof MusicError && e.code === 'server_full');
   });
 
   it('fetches again when the file was swept to make room', async () => {

@@ -677,6 +677,8 @@
               tests press.
             -->
             <form id="chat-form" class="chat-form">
+              <!-- Who is typing in this channel. See typing-ui.js. -->
+              <div class="typing" id="chat-typing" aria-live="polite"></div>
               <div class="composer">
                 <!-- The message this one will answer, if any. See setReply. -->
                 <div class="composer-reply" id="chat-reply" hidden>
@@ -935,6 +937,12 @@
         </div>
         <p class="muted dm-panel-note" id="dm-panel-note" hidden></p>
         <div class="dm-panel-actions" id="dm-panel-actions" hidden></div>
+        <!-- Narrows the list to who matches, and below it offers anyone else on the server to start a conversation with. -->
+        <div class="dm-find" id="dm-find-box" hidden>
+          <input type="text" id="dm-find" class="dm-find-input" autocomplete="off" spellcheck="false"
+                 placeholder="Find someone to talk to" aria-label="Find someone to talk to"
+                 data-i18n-placeholder="dm.find" data-i18n-aria-label="dm.find">
+        </div>
         <ul class="dm-list" id="dm-list"></ul>
         <p class="muted dm-empty" id="dm-empty" hidden data-i18n="dm.empty">No private conversations yet. Right-click someone in the member list and choose &ldquo;Send a private message&rdquo;, or make a group with the button above.</p>
       </div>
@@ -1005,6 +1013,8 @@
                       aria-label="Jump to the newest messages" data-i18n-aria-label="app.jump_to_the_newest"></button>
             </div>
             <form id="dm-form" class="chat-form">
+              <!-- Who is typing in this conversation. See typing-ui.js. -->
+              <div class="typing" id="dm-typing" aria-live="polite"></div>
               <div class="composer">
                 <div class="composer-reply" id="dm-reply" hidden>
                   <span class="composer-reply-text"><span data-i18n="chat_reply.replying_to">Replying to</span> <strong id="dm-reply-name"></strong></span>
@@ -2204,6 +2214,15 @@
                 </div>
                 <input id="mic-gate" type="range" min="0" max="100" step="1" value="0" />
 
+                <label class="setting-toggle mic-auto-row">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.auto_sensitivity">Automatic sensitivity</span>
+                    <small data-i18n="settings.voice.auto_sensitivity_hint">Listens to your room and to your voice and sets the
+                      sensitivity for you, and keeps setting it as the room changes. The marker on the bar shows where it is.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="mic-auto-sensitivity" />
+                </label>
+
                 <div class="mic-meter" id="mic-meter">
                   <div class="mic-meter-fill" id="mic-meter-fill"></div>
                   <div class="mic-meter-mark" id="mic-meter-mark" hidden></div>
@@ -2232,6 +2251,16 @@
                       keyboards. It can clip the ends of words.</small>
                   </span>
                   <input type="checkbox" class="switch" role="switch" id="mic-noise-suppression" />
+                </label>
+
+                <label class="setting-toggle" id="mic-auto-gain-row">
+                  <span class="setting-text">
+                    <span class="setting-title" data-i18n="settings.voice.auto_gain">Automatic gain control</span>
+                    <small data-i18n="settings.voice.auto_gain_hint">Keeps your voice at a steady level: a quiet microphone is brought up,
+                      a loud one down, as you talk, so the others hear you the same whatever the microphone gives. The input
+                      volume above still applies on top. Replaces the browser's own while it is on.</small>
+                  </span>
+                  <input type="checkbox" class="switch" role="switch" id="mic-auto-gain" />
                 </label>
 
                 <label class="setting-toggle" id="mic-ai-row">

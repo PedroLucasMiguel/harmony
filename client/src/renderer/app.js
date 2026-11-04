@@ -18,6 +18,8 @@ import { recoverAccount } from './recovery-flow.js';
 import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
 import { createCalls, isCallRoom } from './calls-ui.js';
+import { createTyping } from './typing-ui.js';
+import { messageTime } from './message-time.js';
 import { fileCard, iconFor, textCard, previewsAsText, readHead } from './attachment-card.js';
 import { createRecorderBar, voiceNote, isVoiceNote } from './voice-note.js';
 import { firstLink, linkEmbed } from './link-embed.js';
@@ -356,6 +358,7 @@ const el = {
   chatToBottom: $('chat-to-bottom'),
   chatForm: $('chat-form'),
   chatInput: $('chat-input'),
+  chatTyping: $('chat-typing'),
   chatFile: $('chat-file'),
   chatAttach: $('chat-attach'),
   chatNote: $('chat-note'),
@@ -438,6 +441,8 @@ const el = {
   micNoiseSuppression: $('mic-noise-suppression'),
   micAiSuppression: $('mic-ai-suppression'),
   micAiStatus: $('mic-ai-status'),
+  micAutoGain: $('mic-auto-gain'),
+  micAutoSensitivity: $('mic-auto-sensitivity'),
   micGainLabel: $('mic-gain-label'),
   micGate: $('mic-gate'),
   micGateLabel: $('mic-gate-label'),
@@ -2967,6 +2972,17 @@ function inServer(home, fn) {
 let dmUi = null;
 /** Private calls: who is ringing, and which conversations have a call (calls-ui.js). Made with the private messages. */
 let callsCtl = null;
+
+/** Who is typing where (typing-ui.js): channels here, private conversations in dm-ui. */
+const typing = createTyping({
+  t,
+  nameOf: (userId) => displayOf(userId, 'someone'),
+  changed: (key) => { if (key === `c:${state.chat.channelId}`) renderChatTyping(); },
+});
+
+function renderChatTyping() {
+  el.chatTyping.textContent = state.chat.channelId ? typing.text(`c:${state.chat.channelId}`) : '';
+}
 let securityUi = null;
 /** The Roles, Members and Channels pages of the server dialog; see server-admin.js. */
 let serverAdmin = null;
@@ -5317,13 +5333,10 @@ async function joinVoice(channel, password, { cued = false, call = null } = {}) 
       // A private call: which conversation, so that what the conversation says of it can be told from here.
       ...(call ? { call: { conversationId: call.conversationId, group: call.group } } : {}),
     };
-    if (call) {
-      callsCtl?.setMine(state.server, call.conversationId);
-    } else {
-      // Joined in the middle of a song: the music is already where it is.
-      musicPlayer?.apply(reply.music ?? null);
-      startMusicClock();
-    }
+    if (call) callsCtl?.setMine(state.server, call.conversationId);
+    // Joined in the middle of a song: the music is already where it is. A call has its own, as a channel does.
+    musicPlayer?.apply(reply.music ?? null);
+    startMusicClock();
 
     // Joining a voice channel puts the streams back on the stage. Clicking a
     // voice channel is the only way back from a text channel, so leaving the
@@ -5707,7 +5720,7 @@ function applyVoiceButtons() {
 
   el.voiceSoundboard.toggleAttribute('data-on', !el.soundpad.hidden);
   el.voiceSoundboard.disabled = !state.voice.channelId;
-  // The soundpad and the music are a channel's; a private call has neither.
+  // The soundpad is a channel's, and a private call has none; the music is in both.
   el.voiceSoundboard.hidden = isCallRoom(state.voice.channelId);
   // Deafened silences the music too, and un-deafening brings it back at its own volume.
   applyMusicVolume();
@@ -7366,17 +7379,34 @@ function applyMicTuning() {
   paintRange(el.micGate);
   el.micGateLabel.textContent = sensitivity === 0 ? t('app.off') : String(sensitivity);
 
+  // Automatic: the threshold is found, so the slider has nothing to set and the marker follows what was found.
+  const auto = state.settings.micAutoSensitivity === true;
+  el.micAutoSensitivity.checked = auto;
+  el.micGate.disabled = auto;
+  el.micGate.closest('.mic-tuning')?.toggleAttribute('data-auto', auto);
+  if (auto) el.micGateLabel.textContent = t('settings.voice.auto_label');
+
   const threshold = gateThreshold(sensitivity);
-  el.micMeterMark.hidden = sensitivity === 0;
+  el.micMeterMark.hidden = sensitivity === 0 && !auto;
   el.micMeterMark.style.left = `${meterPercent(threshold)}%`;
+  if (auto) drawAutoMark();
 
   state.voice.setMicGain(gain / 100);
   state.voice.setMicThreshold(threshold);
+  state.voice.setMicAuto(auto);
 
   el.micEchoCancellation.checked = state.settings.micEchoCancellation === true;
   el.micNoiseSuppression.checked = state.settings.micNoiseSuppression === true;
   el.micAiSuppression.checked = state.settings.micAiSuppression === true;
+  el.micAutoGain.checked = state.settings.micAutoGain === true;
   renderAiSuppression();
+}
+
+/** Where the automatic sensitivity has put the threshold, on the meter. Nothing until it has heard the room. */
+function drawAutoMark() {
+  const found = state.voice.micThresholdNow;
+  el.micMeterMark.hidden = !(found > 0);
+  if (found > 0) el.micMeterMark.style.left = `${meterPercent(found)}%`;
 }
 
 /** The strong suppression's switch: what the browser's row does meanwhile, and how the strong one is doing. */
@@ -7409,6 +7439,7 @@ async function applyMicProcessing() {
     echoCancellation: state.settings.micEchoCancellation === true,
     noiseSuppression: state.settings.micNoiseSuppression === true,
     aiSuppression: state.settings.micAiSuppression === true,
+    autoGain: state.settings.micAutoGain === true,
   });
   if (!ok) deviceNote(t('app.that_microphone_could_not_be'));
 }
@@ -7426,6 +7457,7 @@ function startMicMeter() {
   micMeterTimer = setInterval(() => {
     el.micMeterFill.style.width = `${meterPercent(state.voice.micLevel)}%`;
     el.micMeter.toggleAttribute('data-gated', !state.voice.micOpen);
+    if (state.settings.micAutoSensitivity === true) drawAutoMark();
   }, MIC_METER_MS);
 }
 
@@ -8530,6 +8562,7 @@ async function openTextChannel(channel) {
     state.chat.newAfter = news?.unread > 0 ? news.lastReadId : null;
   }
   state.chat.channelId = channel.id;
+  renderChatTyping();
   setReply(null);
   // What was being rewritten is in the channel being left.
   setEditing(null);
@@ -8760,6 +8793,7 @@ function closeChat() {
   rememberChatScroll();
   state.chat.showsHistory = false;
   state.chat.channelId = null;
+  renderChatTyping();
   if (el.voiceActive.hidden) el.voiceIdle.hidden = false;
   applyStage();
   // The highlight follows what is on screen, which just went back to the call.
@@ -10606,14 +10640,28 @@ function replaceAttachment(message) {
  * the file is already in the cache and already decoded -- opening one is
  * instant and costs no second download.
  */
-let lightboxOf = null;
+/** What the Save button of the picture on screen does. */
+let lightboxSaver = null;
+
+/**
+ * Any picture, full size: a channel's (by its URL on the server) or a private conversation's (opened on this
+ * computer, so by the blob URL it was drawn from).
+ * @param {{url: string, name?: string, save: () => unknown}} picture
+ */
+function showPicture({ url, name, save }) {
+  lightboxSaver = save;
+  el.lightboxImg.src = url;
+  el.lightboxImg.alt = name ?? 'attachment';
+  el.lightboxName.textContent = name ?? t('app.attachment');
+  el.lightbox.hidden = false;
+}
 
 function openLightbox(message) {
-  lightboxOf = message;
-  el.lightboxImg.src = harmony.mediaUrl(message.attachmentHash);
-  el.lightboxImg.alt = message.attachmentName ?? 'attachment';
-  el.lightboxName.textContent = message.attachmentName ?? t('app.attachment');
-  el.lightbox.hidden = false;
+  showPicture({
+    url: harmony.mediaUrl(message.attachmentHash),
+    name: message.attachmentName,
+    save: () => saveAttachment(message),
+  });
 }
 
 function closeLightbox() {
@@ -10621,7 +10669,7 @@ function closeLightbox() {
   // Dropped, or the decoded bitmap of the last picture anybody looked at
   // stays in memory for as long as the app is open.
   el.lightboxImg.removeAttribute('src');
-  lightboxOf = null;
+  lightboxSaver = null;
 }
 
 // --- replies ------------------------------------------------------------------
@@ -10855,9 +10903,7 @@ function messageRow(message, previous) {
 
   const when = document.createElement('span');
   when.className = 'when';
-  when.textContent = new Date(message.createdAt).toLocaleTimeString([], {
-    hour: '2-digit', minute: '2-digit',
-  });
+  when.textContent = messageTime(message.createdAt);
   when.title = new Date(message.createdAt).toLocaleString();
 
   /*
@@ -11680,8 +11726,8 @@ function initMusic() {
     resolve: (input) => harmony.api.musicResolve(state.voiceServer ?? state.server, input),
     send: (type, payload) => voiceRt(type, payload),
     // Who may play: the permission, and the owner's switch -- and only on the server the call is on.
-    canControl: () => voiceHere() && !isCallRoom(state.voice.channelId)
-      && serverInfo.musicEnabled === true && can('music.control'),
+    // The same in a private call as in a channel: the owner's switch, and the permission.
+    canControl: () => voiceHere() && serverInfo.musicEnabled === true && can('music.control'),
     view: () => musicPlayer.view(),
     position: () => musicPlayer.positionMs(),
     channelId: () => (voiceHere() ? state.voice.channelId : null),
@@ -12864,7 +12910,17 @@ function onRealtimeEvent(msg) {
       }
       break;
 
+    case 'typing':
+      // Channels' typing is the open server's; a conversation's is dm-ui's (see above).
+      if (msg.scope === 'channel') {
+        if (msg.stopped) typing.remove(`c:${msg.id}`, msg.userId);
+        else typing.note(`c:${msg.id}`, msg.userId);
+      }
+      break;
+
     case 'message':
+      // What was being written has been sent.
+      typing.remove(`c:${msg.message.channelId}`, msg.message.userId);
       noteIncoming(msg.message);
       renderChannels();
       // Before the channel filter, on purpose: a mention in a channel you
@@ -15345,6 +15401,7 @@ callsCtl = createCalls({
 
 dmUi = createDmUi({
   stars,
+  showPicture,
   calls: {
     stateOf: (key, id) => callsCtl.stateOf(key, id),
     mineIs: (key, id) => callsCtl.mineIs(key, id),
@@ -16170,6 +16227,7 @@ for (const [input, key] of [
   [el.micEchoCancellation, 'micEchoCancellation'],
   [el.micNoiseSuppression, 'micNoiseSuppression'],
   [el.micAiSuppression, 'micAiSuppression'],
+  [el.micAutoGain, 'micAutoGain'],
 ]) {
   input.addEventListener('change', async () => {
     await harmony.settings.set({ [key]: input.checked });
@@ -16177,6 +16235,12 @@ for (const [input, key] of [
     await applyMicProcessing();
   });
 }
+
+el.micAutoSensitivity.addEventListener('change', async () => {
+  await harmony.settings.set({ micAutoSensitivity: el.micAutoSensitivity.checked });
+  state.settings = await harmony.settings.get();
+  applyMicTuning();
+});
 
 el.voiceSoundboard.addEventListener('click', () => {
   if (el.soundpad.hidden) openSoundpad();
@@ -16271,6 +16335,8 @@ el.soundpadFile.addEventListener('change', () => {
 
 el.chatForm.addEventListener('submit', (event) => {
   event.preventDefault();
+  // The next keystroke is a new message being written: announced at once, not after the wait.
+  if (state.chat.channelId) typing.rest(`c:${state.chat.channelId}`);
   sendMessage();
 });
 
@@ -16282,6 +16348,14 @@ el.chatForm.addEventListener('submit', (event) => {
  * has to close it -- neither of which fires an input event.
  */
 el.chatInput.addEventListener('input', () => {
+  const channelId = state.chat.channelId;
+  if (channelId && !state.chat.editing) {
+    const key = `c:${channelId}`;
+    const stop = () => rt('typing', { scope: 'channel', id: channelId, stopped: true });
+    // Typing, or having emptied the box: the second is stopping, and is said at once.
+    if (el.chatInput.value.trim()) typing.ping(key, () => rt('typing', { scope: 'channel', id: channelId }), stop);
+    else typing.quiet(key, stop);
+  }
   growChatInput();
   applyComposer();
   updateMentions();
@@ -16514,9 +16588,7 @@ el.lightbox.addEventListener('click', () => closeLightbox());
 el.lightboxClose.addEventListener('click', () => closeLightbox());
 el.lightboxSave.addEventListener('click', async (event) => {
   event.stopPropagation();
-  const message = lightboxOf;
-  if (!message) return;
-  await saveAttachment(message);
+  await lightboxSaver?.();
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !el.lightbox.hidden) closeLightbox();

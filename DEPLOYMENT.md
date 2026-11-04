@@ -506,8 +506,15 @@ each listener's own volume. A song that cannot be measured is played as it is.
 - **If YouTube says to sign in** ("confirm you're not a bot", usually from a datacentre address), give yt-dlp a
   cookies file in Netscape format with `HARMONY_YTDLP_COOKIES=/path/to/cookies.txt` (readable by the `harmony` user).
   Use a throwaway account's cookies: they are sent to YouTube.
-- **Limits.** A track longer than `HARMONY_MUSIC_MAX_SECONDS` (900, fifteen minutes) or bigger than 24 MB is refused, a
-  queue holds `HARMONY_MUSIC_QUEUE_MAX` songs (200), and a playlist adds its first 100.
+- **Limits.** A track longer than `HARMONY_MUSIC_MAX_SECONDS` (14400, four hours: room for a podcast) is refused; the
+  biggest file taken follows from it (about 480 MB at four hours, 31 MB at fifteen minutes). Fetched audio is stored like
+  any upload and counts against the server's storage limit (`HARMONY_MAX_DISK_BYTES`, 2 GB by default), oldest unused files going first, so a long episode needs
+  room: when there is none the track is skipped with an error rather than filling the disk. Lower
+  `HARMONY_MUSIC_MAX_SECONDS` (900 is fifteen minutes) on a small disk or a slow connection. A queue holds
+  `HARMONY_MUSIC_QUEUE_MAX` songs (200), and a playlist adds its first 100.
+- **Loudness of a long track.** Tracks are brought to one loudness from a measurement made when they are fetched; for a
+  long one only its first quarter of an hour is measured (and it is then never turned up, only down), so a podcast does
+  not cost minutes of decoding on a small computer.
 - **When it stops working.** Update yt-dlp first (`sudo yt-dlp -U`, or restart the container). If only Spotify links fail
   with "could not read that Spotify link", Spotify changed its page; the one file that reads it is
   `server/src/music/spotify.js`.
