@@ -1,0 +1,34 @@
+diff --git a/internal/protocols/webrtc/inbound_track.go b/internal/protocols/webrtc/inbound_track.go
+index a8ca353..c8fe7f7 100644
+--- a/internal/protocols/webrtc/inbound_track.go
++++ b/internal/protocols/webrtc/inbound_track.go
+@@ -13,6 +13,9 @@ import (
+ 	"github.com/bluenviron/mediamtx/internal/logger"
+ )
+ 
++// audioReorderBuffer is how many packets of a voice are held behind a gap, a power of two (see rtpreceiver.Receiver).
++const audioReorderBuffer = 16
++
+ const (
+ 	keyFrameInterval  = 2 * time.Second
+ 	mimeTypeMultiopus = "audio/multiopus"
+@@ -414,8 +417,19 @@ func (t *InboundTrack) start() {
+ 	}
+ 	t.inboundRTPPacketsLost.Start()
+ 
++	// What a packet behind a gap waits for is its retransmission, if the publisher was asked to send it again (NACK,
++	// see peer_connection.go), and for nothing but the buffer to fill if not: with the default sixty-four, one lost
++	// packet of a voice stopped it for sixty-four packets (1.3 s at 20 ms) and then let it all out at once. Sixteen
++	// is room for a round trip to put it right, and no more than a third of a second to give it up. Video keeps the
++	// default, because what it waits for is its retransmission too, and a keyframe.
++	bufferSize := 0
++	if t.track.Kind() == webrtc.RTPCodecTypeAudio {
++		bufferSize = audioReorderBuffer
++	}
++
+ 	t.rtpReceiver = &rtpreceiver.Receiver{
+ 		ClockRate:            int(t.track.Codec().ClockRate),
++		BufferSize:           bufferSize,
+ 		UnrealiableTransport: true,
+ 		Period:               1 * time.Second,
+ 		WritePacketRTCP: func(p rtcp.Packet) {

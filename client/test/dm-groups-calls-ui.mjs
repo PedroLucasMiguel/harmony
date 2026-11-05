@@ -276,6 +276,7 @@ async function run() {
   // --- a call to the group ----------------------------------------------------------------------------------------
   await click(alice, '#dm-call');
   await until(alice, "!document.getElementById('call-screen').hidden", { label: 'alice\'s call screen', timeoutMs: 40_000 });
+  await until(alice, "document.querySelectorAll('#call-stage .call-tile').length >= 1", { label: 'her own tile' });
   const screen0 = await alice.evaluate(`const s = document.getElementById('call-screen'); const r = s.getBoundingClientRect(); const log = document.getElementById('dm-log').getBoundingClientRect();
     return { view: document.querySelector('.view[data-active]')?.id, title: document.getElementById('call-title').textContent, status: document.getElementById('call-status').textContent,
       buttons: [...document.querySelectorAll('#call-controls .call-btn')].filter((b) => !b.hidden).map((b) => b.id), tiles: document.querySelectorAll('#call-stage .call-tile').length,

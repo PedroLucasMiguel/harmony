@@ -5697,6 +5697,8 @@ async function joinVoice(channel, password, { cued = false, call = null } = {}) 
     // settings (or by a device being plugged in), so until then the saved microphone was "not there" and the
     // default one was opened instead.
     await refreshVoiceDevices({ apply: false }).catch(() => { /* the default is used */ });
+    // How many are in the room decides how the sound is sent (voice-quality.js).
+    state.voice.roomSize = Math.max(1, reply.roster?.length ?? 0);
     await state.voice.startMic(
       reply.publish.voice,
       // The voice preference, not the capture-card one. See settings.js.

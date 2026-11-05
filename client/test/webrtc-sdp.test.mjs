@@ -16,6 +16,8 @@ await sleep(1500);
 // The functions run where the app runs them; each call is one round trip to the page.
 const run = (fn, ...args) => page.evaluate(`const m = await import('./webrtc.js'); return m.${fn}(...${JSON.stringify(args.filter((a) => a !== undefined))});`);
 const tuneOpusStereo = (sdp, options) => run('tuneOpusStereo', sdp, options);
+const tuneOpusAnswer = (sdp, options) => run('tuneOpusAnswer', sdp, options);
+const offerAudioNack = (sdp) => run('offerAudioNack', sdp);
 const tuneVideoAnswer = (sdp, options) => run('tuneVideoAnswer', sdp, options);
 
 // An offer and an answer as MediaMTX 1.21 and Chromium write them (trimmed).
@@ -43,6 +45,30 @@ check('every H.264 line is told where to start, and the floor that goes with it'
 check('and nothing else is: the rtx line, VP8 and the audio are as they were', started.includes('a=fmtp:103 apt=102\r\n') && !/a=fmtp:96/.test(started) && started.includes('a=fmtp:111 minptime=10;useinbandfec=1\r\n'));
 check('a start that was already there is kept', (await tuneVideoAnswer(started, { startKbps: 9000 })) === started);
 check('no start, no change', (await tuneVideoAnswer(OFFER, { startKbps: 0 })) === OFFER);
+
+// ---- the sound's own tuning: a packet length, silence, and the bits the encoder has
+{
+  const ANSWER = ['v=0', 'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'a=rtpmap:111 opus/48000/2', 'a=fmtp:111 minptime=10;useinbandfec=1', 'a=rtcp-fb:111 transport-cc', ''].join('\r\n');
+  const small = await tuneOpusAnswer(ANSWER, { dtx: false, ptime: 20, kbps: 64 });
+  check('a small room: the answer says the bit rate and 20 ms packets, and leaves silence to be sent',
+    /a=fmtp:111 minptime=10;useinbandfec=1;maxaveragebitrate=64000/.test(small) && !/usedtx/.test(small) && /a=ptime:20/.test(small) && /useinbandfec=1/.test(small), small);
+  const large = await tuneOpusAnswer(ANSWER.replace('useinbandfec=1', 'useinbandfec=1;maxaveragebitrate=24000'), { dtx: true, ptime: 40, kbps: 64 });
+  check('a large one: silence suppressed, and a bit rate that was already said is kept, not said twice',
+    /usedtx=1/.test(large) && (large.match(/maxaveragebitrate/g) ?? []).length === 1 && /maxaveragebitrate=24000/.test(large), large);
+}
+
+
+// ---- lost voice packets asked for again
+{
+  const OFFER2 = ['v=0', 'm=audio 9 UDP/TLS/RTP/SAVPF 111 63', 'a=rtpmap:111 opus/48000/2', 'a=rtcp-fb:111 transport-cc', 'a=fmtp:111 minptime=10;useinbandfec=1', 'a=rtpmap:63 red/48000/2',
+    'm=video 9 UDP/TLS/RTP/SAVPF 102', 'a=rtpmap:102 H264/90000', 'a=rtcp-fb:102 nack', ''].join('\r\n');
+  const out = await offerAudioNack(OFFER2);
+  check('the offer asks for lost voice packets again, on the Opus payload, beside its other feedback', /a=rtcp-fb:111 transport-cc\r\na=rtcp-fb:111 nack\r\n/.test(out), out);
+  check('and only on that: not on RED, and not on the video', !/a=rtcp-fb:63/.test(out) && (out.match(/a=rtcp-fb:\d+ nack/g) ?? []).length === 2, out);
+  check('said once, however many times it is asked', (await offerAudioNack(out)) === out);
+  check('an offer with no voice is as it was', (await offerAudioNack('v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\na=rtpmap:102 H264/90000\r\n')) === 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\na=rtpmap:102 H264/90000\r\n');
+}
+
 
 const failed = summary();
 setTimeout(() => process.exit(failed ? 1 : 0), 200);

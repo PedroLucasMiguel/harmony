@@ -11494,7 +11494,8 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
 /* The edge to drag, in the gap between the list and the post; only while there is a post beside it. */
 .col-resizer[data-resize='forum'] {
   display: none;
-  right: -0.75rem;
+  /* The gap is 1rem and the post's own line is its far side: the handle's bar sits on that line (its centre is 4.5px in). */
+  right: calc(-1rem - 5px);
 }
 .channel-stage[data-forum][data-thread] .col-resizer[data-resize='forum'] {
   display: block;

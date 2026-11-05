@@ -1,0 +1,16 @@
+diff --git a/internal/protocols/webrtc/peer_connection.go b/internal/protocols/webrtc/peer_connection.go
+index 21c372e..ea2bede 100644
+--- a/internal/protocols/webrtc/peer_connection.go
++++ b/internal/protocols/webrtc/peer_connection.go
+@@ -111,6 +111,11 @@ func registerInterceptors(
+ 		return err
+ 	}
+ 
++	// A voice can be asked for again too, by a client that offers it (ConfigureNack covers video only): the relay then
++	// asks a publisher for a voice packet it is missing, and answers a listener that asks for one. Where a client does
++	// not offer it nothing is negotiated, and it is as it was.
++	mediaEngine.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack"}, webrtc.RTPCodecTypeAudio)
++
+ 	err = webrtc.ConfigureSimulcastExtensionHeaders(mediaEngine)
+ 	if err != nil {
+ 		return err

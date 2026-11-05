@@ -86,6 +86,13 @@ export const SCENARIOS = [
   { name: 'loss1-viewer-leg', ...base, viewerLink: { delayMs: 20, downLossPct: 1 } },
   { name: 'loss3-viewer-leg', ...base, viewerLink: { delayMs: 20, downLossPct: 3 } },
 
+  // --- more loss: the viewer's leg where a retransmission can fail too, and "smooth" (give up sharpness, keep the rate)
+  { name: 'loss5-viewer-leg', ...base, viewerLink: { delayMs: 20, downLossPct: 5 } },
+  { name: 'loss8-viewer-leg', ...base, viewerLink: { delayMs: 20, downLossPct: 8 } },
+  { name: 'loss3-rtt120', ...base, link: link(0, { lossPct: 3, delayMs: 60 }) },
+  { name: 'loss1-publisher-smooth', ...base, ...smooth, link: link(0, { lossPct: 1 }) },
+  { name: 'loss3-publisher-smooth', ...base, ...smooth, link: link(0, { lossPct: 3 }) },
+
   // --- a busy machine (meaningful on Windows or Linux; macOS keeps the foreground app ahead of the load)
   { name: 'load-sharp', ...base, load: 'full' },
   { name: 'load-smooth', ...base, ...smooth, load: 'full' },

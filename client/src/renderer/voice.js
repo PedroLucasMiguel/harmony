@@ -13,6 +13,7 @@
 
 import { harmony } from './bridge.js';
 import { publish, watch, applySenderSettings, setSenderPriority, describePc } from './webrtc.js';
+import { senderProfile } from './voice-quality.js';
 import { judgeVideo, VIDEO_MAX_REBUILDS } from './video-health.js';
 import {
   createSink, createMeter, createMicChain, createMicValve, workerMicChain, canProcessInWorker, MAX_GAIN,
@@ -33,21 +34,11 @@ const MIC_CONSTRAINTS = {
   channelCount: 1,
 };
 
-/** Opus for speech. 32 kbps is ~52 kbps on the wire once RTP is counted. */
-const VOICE_BITRATE = 32_000;
-
-/**
- * How much speech goes in each packet.
- *
- * 40 ms is twenty-five packets a second instead of fifty, which is the biggest
- * single thing that can be done about what a relay spends -- see
- * tuneOpusAnswer -- for twenty milliseconds more before a word leaves. That is
- * under what anybody can hear, against the delay and stutter of a relay that is
- * out of CPU, which they can. Opus's own error recovery rides along in each
- * packet, so a lost one costs forty milliseconds of the previous one's guess
- * rather than a hole.
+/*
+ * How voice is sent -- the bit rate, how much speech goes in a packet, whether silence is suppressed -- is chosen by how
+ * many are in the room, and how a listener buffers by how the line is behaving: see voice-quality.js. (The tuning that
+ * saves a relay's CPU is the one a large channel keeps; see tuneOpusAnswer for what it does and why.)
  */
-const VOICE_PTIME_MS = 40;
 
 /** How long the microphone's connection has to come up, and how many tries it gets. */
 const MIC_CONNECT_TIMEOUT_MS = 5000;
@@ -103,6 +94,15 @@ export class VoiceSession {
   #micStream = null;
   /** @type {Map<number, {pc: RTCPeerConnection, sink: object, stream: MediaStream}>} */
   #subs = new Map();
+
+  /** How many are in the room being sent into: the tuning of the sound follows it (see voice-quality.js). */
+  roomSize = 0;
+
+  /** 'legacy' for the tuning that saves the relay's CPU at any size, for comparing; null to choose by room size. */
+  profileOverride = null;
+
+  /** What the microphone was last started with. */
+  #profile = null;
   /** mid -> {packets, since}: how we notice a subscription has gone quiet. */
   #flow = new Map();
   #opening = new Set();
@@ -493,6 +493,11 @@ export class VoiceSession {
         packets: r.packetsReceived,
         lost: r.packetsLost,
         jitterMs: ms(r.jitter),
+        // The raw sums, so that two readings can be subtracted to see a stretch of time rather than the whole call.
+        bufferDelaySum: r.jitterBufferDelay ?? null,
+        bufferEmitted: r.jitterBufferEmittedCount ?? null,
+        samples,
+        concealedSamples: r.concealedSamples ?? 0,
         bufferMs: r.jitterBufferEmittedCount ? ms(r.jitterBufferDelay / r.jitterBufferEmittedCount) : null,
         concealedPct: samples ? Number(((100 * (r.concealedSamples || 0)) / samples).toFixed(2)) : null,
         concealmentEvents: r.concealmentEvents ?? null,
@@ -830,12 +835,15 @@ export class VoiceSession {
     for (const track of this.#micStream.getAudioTracks()) track.enabled = this.transmitting;
 
     const processed = await this.#processed(this.#micStream);
+    const profile = senderProfile(this.roomSize, this.profileOverride);
+    this.#profile = profile;
+    this.note(`mic: sending as "${profile.name}" (${profile.ptime} ms packets, ${profile.bitrate / 1000} kbit/s, silence ${profile.dtx ? 'suppressed' : 'sent'}) for ${this.roomSize} people`);
     this.#mic = await publish({
       url: publishUrl,
       stream: processed,
       iceServers: this.iceServers,
-      // Fewer, bigger packets, and none for silence: see tuneOpusAnswer.
-      audioTuning: { dtx: true, ptime: VOICE_PTIME_MS },
+      // How it is sent depends on how many share the relay: see voice-quality.js.
+      audioTuning: { dtx: profile.dtx, ptime: profile.ptime, kbps: profile.bitrate / 1000, nack: window.__harmonyAudioNack !== false },
       // Joined means CONNECTED. On a poor link the first connection can stall
       // (lost checks, a lost handshake) and Chromium gives up on it only
       // after fifteen seconds or much more -- a call that looks joined while
@@ -867,7 +875,7 @@ export class VoiceSession {
     if (sender) {
       const params = sender.getParameters();
       params.encodings = params.encodings?.length ? params.encodings : [{}];
-      params.encodings[0].maxBitrate = VOICE_BITRATE;
+      params.encodings[0].maxBitrate = profile.bitrate;
       await sender.setParameters(params).catch(() => { /* not fatal */ });
       await setSenderPriority(sender, 'high');
     }
@@ -1861,7 +1869,8 @@ export class VoiceSession {
     });
     const anchor = this.#keepAlive(stream);
     const sink = createSink(stream);
-    this.#subs.set(mid, { pc, sink, stream, anchor });
+    const sub = { pc, sink, stream, anchor };
+    this.#subs.set(mid, sub);
     // Straight to whatever this person was last set to, rather than to 1 and
     // then corrected: a peer who reconnects should not blast back at full
     // volume for the moment before the next render.

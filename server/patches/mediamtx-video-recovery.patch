@@ -1,0 +1,196 @@
+diff --git a/internal/protocols/webrtc/inbound_track.go b/internal/protocols/webrtc/inbound_track.go
+index c8fe7f7..c9202bf 100644
+--- a/internal/protocols/webrtc/inbound_track.go
++++ b/internal/protocols/webrtc/inbound_track.go
+@@ -16,8 +16,16 @@ import (
+ // audioReorderBuffer is how many packets of a voice are held behind a gap, a power of two (see rtpreceiver.Receiver).
+ const audioReorderBuffer = 16
+ 
++// videoReorderBuffer is the same for a picture, and larger: a key frame arrives as a burst of a couple of hundred
++// packets, and with sixty-four a packet lost in one was given up on before its retransmission could arrive, which left
++// the picture unusable until the next key frame. A power of two (see rtpreceiver.Receiver).
++const videoReorderBuffer = 256
++
+ const (
+-	keyFrameInterval  = 2 * time.Second
++	// How often the publisher is asked for a key frame whether or not anybody has: a safety net now, because a viewer
++	// that needs one asks for it (see keyframe_requests.go). A key frame is many times the size of the others, and
++	// one every two seconds was a burst the line had to carry over and over.
++	keyFrameInterval  = 10 * time.Second
+ 	mimeTypeMultiopus = "audio/multiopus"
+ 	mimeTypeL16       = "audio/L16"
+ )
+@@ -425,6 +433,8 @@ func (t *InboundTrack) start() {
+ 	bufferSize := 0
+ 	if t.track.Kind() == webrtc.RTPCodecTypeAudio {
+ 		bufferSize = audioReorderBuffer
++	} else if t.track.Kind() == webrtc.RTPCodecTypeVideo {
++		bufferSize = videoReorderBuffer
+ 	}
+ 
+ 	t.rtpReceiver = &rtpreceiver.Receiver{
+diff --git a/internal/protocols/webrtc/keyframe_requests.go b/internal/protocols/webrtc/keyframe_requests.go
+new file mode 100644
+index 0000000..a089e25
+--- /dev/null
++++ b/internal/protocols/webrtc/keyframe_requests.go
+@@ -0,0 +1,85 @@
++package webrtc
++
++import (
++	"sync"
++	"time"
++
++	"github.com/pion/rtcp"
++	"github.com/pion/webrtc/v4"
++)
++
++// A viewer that has lost part of a picture and cannot get it back (a retransmission that was itself lost, or one
++// that came too late) asks for a whole new one: a picture loss indication, or a full intra request. The relay's answer
++// never offered it ("nack pli"), so a browser never asked, and had it asked, the request was read and dropped. The
++// viewer stayed frozen until the next key frame the publisher happened to make, which was whenever the relay's own
++// periodic request came round, and a person who joined waited for that too. Now the answer offers it, and the request
++// is passed on to whoever publishes the path.
++//
++// Many viewers can ask at once, and a key frame is many times the size of any other frame, so the publisher is asked
++// at most once every keyFrameRequestGap however many ask; a viewer's request inside that gap is covered by the
++// key frame that the previous one made.
++
++const keyFrameRequestGap = 500 * time.Millisecond
++
++type keyFrameSource struct {
++	request func()
++	last    time.Time
++}
++
++var (
++	keyFrameMutex   sync.Mutex
++	keyFrameSources = map[string]*keyFrameSource{}
++)
++
++// RegisterKeyFrameSource says that request makes the publisher of the path send a key frame. The returned function
++// takes it away again; call it when the publisher is gone.
++func RegisterKeyFrameSource(pathName string, request func()) func() {
++	source := &keyFrameSource{request: request}
++
++	keyFrameMutex.Lock()
++	keyFrameSources[pathName] = source
++	keyFrameMutex.Unlock()
++
++	return func() {
++		keyFrameMutex.Lock()
++		defer keyFrameMutex.Unlock()
++		if keyFrameSources[pathName] == source {
++			delete(keyFrameSources, pathName)
++		}
++	}
++}
++
++// RequestKeyFrame asks the publisher of the path for a key frame, unless one was asked for a moment ago.
++func RequestKeyFrame(pathName string) {
++	keyFrameMutex.Lock()
++	source := keyFrameSources[pathName]
++	if source == nil || time.Since(source.last) < keyFrameRequestGap {
++		keyFrameMutex.Unlock()
++		return
++	}
++	source.last = time.Now()
++	keyFrameMutex.Unlock()
++
++	source.request()
++}
++
++// RequestKeyFrame asks the peer publishing to this connection for a key frame on each of its video tracks.
++func (co *PeerConnection) RequestKeyFrame() {
++	for _, track := range co.inboundTracks {
++		if track.track.Kind() != webrtc.RTPCodecTypeVideo || track.writeRTCP == nil {
++			continue
++		}
++		track.writeRTCP([]rtcp.Packet{ //nolint:errcheck
++			&rtcp.PictureLossIndication{MediaSSRC: uint32(track.track.SSRC())},
++		})
++	}
++}
++
++// OnKeyFrameRequest is called when the peer reading from this connection asks for a key frame on a video track.
++func (co *PeerConnection) OnKeyFrameRequest(f func()) {
++	for _, track := range co.OutboundTracks {
++		if track.isVideo() {
++			track.onKeyFrameRequest = f
++		}
++	}
++}
+diff --git a/internal/protocols/webrtc/outbound_track.go b/internal/protocols/webrtc/outbound_track.go
+index 4ed30f8..0a9a090 100644
+--- a/internal/protocols/webrtc/outbound_track.go
++++ b/internal/protocols/webrtc/outbound_track.go
+@@ -17,6 +17,9 @@ type OutboundTrack struct {
+ 	track      *webrtc.TrackLocalStaticRTP
+ 	ssrc       uint32
+ 	rtcpSender *rtpsender.Sender
++
++	// called when the viewer asks for a key frame (see keyframe_requests.go)
++	onKeyFrameRequest func()
+ }
+ 
+ func (t *OutboundTrack) isVideo() bool {
+@@ -67,10 +70,19 @@ func (t *OutboundTrack) setup(p *PeerConnection) error {
+ 				return
+ 			}
+ 
+-			_, err2 = rtcp.Unmarshal(buf[:n])
++			pkts, err2 := rtcp.Unmarshal(buf[:n])
+ 			if err2 != nil {
+ 				panic(err2)
+ 			}
++
++			if t.onKeyFrameRequest != nil {
++				for _, pkt := range pkts {
++					switch pkt.(type) {
++					case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
++						t.onKeyFrameRequest()
++					}
++				}
++			}
+ 		}
+ 	}()
+ 
+diff --git a/internal/protocols/webrtc/peer_connection.go b/internal/protocols/webrtc/peer_connection.go
+index 549e246..779da30 100644
+--- a/internal/protocols/webrtc/peer_connection.go
++++ b/internal/protocols/webrtc/peer_connection.go
+@@ -123,6 +123,10 @@ func registerInterceptors(
+ 	// not offer it nothing is negotiated, and it is as it was.
+ 	mediaEngine.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack"}, webrtc.RTPCodecTypeAudio)
+ 
++	// A viewer can ask for a whole new picture (see keyframe_requests.go) only if it was offered the way to: without
++	// "nack pli" in the answer a browser never sends one.
++	mediaEngine.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
++
+ 	err = webrtc.ConfigureSimulcastExtensionHeaders(mediaEngine)
+ 	if err != nil {
+ 		return err
+diff --git a/internal/servers/webrtc/session.go b/internal/servers/webrtc/session.go
+index 05f98e5..f287e54 100644
+--- a/internal/servers/webrtc/session.go
++++ b/internal/servers/webrtc/session.go
+@@ -470,6 +470,9 @@ func (s *session) runPublish(req *initialRequestReq) (int, error) {
+ 
+ 	subStream = res2.SubStream
+ 
++	// viewers that lose a picture ask this publisher for a new one
++	defer webrtc.RegisterKeyFrameSource(s.pathName, pc.RequestKeyFrame)()
++
+ 	pc.StartReading()
+ 
+ 	select {
+@@ -537,6 +540,9 @@ func (s *session) runRead(req *initialRequestReq) (int, error) {
+ 		return http.StatusBadRequest, err
+ 	}
+ 
++	// a viewer that loses a picture asks for a new one, and the publisher is asked for it
++	pc.OnKeyFrameRequest(func() { webrtc.RequestKeyFrame(s.pathName) })
++
+ 	err = pc.Start()
+ 	if err != nil {
+ 		return http.StatusBadRequest, err

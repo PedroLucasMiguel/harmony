@@ -230,6 +230,9 @@ async function run() {
   };
   const w0 = await listW();
   check('with a post open there is an edge to drag on the list', edge.shown);
+  // Its bar is drawn on the line between the list and the post, not somewhere in the gap beside it.
+  const bar = await cdp.evaluate(`const h = document.querySelector('.col-resizer[data-resize="forum"]'); const a = getComputedStyle(h, '::after'); const r = h.getBoundingClientRect(); const line = document.getElementById('chat-active').getBoundingClientRect().left; return { centre: r.left + parseFloat(a.left) + parseFloat(a.width) / 2, line: line + 0.5 };`);
+  check('the edge\'s bar sits on the line between the list and the post', Math.abs(bar.centre - bar.line) <= 1.5, JSON.stringify(bar));
   await drag(90);
   const w1 = await listW();
   check('dragging it right widens the list', w1 >= w0 + 80, `${w0} -> ${w1}`);

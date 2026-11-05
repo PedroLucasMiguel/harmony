@@ -185,6 +185,7 @@ export async function setSenderPriority(sender, level) {
  *          instead of fifty a second
  *   ptime  audio goes out in frames of this many milliseconds, so 40 is
  *          twenty-five packets a second where the default is fifty
+ *   kbps   the most the encoder may average, said to it as `maxaveragebitrate`
  *
  * The sender's own settings come from what the OTHER side's description says
  * it wants to receive (RFC 7587: `usedtx` and `ptime` are a receiver's
@@ -207,7 +208,7 @@ export async function setSenderPriority(sender, level) {
  * @param {{dtx?: boolean, ptime?: number}} options
  * @returns {string}
  */
-export function tuneOpusAnswer(sdp, { dtx = true, ptime = 0 } = {}) {
+export function tuneOpusAnswer(sdp, { dtx = true, ptime = 0, kbps = 0 } = {}) {
   const lines = sdp.split(/\r?\n/);
   let audioStart = -1;
   let audioEnd = lines.length;
@@ -237,6 +238,11 @@ export function tuneOpusAnswer(sdp, { dtx = true, ptime = 0 } = {}) {
     const at = edited.findIndex((l) => new RegExp(`^a=rtpmap:${opus} `).test(l));
     edited.splice(at + 1, 0, `a=fmtp:${opus} usedtx=1`);
   }
+  if (kbps > 0) {
+    // Where the encoder is told how many bits it has, on the Opus line, unless somebody already said.
+    const at = edited.findIndex((l) => fmtp.test(l));
+    if (at >= 0 && !/(^|;)\s*maxaveragebitrate=/.test(edited[at])) edited[at] = `${edited[at]};maxaveragebitrate=${Math.round(kbps * 1000)}`;
+  }
   if (ptime > 0 && !edited.some((l) => l.startsWith('a=ptime:'))) {
     // Before any trailing blank line: attributes belong inside the section.
     let end = edited.length;
@@ -244,6 +250,40 @@ export function tuneOpusAnswer(sdp, { dtx = true, ptime = 0 } = {}) {
     edited.splice(end, 0, `a=ptime:${ptime}`, `a=maxptime:${ptime}`);
   }
   return [...lines.slice(0, audioStart), ...edited, ...lines.slice(audioEnd)].join('\r\n');
+}
+
+/**
+ * Offer to have lost voice packets asked for again (RFC 4585 NACK), on every Opus payload of the audio section.
+ *
+ * A browser offers it for video and not for voice, and a relay that answers it can ask a publisher for a packet it is
+ * missing and be asked by a listener for one it sent. Where the relay does not answer it the offer is as it was.
+ *
+ * @param {string} sdp an offer
+ */
+export function offerAudioNack(sdp) {
+  const lines = sdp.split(/\r?\n/);
+  const opus = new Set();
+  let section = '';
+  for (const line of lines) {
+    if (line.startsWith('m=')) section = line.slice(2).split(' ')[0];
+    const m = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
+    if (m && section === 'audio') opus.add(m[1]);
+  }
+  if (!opus.size) return sdp;
+
+  // After the last line that is about the payload, so that its feedback stays together.
+  const after = new Map();
+  section = '';
+  lines.forEach((line, i) => {
+    if (line.startsWith('m=')) section = line.slice(2).split(' ')[0];
+    const m = /^a=(?:rtpmap|rtcp-fb):(\d+) /.exec(line);
+    if (m && section === 'audio' && opus.has(m[1])) after.set(m[1], i);
+  });
+  const insert = new Map();
+  for (const [pt, at] of after) {
+    if (!lines.includes(`a=rtcp-fb:${pt} nack`)) insert.set(at, `a=rtcp-fb:${pt} nack`);
+  }
+  return lines.flatMap((line, i) => (insert.has(i) ? [line, insert.get(i)] : [line])).join('\r\n');
 }
 
 /**
@@ -436,7 +476,8 @@ async function publishOnce({
     }
 
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(stereoAudio ? { type: 'offer', sdp: tuneOpusStereo(offer.sdp, { kbps: stereoAudio }) } : offer);
+    const offered = audioTuning?.nack ? offerAudioNack(offer.sdp) : offer.sdp;
+    await pc.setLocalDescription(stereoAudio ? { type: 'offer', sdp: tuneOpusStereo(offered, { kbps: stereoAudio }) } : { type: 'offer', sdp: offered });
     await waitForIceGathering(pc);
 
     const reply = await harmony.api.sdp(url, pc.localDescription.sdp);
@@ -548,7 +589,8 @@ export async function watch({
     });
 
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(stereoAudio ? { type: 'offer', sdp: tuneOpusStereo(offer.sdp) } : offer);
+    const offered = media === 'audio' && window.__harmonyAudioNack !== false ? offerAudioNack(offer.sdp) : offer.sdp;
+    await pc.setLocalDescription(stereoAudio ? { type: 'offer', sdp: tuneOpusStereo(offered) } : { type: 'offer', sdp: offered });
     await waitForIceGathering(pc);
 
     const { answer: relayAnswer, resourceUrl } = await harmony.api.sdp(url, pc.localDescription.sdp);
