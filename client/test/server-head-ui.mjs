@@ -196,6 +196,8 @@ async function run() {
   list = await rect('.channel-list');
   check('the head is taller than the strip now, from the top of the view', head.y === view.y && head.h > bar.h, JSON.stringify({ head, bar }));
   check('the strip did not grow, and still has its buttons beside the head', bar.h === (await rect('#view-channels > .bar')).h && bar.h === 60 && (await rect('#channels-members')).x > head.r);
+  check('the head stays inside the channels column: it starts at the rail\'s edge and does not go over the rail', await cdp.evaluate(`const h = document.getElementById('server-head').getBoundingClientRect(); const r = document.getElementById('server-rail').getBoundingClientRect(); const l = document.querySelector('.channel-list').getBoundingClientRect();
+    return h.left >= r.right - 0.5 && h.left <= l.left && l.left - h.left < 20;`));
   check('the banner fills the head', await cdp.evaluate(`const i = document.getElementById('server-head-banner').getBoundingClientRect(); const h = document.getElementById('server-head').getBoundingClientRect();
     return Math.abs(i.width - h.width) < 2 && Math.abs(i.height - h.height) < 2 && document.getElementById('server-head-banner').naturalWidth > 0;`));
   check('the channels moved down with it, and are clear of it', (await rect('.channel-list-head')).y >= head.b && (await rect('.channel-list-head')).y > listTopBefore, JSON.stringify({ was: listTopBefore, now: (await rect('.channel-list-head')).y, head }));

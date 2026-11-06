@@ -1135,6 +1135,9 @@ select:focus {
  * duplicate names between you and the thing you came to see.
  */
 .channels-layout {
+  /* The room between the server rail and the channel list. The server's banner reaches back over it to the list's edge
+     (see .server-head), so it is one number that both use. */
+  --layout-pad-left: 0.5rem;
   display: grid;
   /* --side-col and --members-col are set when a column has been dragged
      narrower (applyColumnWidth); unset, they are the full widths. */
@@ -1144,7 +1147,7 @@ select:focus {
   /* Closer to the server rail than to anything else, as Discord's channel list is: the channels and the group
      headings sit about half a rem from the rail's edge, not a whole one. (A channel in a group is still set in from
      its heading: that is the group's own margin.) */
-  padding-left: 0.5rem;
+  padding-left: var(--layout-pad-left);
   /* Whatever the bar above it leaves, to the pixel. It was calc(100% - 3.5rem), a
      guess at the bar's height: the bar is a little taller, the grid ran past the
      window by the difference, and only a chat too short to need a scrollbar let
@@ -11461,14 +11464,15 @@ input[type='number'].volume-exact::-webkit-outer-spin-button {
   position: absolute;
   z-index: 6;
   top: calc(-1 * (var(--band) + 1rem));
-  left: -1rem;
+  /* To the edge of the channel list's column and no further: past it is the server rail. */
+  left: calc(-1 * var(--layout-pad-left));
   right: 0;
   height: calc(var(--band) + var(--head-extra));
   box-sizing: border-box;
   display: flex;
   align-items: flex-start;
   gap: 0.6rem;
-  padding: calc((var(--band) - 1.9rem) / 2) 0.9rem 0 1rem;
+  padding: calc((var(--band) - 1.9rem) / 2) 0.9rem 0 var(--layout-pad-left);
   overflow: hidden;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
