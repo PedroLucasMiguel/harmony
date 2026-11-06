@@ -1849,6 +1849,90 @@ select:focus {
   margin: 0.3rem 0.2rem;
 }
 
+/* ---------- the device and volume menu behind the microphone and headphone buttons ---------- */
+
+/* A button and its arrow, side by side and tight: the arrow is part of the button, not another one. */
+.split-btn {
+  display: inline-flex;
+  align-items: center;
+}
+.icon-btn.split-caret {
+  padding: 0.3rem 0.05rem;
+  min-width: 0;
+  margin-left: -0.1rem;
+  opacity: 0.6;
+}
+.icon-btn.split-caret::before {
+  font-size: calc(0.7rem * var(--text-scale, 1));
+}
+.icon-btn.split-caret:hover,
+.icon-btn.split-caret[aria-expanded='true'] {
+  opacity: 1;
+}
+.icon-btn.split-caret[aria-expanded='true']::before {
+  transform: rotate(180deg);
+}
+.audio-menu {
+  min-width: 16rem;
+  max-width: min(22rem, calc(100vw - 1rem));
+}
+.audio-menu-title {
+  padding: 0.25rem 0.55rem 0.15rem;
+  font-size: calc(0.72rem * var(--text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.audio-menu-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+.audio-menu .audio-menu-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The dot that says which one is in use: a ring, filled for the one chosen. */
+.audio-menu-radio {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+}
+.audio-menu-device[aria-checked='true'] {
+  color: var(--accent);
+}
+.audio-menu-device[aria-checked='true'] .audio-menu-radio {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 38%, transparent 42%);
+}
+.audio-menu-volume-row {
+  gap: 0.6rem;
+}
+.audio-menu-volume {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.audio-menu-volume-row .volume-value {
+  min-width: 2.8rem;
+  text-align: right;
+  font-size: calc(0.78rem * var(--text-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) {
+  .mobile-dock .self-actions .icon-btn.split-caret {
+    min-width: 0;
+  }
+}
+
 /* ---------- per-person volume ---------- */
 
 .peer-audio {

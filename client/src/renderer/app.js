@@ -19,6 +19,7 @@ import { createSecurityUi } from './security-ui.js';
 import { createDmUi } from './dm-ui.js';
 import { createCalls, isCallRoom } from './calls-ui.js';
 import { createCallScreen } from './call-screen.js';
+import { createAudioMenu } from './audio-menu.js';
 import { createTyping } from './typing-ui.js';
 import { messageTime } from './message-time.js';
 import { createPollUi } from './poll-ui.js';
@@ -528,6 +529,11 @@ const el = {
   voiceScreen: $('voice-screen'),
   voiceMute: $('voice-mute'),
   voiceDeafen: $('voice-deafen'),
+  voiceMuteMenu: $('voice-mute-menu'),
+  voiceDeafenMenu: $('voice-deafen-menu'),
+  micSplit: $('mic-split'),
+  deafenSplit: $('deafen-split'),
+  audioMenu: $('audio-menu'),
   voiceSoundboard: $('voice-soundboard'),
   voiceConfig: $('voice-config'),
   devicesDialog: $('devices'),
@@ -17337,6 +17343,86 @@ el.micGain.addEventListener('input', micTuningInput);
 el.micGate.addEventListener('input', micTuningInput);
 el.micGain.addEventListener('change', micTuningSave);
 el.micGate.addEventListener('change', micTuningSave);
+
+/*
+ * The menu behind the microphone and headphone buttons: the device and the volume, without the dialog.
+ *
+ * Nothing of its own is stored. A device is picked by moving the dialog's select and telling it so, which is what
+ * the dialog does when it is moved by hand; the input volume is the dialog's microphone slider and the output
+ * volume its master slider, so the two places cannot disagree.
+ */
+const audioMenu = createAudioMenu({
+  root: el.audioMenu,
+  t,
+  paintVolume: (slider, label, percent) => showVolume(slider, label, percent),
+  onSettings: () => el.voiceConfig.click(),
+});
+
+/** The devices a picker holds, as the menu lists them: the system's own first, in words. */
+const pickerDevices = (select) => [...select.options].map((option) => ({
+  id: option.value,
+  name: option.value === '' ? t('audio_menu.system_default') : option.textContent,
+}));
+
+async function openAudioMenu(kind, anchor, trigger) {
+  const input = kind === 'input';
+  const select = input ? el.voiceInput : el.voiceOutput;
+  // What is plugged in now, not what was when the last call began.
+  await refreshVoiceDevices({ apply: false }).catch(() => {});
+  audioMenu.open({
+    kind,
+    anchor,
+    trigger,
+    devices: pickerDevices(select),
+    selected: select.value,
+    onPick: (id) => {
+      select.value = id;
+      select.dispatchEvent(new Event('change'));
+    },
+    volume: input
+      ? {
+        value: Number(state.settings.micGain ?? 100),
+        max: Number(el.micGain.max) || 200,
+        onInput: (percent) => {
+          el.micGain.value = String(percent);
+          micTuningInput();
+        },
+        onChange: () => micTuningSave(),
+      }
+      : {
+        value: Number(state.settings.masterVolume ?? 100),
+        max: Number(el.masterVolume.max) || 200,
+        onInput: (percent) => {
+          showVolume(el.masterVolume, el.masterVolumeLabel, percent);
+          setMasterVolume(percent / 100);
+        },
+        onChange: (percent) => {
+          playCue('join');
+          harmony.settings.set({ masterVolume: percent })
+            .then(() => harmony.settings.get())
+            .then((settings) => { state.settings = settings; })
+            .catch(() => { /* applied either way; it just will not persist */ });
+        },
+      },
+  });
+}
+
+// The arrow beside each button, and a right-click on the button itself -- here, in the call bar and on the call screen.
+el.voiceMuteMenu.addEventListener('click', () => openAudioMenu('input', el.micSplit, el.voiceMuteMenu));
+el.voiceDeafenMenu.addEventListener('click', () => openAudioMenu('output', el.deafenSplit, el.voiceDeafenMenu));
+for (const [id, kind] of [
+  ['voice-mute', 'input'], ['voice-deafen', 'output'],
+  ['call-bar-mute', 'input'], ['call-bar-deafen', 'output'],
+  ['cs-mute', 'input'], ['cs-deafen', 'output'],
+]) {
+  const button = $(id);
+  // On the wrapper for the two that can be disabled outside a call: a disabled button says nothing of its own.
+  const target = button?.closest('.split-btn') ?? button;
+  target?.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    openAudioMenu(kind, target, null);
+  });
+}
 
 for (const [input, key] of [
   [el.micEchoCancellation, 'micEchoCancellation'],

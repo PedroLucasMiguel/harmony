@@ -351,6 +351,18 @@ export default {
   'app.your_display_name': 'Your display name',
   'app.your_screen_share_lost_its': 'Your screen share lost its connection.',
 
+  // --- audio_menu
+  'audio_menu.input_button': 'Input device and volume',
+  'audio_menu.input_device': 'Input device',
+  'audio_menu.input_title': 'Microphone',
+  'audio_menu.input_volume': 'Input volume',
+  'audio_menu.output_button': 'Output device and volume',
+  'audio_menu.output_device': 'Output device',
+  'audio_menu.output_title': 'Headphones',
+  'audio_menu.output_volume': 'Output volume',
+  'audio_menu.system_default': 'System default',
+  'audio_menu.voice_settings': 'Voice settings',
+
   // --- ask_cancel
   'ask_cancel.cancel': 'Cancel',
 

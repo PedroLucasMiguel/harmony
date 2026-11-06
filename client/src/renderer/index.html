@@ -644,10 +644,19 @@
             </button>
             <input id="avatar-file" type="file" accept="image/*" hidden />
             <div class="self-actions">
-              <button class="icon-btn" id="voice-mute" data-icon="microphone"
-                      title="Mute mic">Mute mic</button>
-              <button class="icon-btn" id="voice-deafen" data-icon="headphones"
-                      title="Deafen">Deafen</button>
+              <!-- Each button has an arrow beside it, and a right-click of its own: the device and the volume. -->
+              <span class="split-btn" id="mic-split">
+                <button class="icon-btn" id="voice-mute" data-icon="microphone"
+                        title="Mute mic">Mute mic</button>
+                <button class="icon-btn split-caret" id="voice-mute-menu" data-icon="caret-up" aria-haspopup="menu"
+                        title="Input device and volume" data-i18n-title="audio_menu.input_button">Input device and volume</button>
+              </span>
+              <span class="split-btn" id="deafen-split">
+                <button class="icon-btn" id="voice-deafen" data-icon="headphones"
+                        title="Deafen">Deafen</button>
+                <button class="icon-btn split-caret" id="voice-deafen-menu" data-icon="caret-up" aria-haspopup="menu"
+                        title="Output device and volume" data-i18n-title="audio_menu.output_button">Output device and volume</button>
+              </span>
               <button class="icon-btn" id="voice-config" data-icon="gear-six"
                       title="Devices and appearance" data-i18n-title="channel_dock.devices_and_appearance" data-i18n="voice_config.devices">Devices</button>
             </div>
@@ -1917,6 +1926,9 @@
       centimetres for a slider. They are the same controls; they are just not
       on screen until you ask for them.
     -->
+    <!-- The device and the volume behind the microphone and headphone buttons (audio-menu.js). -->
+    <div class="peer-menu" id="audio-menu" hidden></div>
+
     <div class="peer-menu" id="peer-menu" hidden>
       <div class="peer-menu-head">
         <span class="avatar" id="peer-menu-avatar"></span>

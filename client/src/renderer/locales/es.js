@@ -341,6 +341,18 @@ export default {
   'app.your_display_name': 'Tu nombre para mostrar',
   'app.your_screen_share_lost_its': 'Tu pantalla compartida perdió la conexión.',
 
+  // --- audio_menu
+  'audio_menu.input_button': 'Dispositivo y volumen de entrada',
+  'audio_menu.input_device': 'Dispositivo de entrada',
+  'audio_menu.input_title': 'Micrófono',
+  'audio_menu.input_volume': 'Volumen de entrada',
+  'audio_menu.output_button': 'Dispositivo y volumen de salida',
+  'audio_menu.output_device': 'Dispositivo de salida',
+  'audio_menu.output_title': 'Auriculares',
+  'audio_menu.output_volume': 'Volumen de salida',
+  'audio_menu.system_default': 'Predeterminado del sistema',
+  'audio_menu.voice_settings': 'Ajustes de voz',
+
   // --- ask_cancel
   'ask_cancel.cancel': 'Cancelar',
 
