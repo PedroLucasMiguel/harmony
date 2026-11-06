@@ -12977,6 +12977,15 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
   text-overflow: ellipsis;
 }
 
+/* A switch and its words, in a row of controls beside the selects. */
+.controls .inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+  font-size: calc(0.85rem * var(--text-scale, 1));
+}
+
 /* ---------- changes made live on the server's pages ---------- */
 
 /* "Saving..." and "Saved" under an editor: quiet, and in the same place every time. */

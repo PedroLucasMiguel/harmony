@@ -53,6 +53,8 @@ const DEFAULTS = {
   framerate: 0,
   // 'sharp' keeps resolution and drops frames; 'smooth' does the opposite.
   priority: 'sharp',
+  // Lower a share by itself when the computer cannot encode it fast enough (renderer/share-governor.js).
+  shareAutoAdapt: true,
   // Last audio input used with a camera or capture card.
   audioInputId: '',
   /*

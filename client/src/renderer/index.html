@@ -1261,6 +1261,11 @@
             <span data-i18n="view.broadcast.priority">Priority</span>
             <select id="live-priority"></select>
           </label>
+          <!-- When this computer cannot encode the stream as fast as it is asked to (a heavy game), lowering it beats a slideshow. -->
+          <label class="check inline-check" id="live-auto-adapt-field" title="When this computer cannot keep up, lower the frame rate and size by itself, and raise them again when it can" data-i18n-title="view.broadcast.auto_adapt_hint">
+            <input type="checkbox" class="switch" role="switch" id="live-auto-adapt" />
+            <span data-i18n="view.broadcast.auto_adapt">Adapt automatically</span>
+          </label>
           <button class="ghost" id="change-source" data-i18n="change_source.change_source">Change source</button>
           <button class="ghost" id="edit-composition" hidden data-i18n="edit_composition.edit_layout">Edit layout</button>
           <button class="ghost" id="toggle-preview" title="Stop drawing the preview — the stream keeps running" data-i18n-title="view.broadcast.stop_drawing_the_preview">

@@ -21,6 +21,7 @@ import { createCalls, isCallRoom } from './calls-ui.js';
 import { createCallScreen } from './call-screen.js';
 import { createAudioMenu } from './audio-menu.js';
 import { fileFromPaste } from './paste-text.js';
+import { createShareGovernor } from './share-governor.js';
 import { createTyping } from './typing-ui.js';
 import { messageTime } from './message-time.js';
 import { createPollUi } from './poll-ui.js';
@@ -572,6 +573,7 @@ const el = {
   liveResolution: $('live-resolution'),
   liveFramerate: $('live-framerate'),
   livePriority: $('live-priority'),
+  liveAutoAdapt: $('live-auto-adapt'),
   changeSource: $('change-source'),
   editComposition: $('edit-composition'),
   monitorToggle: $('monitor-toggle'),
@@ -851,7 +853,7 @@ const state = {
   changingSource: false,
 
   /** Live broadcast: what we are sending and the senders to swap it on. */
-  live: { videoSender: null, videoTrack: null, rawStream: null, source: null, audioMode: null },
+  live: { videoSender: null, videoTrack: null, rawStream: null, source: null, audioMode: null, governor: null, governed: null },
 
   /**
    * Whether the preview is being painted, and what to paint.
@@ -1265,6 +1267,7 @@ async function boot() {
     el.livePriority.append(new Option(mode.label, key));
   }
   el.livePriority.value = state.settings.priority in PRIORITY ? state.settings.priority : 'sharp';
+  el.liveAutoAdapt.checked = state.settings.shareAutoAdapt !== false;
 
   const availability = await harmony.audio.availability();
   state.audioAvailable = availability.available;
@@ -15086,6 +15089,9 @@ async function startBroadcast() {
     });
 
     state.live.videoSender = pc.getSenders().find((s) => s.track?.kind === 'video') ?? null;
+    // Watches the encoder, and lowers what is asked of it if the computer cannot keep up (see share-governor.js).
+    state.live.governor = createShareGovernor({ fps: preset.fps, width: preset.width || 0, height: preset.height || 0 });
+    state.live.governed = null;
 
     // Our own frames are already encoded on the way out, so buffering them
     // is pure copying.
@@ -15239,9 +15245,60 @@ const LIMIT_TEXT = {
   get other() { return t('limit.other'); },
 };
 
+/**
+ * What a share is lowered to, when this computer cannot encode what was asked for: nothing is changed in what the person
+ * chose (the selectors stay where they were, as the ceiling); the capture and the sender are asked for less, and the
+ * line under the stream says so. Nothing is saved: it is what this stream needs now, not a setting.
+ */
+async function applyGovernedQuality(plan) {
+  const { videoSender, videoTrack } = state.live;
+  if (!videoSender || !videoTrack) return;
+  state.live.governed = plan.lowered ? plan : null;
+  const preset = livePreset();
+  const priority = PRIORITY[el.livePriority.value] ?? PRIORITY.sharp;
+  try {
+    await videoTrack.applyConstraints({
+      frameRate: { ideal: plan.fps, max: plan.fps },
+      ...(plan.width ? { width: { max: plan.width }, height: { max: plan.height } } : (preset.width ? { width: { max: preset.width }, height: { max: preset.height } } : {})),
+    });
+  } catch {
+    // A capture that will not change its size still has the frame rate limit below.
+  }
+  await applySenderSettings(videoSender, {
+    maxBitrate: preset.bitrate,
+    maxFramerate: plan.fps,
+    degradationPreference: priority.degradationPreference,
+  }).catch(() => {});
+}
+
+/** What a new capture is opened at: the preset, lowered by as much as the stream has had to be. */
+function governedPreset(preset) {
+  const plan = state.live.governed;
+  if (!plan) return preset;
+  return { ...preset, fps: plan.fps, ...(plan.width ? { width: plan.width, height: plan.height } : {}) };
+}
+
+/** Feeds the encoder's own numbers to the governor, and applies what it asks for. */
+function adaptShare(s) {
+  const governor = state.live.governor;
+  if (!governor || state.settings?.shareAutoAdapt === false || !s.at) return;
+  const change = governor.sample({
+    at: s.at,
+    framesEncoded: s.framesEncoded,
+    totalEncodeTime: s.totalEncodeTime,
+    limitedBy: s.limitedBy,
+    kbps: s.kbps,
+    availableKbps: s.availableKbps,
+    width: s.width,
+    height: s.height,
+  });
+  if (change) applyGovernedQuality(change).catch(() => {});
+}
+
 async function updateBroadcastStats() {
   if (!state.statsReader) return;
   const s = await state.statsReader();
+  adaptShare(s);
   const bits = [
     s.width ? `${s.width}×${s.height}` : null,
     s.fps ? `${s.fps} fps` : null,
@@ -15256,7 +15313,10 @@ async function updateBroadcastStats() {
 
   // Say why the picture is worse than requested, rather than leaving the
   // broadcaster to guess whether it is them, their connection, or the server.
-  const limit = s.limitedBy && s.limitedBy !== 'none' ? LIMIT_TEXT[s.limitedBy] ?? s.limitedBy : null;
+  const governed = state.live.governed;
+  const limit = governed
+    ? t('limit.adapted', { size: governed.height ? `${governed.height}p` : '', fps: governed.fps })
+    : (s.limitedBy && s.limitedBy !== 'none' ? LIMIT_TEXT[s.limitedBy] ?? s.limitedBy : null);
   el.broadcastLimit.textContent = limit ? `⚠ ${limit}` : '';
   el.broadcastLimit.hidden = !limit;
 
@@ -15385,6 +15445,9 @@ async function applyLiveQuality() {
   if (!videoSender || !videoTrack) return;
 
   videoTrack.contentHint = priority.contentHint;
+  // What was asked for is the new ceiling: whatever was lowered below the old one is let go.
+  state.live.governor?.ask({ fps: preset.fps, width: preset.width || 0, height: preset.height || 0 });
+  state.live.governed = null;
 
   // Resolution and frame rate live on the capture; bitrate and the degradation
   // policy live on the sender. Both have to move together.
@@ -15428,7 +15491,7 @@ async function changeLiveSource(source) {
   const previousPreview = state.preview.stream;
 
   const previousCompositor = state.live.compositor;
-  const { track, rawStream, previewTrack, compositor } = await acquireVideo(source, preset, plan);
+  const { track, rawStream, previewTrack, compositor } = await acquireVideo(source, governedPreset(preset), plan);
   state.preview.stream = new MediaStream([previewTrack]);
   state.live.rawStream = rawStream;
   state.live.source = source;
@@ -16374,7 +16437,7 @@ async function teardown() {
   state.live.compositor?.destroy();
   state.preview.stream?.getTracks().forEach((t) => t.stop());
   state.preview.stream = null;
-  state.live = { videoSender: null, videoTrack: null, rawStream: null, source: null, audioMode: null };
+  state.live = { videoSender: null, videoTrack: null, rawStream: null, source: null, audioMode: null, governor: null, governed: null };
   applyCompositionControls();
   state.changingSource = false;
   el.preview.srcObject = null;
@@ -16432,6 +16495,13 @@ window.__harmonyPip = () => ({
 /** What our microphone is putting on the wire. Async; see publishStats. */
 window.__harmonyPublish = () => state.voice.publishStats();
 window.__harmonyVoice = () => state.voice;
+// The share's adaptation to a computer that cannot keep up, for the test that drives it with a stream of its own.
+window.__harmonyShare = {
+  live: () => state.live,
+  adopt: (live) => Object.assign(state.live, live),
+  adapt: (reading) => adaptShare(reading),
+  preset: (preset) => governedPreset(preset),
+};
 /** How the stream tiles are put back after a change: see placeChildren. For the tests. */
 window.__harmonyPlaceChildren = placeChildren;
 
@@ -18425,6 +18495,11 @@ el.picker.addEventListener('cancel', (event) => {
   if (!el.pickerBack.disabled) el.pickerBack.click();
 });
 el.livePriority.addEventListener('change', applyLiveQuality);
+el.liveAutoAdapt.addEventListener('change', async () => {
+  state.settings = await harmony.settings.set({ shareAutoAdapt: el.liveAutoAdapt.checked });
+  // Off: what was asked for is what is asked of the encoder, whatever it was lowered to.
+  if (!el.liveAutoAdapt.checked && state.live.governed) await applyLiveQuality();
+});
 
 /**
  * Reopen the picker to swap what a running stream shows.

@@ -692,6 +692,11 @@ export function createStatsReader(pc, direction /* 'outbound' | 'inbound' */) {
       // AMD AMF, Intel QuickSync) sits around 1-3 ms a frame, while the
       // software fallback at 1080p runs an order of magnitude slower.
       encodeMs: null,
+      // The running totals behind it, for a reader that wants the last few seconds and not the whole stream (see
+      // share-governor.js): frames encoded, the time spent on them in seconds, and when this was read, in ms.
+      framesEncoded: 0,
+      totalEncodeTime: 0,
+      at: 0,
       /**
        * What is actually doing the work, straight from the horse's mouth --
        * e.g. "MediaFoundationVideoEncodeAccelerator (NVIDIA H.264 Encoder MFT)"
@@ -738,6 +743,9 @@ export function createStatsReader(pc, direction /* 'outbound' | 'inbound' */) {
           if (r.totalEncodeTime && r.framesEncoded) {
             out.encodeMs = (r.totalEncodeTime / r.framesEncoded) * 1000;
           }
+          out.framesEncoded = r.framesEncoded ?? 0;
+          out.totalEncodeTime = r.totalEncodeTime ?? 0;
+          out.at = r.timestamp ?? 0;
         }
       }
 

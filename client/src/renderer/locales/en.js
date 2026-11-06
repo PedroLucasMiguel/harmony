@@ -786,6 +786,7 @@ export default {
   'lightbox_save.save': 'Save',
 
   // --- limit
+  "limit.adapted": "lowered to {size} at {fps} fps: this computer cannot encode more while it is this busy",
   'limit.bandwidth': 'limited by your upload speed',
   'limit.cpu': 'limited by this computer',
   'limit.other': 'limited',
@@ -1225,6 +1226,8 @@ export default {
   'settings.voice.video_fixed': 'The video pictures were put back.',
 
   // --- view
+  "view.broadcast.auto_adapt_hint": "When this computer cannot keep up, lower the frame rate and size by itself, and raise them again when it can",
+  "view.broadcast.auto_adapt": "Adapt automatically",
   'view.broadcast.framerate': 'Framerate',
   'view.broadcast.priority': 'Priority',
   'view.broadcast.resolution': 'Resolution',

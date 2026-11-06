@@ -776,6 +776,7 @@ export default {
   'lightbox_save.save': 'Salvar',
 
   // --- limit
+  "limit.adapted": "reduzido para {size} a {fps} fps: este computador não consegue codificar mais enquanto está tão ocupado",
   'limit.bandwidth': 'limitado pela sua velocidade de envio',
   'limit.cpu': 'limitado por este computador',
   'limit.other': 'limitado',
@@ -1215,6 +1216,8 @@ export default {
   'settings.voice.video_fixed': 'As imagens de vídeo foram recolocadas.',
 
   // --- view
+  "view.broadcast.auto_adapt_hint": "Quando este computador não dá conta, baixa a taxa de quadros e o tamanho sozinho, e sobe de novo quando der",
+  "view.broadcast.auto_adapt": "Adaptar automaticamente",
   'view.broadcast.framerate': 'Taxa de quadros',
   'view.broadcast.priority': 'Prioridade',
   'view.broadcast.resolution': 'Resolução',

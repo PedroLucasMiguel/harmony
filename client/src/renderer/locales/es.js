@@ -776,6 +776,7 @@ export default {
   'lightbox_save.save': 'Guardar',
 
   // --- limit
+  "limit.adapted": "bajado a {size} a {fps} fps: este equipo no puede codificar más mientras está tan ocupado",
   'limit.bandwidth': 'limitado por tu velocidad de subida',
   'limit.cpu': 'limitado por este equipo',
   'limit.other': 'limitado',
@@ -1215,6 +1216,8 @@ export default {
   'settings.voice.video_fixed': 'Se volvieron a poner las imágenes de vídeo.',
 
   // --- view
+  "view.broadcast.auto_adapt_hint": "Cuando este equipo no puede seguir el ritmo, baja la tasa de fotogramas y el tamaño por sí solo, y los sube de nuevo cuando puede",
+  "view.broadcast.auto_adapt": "Adaptar automáticamente",
   'view.broadcast.framerate': 'Velocidad de fotogramas',
   'view.broadcast.priority': 'Prioridad',
   'view.broadcast.resolution': 'Resolución',
