@@ -6,6 +6,8 @@
 // (server/src/chat.js); opening one is the app's: it is the chat pane, showing that post's thread (see openPost in
 // app.js). This is only the list on its side, and it knows nothing of how a thread is drawn.
 
+import { fileFromPaste } from './paste-text.js';
+
 const SORTS = ['activity', 'new', 'replies'];
 const SORT_KEY = 'harmony.forum.sort';
 /** How long after the last word a typed search is sent, so that every letter is not a request. */
@@ -412,6 +414,7 @@ export function createForumUi(deps) {
     const emoji = el('button', 'composer-btn', t('chat_emoji.emoji'));
     emoji.type = 'button';
     emoji.dataset.icon = 'smiley';
+    emoji.dataset.emojiTrigger = '';
     emoji.title = t('chat_emoji.emoji');
     const problem = el('span', 'forum-compose-problem');
     problem.setAttribute('role', 'status');
@@ -505,7 +508,15 @@ export function createForumUi(deps) {
     });
     body.addEventListener('paste', (event) => {
       const files = [...(event.clipboardData?.files ?? [])];
-      if (!files.length) return;
+      if (!files.length) {
+        // Text, and too much of it for a post: a file of it goes with the post instead (see paste-text.js).
+        const text = fileFromPaste(event, body, state_.files.map((f) => f.name));
+        if (text) {
+          event.preventDefault();
+          add([text]);
+        }
+        return;
+      }
       event.preventDefault();
       add(files);
     });

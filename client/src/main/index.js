@@ -19,6 +19,7 @@ const hotkeys = require('./hotkeys');
 const ptt = require('./ptt');
 const { opensDevTools } = require('./devtools-keys');
 const { zoomKey } = require('./zoom-keys');
+const { quitsApp } = require('./quit-keys');
 const updater = require('./updater');
 const voiceTray = require('./voice-tray');
 const strings = require('./strings');
@@ -430,6 +431,12 @@ function createWindow() {
   // devtools-keys. Handled here, so the menu's own accelerator never also fires
   // and shuts what this just opened.
   win.webContents.on('before-input-event', (event, input) => {
+    // Alt+F4 quits Harmony; it does not hide it to the tray as the window's X does (see quit-keys).
+    if (quitsApp(input, process.platform)) {
+      event.preventDefault();
+      voiceTray.quit();
+      return;
+    }
     if (opensDevTools(input, process.platform)) {
       event.preventDefault();
       win.webContents.toggleDevTools();

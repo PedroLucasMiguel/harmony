@@ -179,6 +179,30 @@ async function run() {
     }
   }
 
+  // A paste too long for a message goes as a text file, with every word of it.
+  {
+    const long = Array.from({ length: 700 }, (_, n) => `line ${n}: a long log line, with enough in it to be worth a file`).join('\n');
+    const before = (await api(`/api/channels/${channel.id}/messages`)).messages.length;
+    const taken = await cdp.evaluate(`const input = document.getElementById('chat-input'); input.focus(); const dt = new DataTransfer(); dt.setData('text/plain', ${JSON.stringify(long)});
+      const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); input.dispatchEvent(e); return e.defaultPrevented;`);
+    check('a paste too long for a message is taken over, and the box stays empty', taken === true && (await cdp.evaluate("return document.getElementById('chat-input').value;")) === '');
+    await waitFor(cdp, "!document.getElementById('chat-send').disabled", { label: 'the pasted text to be ready to send' });
+    await cdp.evaluate("document.getElementById('chat-send').click(); return true;");
+    let sent = null;
+    for (const deadline = Date.now() + 15_000; Date.now() < deadline && !sent; await sleep(300)) {
+      const { messages } = await api(`/api/channels/${channel.id}/messages`);
+      if (messages.length > before) sent = messages.at(-1);
+    }
+    check('it is sent as message.txt, the size of what was pasted', sent?.attachmentName === 'message.txt' && sent.attachmentBytes === Buffer.byteLength(long), `${sent?.attachmentName} ${sent?.attachmentBytes}`);
+    if (sent?.attachmentHash) {
+      const back = await fetch(`${BASE}/api/uploads/${sent.attachmentHash}`, { headers: { Authorization: `Bearer ${token}` } });
+      check('and comes back word for word', (await back.text()) === long);
+    }
+    const short = await cdp.evaluate(`const input = document.getElementById('chat-input'); const dt = new DataTransfer(); dt.setData('text/plain', 'a few words');
+      const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); input.dispatchEvent(e); return e.defaultPrevented;`);
+    check('a short paste is left alone', short === false);
+  }
+
   // Too big is still too big: the server's own limit is the only one.
   const limit = (await api('/api/server')).server?.maxFileBytes ?? null;
   check('the only limit left is the server\'s own, and the client knows it', Number.isFinite(limit) && limit > 0, String(limit));

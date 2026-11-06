@@ -31,6 +31,7 @@ import { createTyping } from './typing-ui.js';
 import { messageTime } from './message-time.js';
 import { createPollUi } from './poll-ui.js';
 import { createReactionsUi } from './reactions-ui.js';
+import { fileFromPaste } from './paste-text.js';
 import { resultsFromReactions, withoutVotes } from './poll.js';
 
 /** How many people a group holds, as the server limits it (and as a call can carry). */
@@ -453,6 +454,19 @@ export function createDmUi(deps) {
 
   const totalUnread = () => [...homes.values()].reduce((n, h) => n + h.session.unread, 0);
 
+  /** What a node draws, for comparing: an element by its markup, a bit of text by its words. */
+  const drawing = (node) => node.outerHTML ?? node.textContent ?? '';
+
+  /**
+   * Fills `parent` with `nodes`, unless it already draws exactly them. A screen that is drawn again for every change
+   * would be taken down and put back each time, and most changes are not to this part of it.
+   */
+  function setChildren(parent, nodes) {
+    const now = [...parent.childNodes];
+    if (now.length === nodes.length && now.every((n, i) => drawing(n) === drawing(nodes[i]))) return;
+    parent.replaceChildren(...nodes);
+  }
+
   function render() {
     renderBadge();
     if (!el.panel.hidden || deps.listDocked?.()) renderPanel();
@@ -529,7 +543,7 @@ export function createDmUi(deps) {
       if (several) a.textContent = `${serverLabel(n.h.server)}: ${a.textContent}`;
       return a;
     }));
-    el.panelActions.replaceChildren(...actions);
+    setChildren(el.panelActions, actions);
     el.panelActions.hidden = actions.length === 0;
 
     const needle = el.find.value.trim().toLowerCase();
@@ -581,7 +595,7 @@ export function createDmUi(deps) {
         items.push(none);
       }
     }
-    el.list.replaceChildren(...items);
+    setChildren(el.list, items);
   }
 
   /** Somebody there is no conversation with yet: a click starts one. */
@@ -867,6 +881,36 @@ export function createDmUi(deps) {
     el.log.querySelector('.new-divider')?.remove();
   }
 
+  /**
+   * The rows of the log as they were drawn, by message: the message as it was (a new object whenever it is edited,
+   * reacted to, pinned or opened again), what the row also depended on, and the row itself.
+   *
+   * The conversation is drawn again on every change -- a message in, a message read, a key, a name -- and most of
+   * those change nothing in it. Putting the whole page down and building it again each time is a flash, a picture
+   * loading again, a video stopped and a list that jumps; so a row whose message and surroundings are the same is the
+   * row that is already there.
+   *
+   * @type {WeakMap<object, {key: string, node: HTMLElement}>}
+   */
+  const rowsDrawn = new WeakMap();
+  /** Set where something that is not in the key has changed (the page asking for a redraw): every row is made again. */
+  let redrawRows = false;
+
+  /** What a row is made of besides its message: whom it is next to, who they are, and what it is marked as. */
+  function rowKey(message, previous) {
+    const who = (id) => `${peerName(id)}\u0001${JSON.stringify(faceOf(id, ''))}`;
+    return [
+      // Any word of the language will do: it is another one when the language is.
+      t('dm.edited'),
+      previous ? `${previous.userId}:${previous.pinned ? 1 : 0}:${previous.createdAt}` : '-',
+      isStarred(message) ? 1 : 0,
+      editing?.id === message.id ? 1 : 0,
+      messageTime(message.createdAt),
+      who(message.userId),
+      message.reply ? who(message.reply.userId) : '',
+    ].join('\u0002');
+  }
+
   function renderConversation({ scrollToBottom = false, toNews = false } = {}) {
     const c = session?.conversations.get(currentId);
     if (!c) {
@@ -876,11 +920,11 @@ export function createDmUi(deps) {
     }
     if (isGroup(c)) {
       // The people glyph, as the generic icon rule draws it, in place of a face.
-      el.headAvatar.replaceChildren();
+      setChildren(el.headAvatar, []);
       el.headAvatar.dataset.icon = 'users-three';
     } else {
       delete el.headAvatar.dataset.icon;
-      el.headAvatar.replaceChildren(...avatarEl(faceOf(c.peer, '')).childNodes);
+      setChildren(el.headAvatar, [...avatarEl(faceOf(c.peer, '')).childNodes]);
     }
     // Somebody's profile is a click on their picture; a group's picture is nobody's.
     delete el.headAvatar.dataset.profileUser;
@@ -891,7 +935,7 @@ export function createDmUi(deps) {
     const label = document.createElement('span');
     label.textContent = conversationName(c);
     if (!isGroup(c)) nameFont(label, c.peer);
-    el.name.replaceChildren(label);
+    setChildren(el.name, [label]);
     const group = isGroup(c);
     const verified = !group && session.verified(c.peer);
     el.verified.hidden = !verified;
@@ -917,20 +961,46 @@ export function createDmUi(deps) {
       if (live) editing = live;
       else setEditing(null);
     }
-    parkMedia(log);
-    // The line goes before the first message newer than what was read, and the message under it starts a block of
-    // its own.
+    // Which rows are still right. The line over the news goes before the first message newer than what was read, and
+    // the message under it starts a block of its own.
+    const force = redrawRows;
+    redrawRows = false;
+    const wanted = [];
     let dividerDrawn = false;
-    const rows = [];
+    let divider = log.querySelector(':scope > .new-divider');
     messages.forEach((m, i, all) => {
+      let previous = all[i - 1];
       if (newAfter !== null && !dividerDrawn && m.id > newAfter) {
         dividerDrawn = true;
-        rows.push(newMessagesDivider(), messageRow(m, undefined));
-        return;
+        divider ??= newMessagesDivider();
+        wanted.push({ node: divider });
+        previous = undefined;
       }
-      rows.push(messageRow(m, all[i - 1]));
+      const key = rowKey(m, previous);
+      const had = rowsDrawn.get(m);
+      const node = !force && had?.key === key && had.node.parentNode === log ? had.node : null;
+      wanted.push({ message: m, previous, key, node });
     });
-    log.replaceChildren(...rows);
+    const keep = new Set(wanted.map((w) => w.node).filter(Boolean));
+    // What is going, and is playing, is kept for the row that takes its place.
+    const going = [...log.children].filter((n) => !keep.has(n));
+    parkMedia({ querySelectorAll: (selector) => going.flatMap((n) => [...n.querySelectorAll?.(selector) ?? []]) });
+    for (const w of wanted) {
+      if (w.node) continue;
+      w.node = messageRow(w.message, w.previous);
+      rowsDrawn.set(w.message, { key: w.key, node: w.node });
+    }
+    // Put in place only what is not already: a row that is where it should be is not touched.
+    let at = log.firstElementChild;
+    for (const { node } of wanted) {
+      if (node === at) at = at.nextElementSibling;
+      else log.insertBefore(node, at);
+    }
+    while (at) {
+      const next = at.nextElementSibling;
+      at.remove();
+      at = next;
+    }
     dropParked();
     el.more.hidden = !session.hasMore(currentId);
     const line = toNews ? log.querySelector('.new-divider') : null;
@@ -2045,13 +2115,21 @@ export function createDmUi(deps) {
   });
   /*
    * Paste a file straight into the box -- a screenshot, or a file copied in
-   * the file manager -- as the channels' box does. Text is left alone: only a
-   * paste that carries a file is taken over. A pasted picture has no name of
+   * the file manager -- as the channels' box does. Text is left alone, unless it is more than a message holds: then
+   * it is a file. Only a paste that carries a file, or that much text, is taken over. A pasted picture has no name of
    * its own ("image.png", every time), so it gets a dated one.
    */
   el.input.addEventListener('paste', (event) => {
     const file = [...(event.clipboardData?.files ?? [])][0];
-    if (!file) return;
+    if (!file) {
+      // Text, and too much of it for a message: a file of it goes with the message instead (see paste-text.js).
+      const text = fileFromPaste(event, el.input);
+      if (text) {
+        event.preventDefault();
+        pickFile(text);
+      }
+      return;
+    }
     event.preventDefault();
     const generic = file.type.startsWith('image/') && (!file.name || /^image\.[a-z0-9]+$/i.test(file.name));
     if (!generic) {
@@ -2488,7 +2566,9 @@ export function createDmUi(deps) {
   return {
     start, startBackground, stop, release, openWith, handleEvent, closeConversation, isOpen, togglePanel,
     current, show,
-    render, refreshAll,
+    // Asked for from outside (the page was shown, something changed that a row cannot see): every row is made again.
+    render: () => { redrawRows = true; render(); },
+    refreshAll,
     acceptsFiles, showDrop, dropFiles, bodyOf,
     get session() { return session; },
     /** Messages waiting, over every conversation on every server. */

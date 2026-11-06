@@ -212,10 +212,10 @@ async function run() {
   const preview = await look(owner, '#role-style .role-style-preview strong');
   check('the preview draws the gradient as it is edited', preview.kind === 'gradient' && preview.image.includes('rgb(255, 0, 0)') && preview.image.includes('rgb(0, 0, 255)'), JSON.stringify(preview));
   await shot(owner, 'role-style');
-  await click(owner, '#role-save');
+  // No Save: the colours are sent a moment after the last one moved.
   await until(owner, `document.querySelector('${row}').dataset.nameStyle === 'gradient'`, { label: 'the member list changing' });
   const saved = (await rest('chief', '/api/roles')).body.roles.find((r) => r.id === crew.id);
-  check('Save keeps the gradient, and its first colour as the role\'s plain colour', saved.style?.mode === 'gradient' && saved.color === '#ff0000' && JSON.stringify(saved.style.colors) === JSON.stringify(['#ff0000', '#0000ff']), JSON.stringify(saved));
+  check('the gradient is kept by itself, with its first colour as the role\'s plain colour', saved.style?.mode === 'gradient' && saved.color === '#ff0000' && JSON.stringify(saved.style.colors) === JSON.stringify(['#ff0000', '#0000ff']), JSON.stringify(saved));
   const g = await look(owner, row);
   check('members\' names move through the gradient, in the owner\'s member list', g.kind === 'gradient' && g.speed !== '' && g.clip === 'text' && g.image.includes('rgb(0, 0, 255)'), JSON.stringify(g));
   await until(bobPage, "document.getElementById('channels-who').dataset.nameStyle === 'gradient'", { timeoutMs: 4000, label: 'Bob\'s own name' });
@@ -232,14 +232,12 @@ async function run() {
 
   // --- rainbow ---------------------------------------------------------------------------------------------------
   await kind(owner, 'Rainbow');
-  await click(owner, '#role-save');
   await until(owner, `document.querySelector('${row}').dataset.nameStyle === 'rainbow'`, { label: 'the rainbow' });
   const r = await look(owner, row);
   check('the rainbow works for a role too', r.kind === 'rainbow' && r.image.includes('linear-gradient') && r.speed !== '', JSON.stringify(r));
 
   // --- back to plain ------------------------------------------------------------------------------------------------
   await kind(owner, 'Solid');
-  await click(owner, '#role-save');
   await until(owner, `document.querySelector('${row}').dataset.nameStyle === undefined`, { label: 'plain again' });
   const plain = (await rest('chief', '/api/roles')).body.roles.find((x) => x.id === crew.id);
   check('Solid takes the style away and keeps the colour', plain.style === null && /^#[0-9a-f]{6}$/.test(plain.color), JSON.stringify(plain));

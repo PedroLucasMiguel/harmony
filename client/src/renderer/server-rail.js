@@ -45,8 +45,18 @@ export function createServerRail({
   const card = createServerCard({
     fillBadge, pictureUrl, root, faceFor, t,
   });
-  /** The server being dragged, by address. */
-  let dragging = null;
+  /**
+   * The server being moved, while it is: by address, where the press began, and what it is over.
+   * @type {{url: string, button: HTMLElement, x: number, y: number, started: boolean, ghost: HTMLElement|null,
+   *   over: HTMLElement|null, after: boolean, timer: number|null, pointerId: number, touch: boolean}|null}
+   */
+  let move = null;
+  /** What the app asked to be drawn while a server was in the hand: it is drawn when it is let go. */
+  let pending = null;
+  /** How far the pointer goes before a press is a drag and not a click. */
+  const DRAG_PX = 5;
+  /** A finger has to rest this long on a bubble first, or every swipe along the rail would pick one up. */
+  const HOLD_MS = 350;
 
   /**
    * @param {object} view
@@ -57,9 +67,17 @@ export function createServerRail({
    *   state: 'up'|'offline'|'locked'|'connecting', unread: number, mentions: number,
    *   inCall: boolean, voice: boolean}[]} view.servers  `voice`: somebody is in one of its voice channels
    */
-  function render({
-    homeCurrent = false, homeUnread = 0, homeAvailable = true, servers = [],
-  }) {
+  function render(view = {}) {
+    // The rail is drawn again by every change on any server (a message, somebody joining a call): taking the bubble
+    // out from under a hand that is moving it ends the move. What there is to draw waits for it to be put down.
+    if (move?.started) {
+      pending = view;
+      return;
+    }
+    pending = null;
+    const {
+      homeCurrent = false, homeUnread = 0, homeAvailable = true, servers = [],
+    } = view;
     const home = document.createElement('button');
     home.type = 'button';
     home.className = 'rail-item rail-home';
@@ -134,33 +152,10 @@ export function createServerRail({
         onMenu(server.url, event);
       });
 
-      // Dragged to where it should sit: a bar on the side it will land on says which.
-      button.draggable = true;
-      button.addEventListener('dragstart', (event) => {
-        dragging = server.url;
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', server.url);
-      });
-      button.addEventListener('dragend', () => {
-        dragging = null;
-        for (const other of root.querySelectorAll('[data-drop]')) other.removeAttribute('data-drop');
-      });
-      button.addEventListener('dragover', (event) => {
-        if (dragging === null || dragging === server.url) return;
-        event.preventDefault();
-        const box = button.getBoundingClientRect();
-        button.dataset.drop = event.clientY > box.top + box.height / 2 ? 'after' : 'before';
-      });
-      button.addEventListener('dragleave', () => button.removeAttribute('data-drop'));
-      button.addEventListener('drop', (event) => {
-        if (dragging === null || dragging === server.url) return;
-        event.preventDefault();
-        const after = button.dataset.drop === 'after';
-        button.removeAttribute('data-drop');
-        const from = dragging;
-        dragging = null;
-        onMove(from, server.url, after);
-      });
+      // Moved by pressing and dragging, with a copy of it following the pointer and a bar where it will land. Not the
+      // browser's drag-and-drop: that is cancelled by the rail being drawn again, takes the logo's picture for the
+      // thing dragged, and shows nothing of where it will go.
+      button.addEventListener('pointerdown', (event) => press(event, server.url, button));
       return button;
     });
 
@@ -180,6 +175,140 @@ export function createServerRail({
 
     root.replaceChildren(home, separator, ...items, add);
     card.sync(cards);
+  }
+
+  // ------------------------------------------------------------------------------------------------ moving one
+
+  const bubbles = () => [...root.querySelectorAll('.rail-item[data-server]')];
+
+  function press(event, url, button) {
+    if (move || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    move = {
+      url, button, x: event.clientX, y: event.clientY, started: false, ghost: null, over: null, after: false, timer: null,
+      pointerId: event.pointerId, touch: event.pointerType === 'touch',
+    };
+    // A finger: held a moment first (see HOLD_MS). Anything else: dragged a few pixels.
+    if (move.touch) move.timer = window.setTimeout(() => { if (move && !move.started) begin(); }, HOLD_MS);
+    document.addEventListener('pointermove', track, true);
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', abandon, true);
+    document.addEventListener('keydown', escape, true);
+    document.addEventListener('touchmove', holdStill, { capture: true, passive: false });
+  }
+
+  /** A finger that has picked a bubble up moves it: the rail does not scroll under it. */
+  const holdStill = (event) => {
+    if (move?.started && event.cancelable) event.preventDefault();
+  };
+
+  function begin() {
+    if (!move || move.started) return;
+    move.started = true;
+    window.clearTimeout(move.timer);
+    // The bubble may have been drawn again since the press: the one there now is the one in the hand.
+    move.button = bubbles().find((b) => b.dataset.server === move.url) ?? move.button;
+    root.dataset.reordering = '';
+    move.button.setAttribute('data-dragging', '');
+    // A copy of the bubble, in the hand.
+    const ghost = move.button.cloneNode(true);
+    for (const name of ['data-server', 'data-state', 'data-dragging', 'aria-current', 'data-unread', 'data-in-call']) ghost.removeAttribute(name);
+    ghost.removeAttribute('aria-label');
+    ghost.classList.add('rail-ghost');
+    ghost.setAttribute('aria-hidden', 'true');
+    document.body.append(ghost);
+    move.ghost = ghost;
+    card.close();
+    document.body.style.userSelect = 'none';
+  }
+
+  function track(event) {
+    if (!move || event.pointerId !== move.pointerId) return;
+    if (!move.started) {
+      if (move.touch) {
+        // Moved before the hold was up: it is a swipe, not a pick-up.
+        if (Math.hypot(event.clientX - move.x, event.clientY - move.y) > DRAG_PX * 2) stop(false);
+        return;
+      }
+      if (Math.hypot(event.clientX - move.x, event.clientY - move.y) < DRAG_PX) return;
+      begin();
+    }
+    event.preventDefault();
+    move.ghost.style.transform = `translate(${event.clientX - 24}px, ${event.clientY - 24}px) scale(1.06)`;
+    // The rail scrolls when there are more servers than room: near its edge, it follows the hand.
+    const box = root.getBoundingClientRect();
+    if (event.clientY < box.top + 28) root.scrollTop -= 8;
+    else if (event.clientY > box.bottom - 28) root.scrollTop += 8;
+
+    // The bubble the pointer is on, or the nearest in line with it: and which half of it.
+    const others = bubbles().filter((b) => b.dataset.server !== move.url);
+    let over = null;
+    let best = Infinity;
+    for (const b of others) {
+      const r = b.getBoundingClientRect();
+      const gap = event.clientY < r.top ? r.top - event.clientY : event.clientY > r.bottom ? event.clientY - r.bottom : 0;
+      if (gap < best) {
+        best = gap;
+        over = b;
+      }
+    }
+    const rect = over?.getBoundingClientRect();
+    const after = rect ? event.clientY > rect.top + rect.height / 2 : false;
+    if (over !== move.over || after !== move.after) {
+      move.over?.removeAttribute('data-drop');
+      over?.setAttribute('data-drop', after ? 'after' : 'before');
+      move.over = over;
+      move.after = after;
+    }
+  }
+
+  function release(event) {
+    if (!move || event.pointerId !== move.pointerId) return;
+    if (!move.started) {
+      stop(false);
+      return;
+    }
+    // The click that ends this press is not a choice of server.
+    event.preventDefault();
+    stop(true);
+  }
+
+  const abandon = () => move && stop(false);
+  const escape = (event) => {
+    if (event.key === 'Escape' && move?.started) {
+      event.stopPropagation();
+      stop(false);
+    }
+  };
+
+  /** Puts it down: where it is over, or back where it was. */
+  function stop(drop) {
+    const done = move;
+    move = null;
+    window.clearTimeout(done.timer);
+    document.removeEventListener('pointermove', track, true);
+    document.removeEventListener('pointerup', release, true);
+    document.removeEventListener('pointercancel', abandon, true);
+    document.removeEventListener('keydown', escape, true);
+    document.removeEventListener('touchmove', holdStill, true);
+    if (!done.started) return;
+    delete root.dataset.reordering;
+    document.body.style.userSelect = '';
+    done.ghost?.remove();
+    done.button.removeAttribute('data-dragging');
+    done.over?.removeAttribute('data-drop');
+    // Whatever click follows this release (on the bubble, or on the rail) belongs to the move, not to a server.
+    const swallow = (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+    };
+    document.addEventListener('click', swallow, { capture: true, once: true });
+    window.setTimeout(() => document.removeEventListener('click', swallow, true), 0);
+    if (drop && done.over) {
+      pending = null;
+      onMove(done.url, done.over.dataset.server, done.after);
+    } else if (pending) {
+      render(pending);
+    }
   }
 
   return { render };

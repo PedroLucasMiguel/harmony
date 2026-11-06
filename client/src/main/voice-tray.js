@@ -3,7 +3,7 @@
 //
 // Closing the window keeps Harmony running: a call goes on, hotkeys keep
 // working, and a mention still makes its sound. The tray icon is the way back
-// in and the way out (Quit). The first time the window goes, a balloon says
+// in and the way out (Quit). Alt+F4 is the exception: it quits (quit-keys.js). The first time the window goes, a balloon says
 // so -- once, ever, remembered in settings.json -- because an app that seems
 // to have closed but is still in a call is the worst way to find out.
 //
@@ -101,6 +101,14 @@ function tooltip() {
   return `Harmony${where}${how}`;
 }
 
+/**
+ * Where the menu goes. On Windows it is not handed to the tray (`setContextMenu`): the shell then pops it up itself on a
+ * right-click, and does not when Harmony's own window is the one in front -- maximized and focused it simply did
+ * nothing, which is how people found this out. Harmony pops it up itself instead, on the right-click, built from the
+ * state of that moment (see `start`). Elsewhere the tray's own is fine.
+ */
+const handsMenuToTray = () => process.platform !== 'win32';
+
 function menu() {
   return Menu.buildFromTemplate([
     { label: strings.get('main.open'), click: showWindow },
@@ -132,7 +140,7 @@ function menu() {
  */
 function command(name) {
   sendCommand(name);
-  tray?.setContextMenu(menu());
+  if (handsMenuToTray()) tray?.setContextMenu(menu());
 }
 
 /** What the menu and tooltip were last built from: talking changes neither. */
@@ -147,7 +155,7 @@ function applyTray() {
   if (key === menuKey) return;
   menuKey = key;
   tray.setToolTip(tooltip());
-  tray.setContextMenu(menu());
+  if (handsMenuToTray()) tray.setContextMenu(menu());
 }
 
 function applyThumbar({ force = false } = {}) {
@@ -219,6 +227,15 @@ function start({ window, onCommand }) {
 
   tray = new Tray(appIcon());
   tray.on('click', showWindow);
+  if (!handsMenuToTray()) {
+    // The shell's own pop-up needs the window that owns it to be the one in front, and Harmony's own window being in
+    // front (maximized, focused) is the case it does not manage. Popped up from here, at the pointer, from what is
+    // known now, it shows whichever window has the focus.
+    tray.on('right-click', () => {
+      const popup = menu();
+      tray?.popUpContextMenu(popup);
+    });
+  }
   applyTray();
 
   app.on('before-quit', () => { quitting = true; });

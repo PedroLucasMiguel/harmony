@@ -287,17 +287,15 @@ async function run() {
   // --- order, shortcuts, and the menu on a bubble ----------------------------------------------------------------------
   const order = () => page.evaluate("return [...document.querySelectorAll('#server-rail .rail-item[data-server]')].map((b) => b.dataset.server)");
   check('the rail lists A first', (await order())[0].includes(String(PORT_A)), JSON.stringify(await order()));
-  await page.evaluate(`{
-    const from = document.querySelector('#server-rail .rail-item[data-server*="${PORT_A}"]');
-    const onto = document.querySelector('#server-rail .rail-item[data-server*="${PORT_B}"]');
-    const box = onto.getBoundingClientRect();
-    const dt = new DataTransfer();
-    from.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
-    onto.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true, clientX: box.left + 10, clientY: box.bottom - 4 }));
-    onto.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
-    from.dispatchEvent(new DragEvent('dragend', { dataTransfer: dt, bubbles: true }));
-    return true;
-  }`);
+  // Pressed on A, dragged down past B, let go on its lower half: with the mouse, as a person does it.
+  {
+    const at = (port) => page.evaluate(`const r = document.querySelector('#server-rail .rail-item[data-server*="${port}"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, bottom: r.bottom };`);
+    const from = await at(PORT_A); const onto = await at(PORT_B);
+    const m = (type, x, y, buttons = 1) => page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons, clickCount: 1 });
+    await m('mouseMoved', from.x, from.y, 0); await m('mousePressed', from.x, from.y);
+    for (let i = 1; i <= 10; i += 1) { await m('mouseMoved', from.x + (onto.x - from.x) * i / 10, from.y + ((onto.bottom - 4) - from.y) * i / 10); await sleep(25); }
+    await m('mouseReleased', onto.x, onto.bottom - 4);
+  }
   await waitFor(page, `document.querySelector('#server-rail .rail-item[data-server]').dataset.server.includes('${PORT_B}')`, { label: 'the rail reordered' });
   check('dragging a server onto another puts it after it', (await order())[0].includes(String(PORT_B)), JSON.stringify(await order()));
 

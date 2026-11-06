@@ -8,7 +8,11 @@
 //
 // A change is applied at once and the page is drawn from what came back:
 // toggling a role on somebody is one request, not a checkbox and a Save, and
-// by the time it returns their client has already been told.
+// by the time it returns their client has already been told. Every editor
+// here works that way, not only the member's: a switch or a menu is sent as
+// it is moved, and a name or a colour a moment after the last keystroke (see
+// `autosave`). Only a role, channel or badge that does not exist yet has a
+// button, Create, because making one tells everybody.
 
 import {
   PERMISSION_GROUPS, canAssign, canManageRole, canReorderTo, contextOf, nameLookOf, outranks, roleIcon, roleLook, rolesOf,
@@ -19,6 +23,73 @@ import {
 } from './name-color.js';
 
 const HEX = /^#[0-9a-f]{6}$/i;
+
+/**
+ * Sends what an editor holds, whenever it has changed, without a Save.
+ *
+ * `touch(delay)` says "it changed": the save runs `delay` ms after the last such call (so a name is sent when the
+ * typing stops, not on every key, and a handful of switches in a row are one request). Saves run one at a time, in
+ * order, and each reads the editor as it is when it runs, so a change made during a save is sent by the next one
+ * rather than lost or sent out of turn. `flush()` runs what is waiting at once and resolves when everything is
+ * sent: it is what has to be awaited before the thing being edited is changed or closed.
+ *
+ * @param {() => Promise<boolean|void>} run  reads the editor and sends it; throws to say it could not, and
+ *   returns false when there was nothing to send (a colour half typed, a name not yet written)
+ * @param {(state: 'saving'|'saved'|'idle'|'error', message?: string) => void} [report]
+ */
+export function autosave(run, report = () => {}) {
+  let timer = null;
+  let running = null;
+  let again = false;
+  let dirty = false;
+
+  async function cycle() {
+    do {
+      again = false;
+      dirty = false;
+      report('saving');
+      try {
+        const sent = await run();
+        if (!again && !dirty) report(sent === false ? 'idle' : 'saved');
+      } catch (err) {
+        report('error', err.message);
+      }
+    } while (again);
+  }
+
+  function fire() {
+    timer = null;
+    // One at a time: what changed meanwhile is what the running cycle goes round again for.
+    if (running) {
+      again = true;
+      return running;
+    }
+    running = cycle().finally(() => { running = null; });
+    return running;
+  }
+
+  return {
+    touch(delay = 600) {
+      dirty = true;
+      clearTimeout(timer);
+      timer = setTimeout(fire, delay);
+    },
+    /** Nothing is waiting any more: the thing it was for is gone. */
+    cancel() {
+      clearTimeout(timer);
+      timer = null;
+      dirty = false;
+    },
+    async flush() {
+      if (timer) {
+        clearTimeout(timer);
+        fire();
+      }
+      while (running) await running;
+    },
+    get pending() { return timer !== null || running !== null; },
+  };
+}
 
 /**
  * @param {object} deps
@@ -47,6 +118,27 @@ export function createServerAdmin(deps) {
   } = deps;
   const $ = (id) => document.getElementById(id);
   const ctx = () => contextOf(me(), roles());
+
+  // ---- changes applied as they are made ------------------------------------------------------
+
+  /** The "Saving..." / "Saved" line in the dialog's footer, with failures on the editor's own error line as well. */
+  const statusLine = (note, errorNode) => (state, message) => {
+    if (state === 'error') {
+      // In the footer, where it is seen whatever the editor is scrolled to, and on the editor's own line too.
+      note.textContent = message;
+      note.dataset.state = 'error';
+      show(errorNode, message);
+      return;
+    }
+    show(errorNode, '');
+    if (state === 'idle') {
+      note.textContent = '';
+      delete note.dataset.state;
+      return;
+    }
+    note.textContent = state === 'saving' ? t('server_admin.saving') : t('server_admin.saved_live');
+    note.dataset.state = state;
+  };
 
   // ---- small widgets ----------------------------------------------------------------------
 
@@ -131,6 +223,7 @@ export function createServerAdmin(deps) {
   // =========================================================================================
 
   const rl = {
+    filter: $('roles-filter'),
     list: $('roles-list'),
     add: $('roles-new'),
     editor: $('roles-editor'),
@@ -143,6 +236,7 @@ export function createServerAdmin(deps) {
     badgesField: $('role-badges-field'),
     badgeList: $('role-badges'),
     error: $('role-error'),
+    status: $('server-status'),
     save: $('role-save'),
     remove: $('role-delete'),
   };
@@ -150,6 +244,15 @@ export function createServerAdmin(deps) {
   let roleSelected = null;
   /** What the editor holds, so a redraw from the server does not lose a half-typed edit. */
   let roleDraft = null;
+  /** Whether this person may change the role on show: nothing is sent for one they may not. */
+  let roleEditable = false;
+  /** The other roles and badges the editor lists, as drawn: a redraw that would change nothing is not made. */
+  let roleListed = '';
+  const roleAuto = autosave(saveRole, statusLine(rl.status, rl.error));
+  /** The role on show changed: it is sent in `delay` ms. Not for a new one, which waits for Create. */
+  const touchRole = (delay) => {
+    if (roleDraft && roleSelected !== 'new' && roleEditable) roleAuto.touch(delay);
+  };
 
   const permLabel = (p) => t(`server_admin.perm_${p.replace('.', '_')}`);
   const permHint = (p) => t(`server_admin.perm_${p.replace('.', '_')}_hint`);
@@ -162,13 +265,19 @@ export function createServerAdmin(deps) {
   function renderRoleList() {
     const actor = ctx();
     const ordered = sortRoles(roles());
-    const children = ordered.map((role, index) => {
+    const needle = rl.filter.value.trim().toLowerCase();
+    // A filtered list is a few of the roles, not the hierarchy: a role is not moved past ones that are not shown.
+    const filtered = needle !== '';
+    const shown = ordered.map((role, index) => ({ role, index }))
+      .filter(({ role }) => !filtered || role.name.toLowerCase().includes(needle));
+    const children = shown.map(({ role, index }) => {
       const move = (step) => {
         const ids = ordered.map((r) => r.id);
         [ids[index], ids[index + step]] = [ids[index + step], ids[index]];
         return ids;
       };
       const may = (step) => {
+        if (filtered) return false;
         const to = index + step;
         if (to < 0 || to >= ordered.length) return false;
         return canReorderTo(actor, ordered, move(step)) && canManageRole(actor, role)
@@ -191,6 +300,12 @@ export function createServerAdmin(deps) {
       });
       return li;
     });
+    if (filtered && !children.length) {
+      const none = document.createElement('li');
+      none.className = 'admin-empty';
+      none.textContent = t('server_admin.no_roles_match');
+      children.push(none);
+    }
     rl.list.replaceChildren(...children);
     rl.add.hidden = !actor.can('roles.hierarchy');
   }
@@ -206,9 +321,13 @@ export function createServerAdmin(deps) {
     }
   }
 
-  function selectRole(id) {
+  async function selectRole(id) {
+    // What was changed on the one being left is sent first: it is read from the draft this replaces.
+    await roleAuto.flush();
     roleSelected = id;
     roleDraft = null;
+    rl.status.textContent = '';
+    show(rl.error, '');
     renderRoles();
   }
 
@@ -251,7 +370,8 @@ export function createServerAdmin(deps) {
           draft.style = startingPoint(kind, base);
           if (draft.style.mode === 'gradient') draft.color = draft.style.colors[0];
         }
-        renderRoleEditor();
+        renderRoleEditor({ force: true });
+        touchRole(150);
       });
       kinds.append(button);
     }
@@ -262,11 +382,12 @@ export function createServerAdmin(deps) {
       input.value = HEX.test(value) ? value : '#99aab5';
       input.disabled = !editable;
       input.setAttribute('aria-label', label);
-      // Straight into the draft and the preview as it is dragged; it is only
-      // sent on Save, so there is no reason to wait for the picker to close.
+      // Straight into the draft and the preview as it is dragged, and sent when the dragging has paused: the picker is
+      // not drawn again meanwhile (see renderRoleEditor), or it would close under the hand that is using it.
       input.addEventListener('input', () => {
         change(input.value);
         paintName(sample, null, draft.style ?? draft.color);
+        touchRole(500);
       });
       return input;
     };
@@ -293,6 +414,8 @@ export function createServerAdmin(deps) {
         draft.color = hex.value;
         if (HEX.test(hex.value)) color.value = hex.value;
         paintName(sample, null, draft.color);
+        // Half a colour is not sent: saveRole waits for one.
+        touchRole(600);
       });
       row.append(color, hex);
       stops.append(row);
@@ -315,7 +438,8 @@ export function createServerAdmin(deps) {
           remove.addEventListener('click', () => {
             draft.style.colors.splice(index, 1);
             draft.color = draft.style.colors[0];
-            renderRoleEditor();
+            renderRoleEditor({ force: true });
+            touchRole(150);
           });
           row.append(remove);
         }
@@ -332,7 +456,8 @@ export function createServerAdmin(deps) {
       add.disabled = !editable;
       add.addEventListener('click', () => {
         draft.style.colors.push(draft.style.colors.at(-1));
-        renderRoleEditor();
+        renderRoleEditor({ force: true });
+        touchRole(150);
       });
       editor.append(add);
     }
@@ -357,6 +482,7 @@ export function createServerAdmin(deps) {
         draft.style.speed = toSlider(Number(range.value));
         value.textContent = t('profile.color_speed_value', { seconds: draft.style.speed });
         paintName(sample, null, draft.style);
+        touchRole(500);
       });
       row.append(caption, range, value);
       editor.append(row);
@@ -366,8 +492,30 @@ export function createServerAdmin(deps) {
     rl.style.replaceChildren(wrap);
   }
 
-  /** The editor, from the draft if there is one and from the role if not. */
-  function renderRoleEditor() {
+  /** Whether a role, as the server has it, is what the draft says: the editor then has nothing to learn from it. */
+  function roleIsDraft(role, draft) {
+    if (!role) return false;
+    const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+    return role.name === draft.name
+      && (role.color ?? '').toLowerCase() === (draft.style?.colors?.[0] ?? draft.color ?? '').toLowerCase()
+      && JSON.stringify(role.style ?? null) === JSON.stringify(draft.style ?? null)
+      && Boolean(role.admin) === draft.admin
+      && same(role.permissions ?? [], draft.permissions)
+      && same(role.assignable ?? [], draft.assignable)
+      && same(role.assignableBadges ?? [], draft.assignableBadges);
+  }
+
+  /**
+   * The editor, from the draft if there is one and from the role if not.
+   *
+   * Drawn again when the server says something that is not what the draft already holds -- which is not the case for
+   * the echo of this editor's own change. That one is left alone: the editor is already right, and drawing it again
+   * would close the colour picker the change came from, under the hand that is dragging in it.
+   *
+   * @param {{force?: boolean}} [options]  force: the editor's own controls changed what it shows (the kind of colour, an
+   *   administrator ticked), so it is drawn whatever the server says
+   */
+  function renderRoleEditor({ force = false } = {}) {
     const actor = ctx();
     const isNew = roleSelected === 'new';
     const role = isNew ? null : roles().find((r) => r.id === roleSelected) ?? null;
@@ -375,6 +523,9 @@ export function createServerAdmin(deps) {
       rl.editor.hidden = true;
       return;
     }
+    const listed = JSON.stringify([sortRoles(roles()).map((r) => [r.id, r.name, r.color]), badges().map((b) => [b.id, b.name])]);
+    if (!force && !rl.editor.hidden && roleDraft && !isNew && roleIsDraft(role, roleDraft) && listed === roleListed) return;
+    roleListed = listed;
     rl.editor.hidden = false;
 
     const draft = roleDraft ?? {
@@ -390,6 +541,7 @@ export function createServerAdmin(deps) {
     roleDraft = draft;
 
     const editable = isNew ? actor.can('roles.hierarchy') : canManageRole(actor, role);
+    roleEditable = editable;
     rl.name.value = draft.name;
     rl.admin.checked = draft.admin;
     // Nobody can make something that has more than they do.
@@ -414,6 +566,7 @@ export function createServerAdmin(deps) {
           onChange: (on) => {
             draft.permissions = draft.permissions.filter((p) => p !== permission);
             if (on) draft.permissions.push(permission);
+            touchRole(150);
           },
         }));
       }
@@ -431,6 +584,7 @@ export function createServerAdmin(deps) {
         onChange: (on) => {
           draft.assignable = draft.assignable.filter((id) => id !== other.id);
           if (on) draft.assignable.push(other.id);
+          touchRole(150);
         },
       });
     }));
@@ -446,6 +600,7 @@ export function createServerAdmin(deps) {
         onChange: (on) => {
           draft.assignableBadges = draft.assignableBadges.filter((id) => id !== badge.id);
           if (on) draft.assignableBadges.push(badge.id);
+          touchRole(150);
         },
       });
       row.querySelector('span').prepend(badgeEl(badge, 'small'), ' ');
@@ -453,10 +608,12 @@ export function createServerAdmin(deps) {
     }));
     rl.badgesField.hidden = badges().length === 0;
 
+    // Create only for a role that is not made yet; one that is made is saved as it is changed.
+    rl.save.hidden = !isNew;
     rl.save.disabled = !editable;
     rl.remove.hidden = isNew;
     rl.remove.disabled = !editable;
-    show(rl.error, '');
+    if (isNew) rl.status.textContent = '';
   }
 
   function renderRoles() {
@@ -464,21 +621,26 @@ export function createServerAdmin(deps) {
     renderRoleEditor();
   }
 
+  rl.filter.addEventListener('input', renderRoleList);
   rl.add.addEventListener('click', () => selectRole('new'));
-  rl.name.addEventListener('input', () => { if (roleDraft) roleDraft.name = rl.name.value; });
+  rl.name.addEventListener('input', () => {
+    if (!roleDraft) return;
+    roleDraft.name = rl.name.value;
+    touchRole(600);
+  });
   rl.admin.addEventListener('change', () => {
     if (!roleDraft) return;
     roleDraft.admin = rl.admin.checked;
-    renderRoleEditor();
+    renderRoleEditor({ force: true });
+    touchRole(150);
   });
-  rl.save.addEventListener('click', async () => {
-    show(rl.error, '');
-    const draft = roleDraft;
-    if (!draft) return;
+
+  /** What the role editor holds, as the request that makes or changes a role. Null while the colour is not a colour yet. */
+  function roleBody(draft) {
     // A gradient's plain colour -- the dot beside the name -- is its first stop.
     const color = draft.style?.colors?.[0] ?? draft.color;
-    if (!HEX.test(color)) return show(rl.error, t('server_admin.bad_color'));
-    const body = {
+    if (!HEX.test(color)) return null;
+    return {
       name: draft.name,
       color,
       style: draft.style,
@@ -487,15 +649,32 @@ export function createServerAdmin(deps) {
       assignable: draft.assignable,
       assignableBadges: draft.assignableBadges,
     };
+  }
+
+  /** Sends the role on show, as it is now: what `touch` was for. */
+  async function saveRole() {
+    const draft = roleDraft;
+    const id = roleSelected;
+    if (!draft || id === 'new' || id === null) return false;
+    // Half a colour typed, or no name yet: there is nothing to send, and nothing to complain about while it is typed.
+    const body = roleBody(draft);
+    if (!body || !draft.name.trim()) return false;
+    await harmony.api.updateRole(server(), id, body);
+    await reloadRoles();
+    return true;
+  }
+
+  // Making a role: the one thing on this page that waits for a button, because everybody is told of it.
+  rl.save.addEventListener('click', async () => {
+    show(rl.error, '');
+    const draft = roleDraft;
+    if (!draft || roleSelected !== 'new') return;
+    const body = roleBody(draft);
+    if (!body) return show(rl.error, t('server_admin.bad_color'));
     try {
-      if (roleSelected === 'new') {
-        const { role } = await harmony.api.createRole(server(), body);
-        await reloadRoles();
-        roleSelected = role.id;
-      } else {
-        await harmony.api.updateRole(server(), roleSelected, body);
-        await reloadRoles();
-      }
+      const { role } = await harmony.api.createRole(server(), body);
+      await reloadRoles();
+      roleSelected = role.id;
       roleDraft = null;
       renderRoles();
     } catch (err) {
@@ -506,6 +685,8 @@ export function createServerAdmin(deps) {
   rl.remove.addEventListener('click', async () => {
     const role = roles().find((r) => r.id === roleSelected);
     if (!role) return;
+    // What was being changed on it is of no use now.
+    roleAuto.cancel();
     if (!await deps.confirm(t('server_admin.delete_role_title', { name: role.name }), {
       text: t('server_admin.delete_role_text'),
       okLabel: t('server_admin.delete_role'),
@@ -756,6 +937,7 @@ export function createServerAdmin(deps) {
     users: $('chan-users'),
     userAdd: $('chan-user-add'),
     error: $('chan-error'),
+    status: $('server-status'),
     save: $('chan-save'),
     remove: $('chan-delete'),
   };
@@ -767,8 +949,17 @@ export function createServerAdmin(deps) {
   /** What has been typed so far, kept so that adding a person does not wipe it. */
   let chanName = null;
   let chanPassword = '';
+  /** A password is sent when it has been typed and the box let go of, not as it is typed: half of one locks people out. */
+  let chanPasswordReady = false;
+  const chanAuto = autosave(saveChannel, statusLine(ch.status, ch.error));
+  /** The channel or group on show changed: it is sent in `delay` ms. Not a new one, which waits for Create. */
+  const touchChannel = (delay) => {
+    if (chanSelected && !chanSelected.kind.startsWith('new')) chanAuto.touch(delay);
+  };
 
   const bySequence = (a, b) => a.position - b.position;
+  const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+  const isGroupSel = (sel) => sel.kind === 'group' || sel.kind === 'new-group';
 
   function renderChannelList() {
     const { list, groups } = channels();
@@ -849,13 +1040,18 @@ export function createServerAdmin(deps) {
     ch.newGroup.hidden = !actor.can('channels.create');
   }
 
-  function selectChannel(selection) {
+  async function selectChannel(selection) {
+    // What was changed on the one being left is sent first: it is read from what this replaces.
+    await chanAuto.flush();
     chanSelected = selection;
     const subject = currentSubject();
     chanRoles = [...(subject?.roles ?? [])];
     chanUsers = [...(subject?.users ?? [])];
     chanName = null;
     chanPassword = '';
+    chanPasswordReady = false;
+    ch.status.textContent = '';
+    show(ch.error, '');
     renderChannels();
   }
 
@@ -868,7 +1064,17 @@ export function createServerAdmin(deps) {
     return null;
   }
 
-  function renderChannelEditor() {
+  /** What the editor was last drawn against besides the channel's own fields: who and what it lists, and the door. */
+  let chanListed = '';
+
+  /**
+   * @param {{force?: boolean}} [options]  force: the editor's own controls changed what it shows, so it is drawn
+   *   whatever the server says
+   *
+   * The server saying what the editor already holds -- the echo of its own change -- draws nothing again: a switch that
+   * has just been moved is not taken out from under the keyboard that moved it.
+   */
+  function renderChannelEditor({ force = false } = {}) {
     const actor = ctx();
     const sel = chanSelected;
     const isNew = sel?.kind?.startsWith('new');
@@ -877,6 +1083,17 @@ export function createServerAdmin(deps) {
       ch.editor.hidden = true;
       return;
     }
+    const listed = JSON.stringify([
+      sel.kind, sel.id ?? null, sortRoles(roles()).map((r) => [r.id, r.name, r.color]), [...users().values()].map((u) => [u.id, u.nickname]),
+      channels().groups.map((g) => [g.id, g.name]), subject?.locked ?? null, subject?.groupId ?? null,
+    ]);
+    if (!force && !isNew && !ch.editor.hidden && listed === chanListed
+      && sameSet(chanRoles, subject.roles ?? []) && sameSet(chanUsers, subject.users ?? [])) {
+      // Only what is not in a box to be typed into: the title, which a rename changes.
+      ch.subject.textContent = isGroupSel(sel) ? t('server_admin.group_label', { name: subject.name }) : subject.name;
+      return;
+    }
+    chanListed = listed;
     ch.editor.hidden = false;
     const isGroup = sel.kind === 'group' || sel.kind === 'new-group';
     const canEdit = actor.can('channels.edit');
@@ -928,6 +1145,7 @@ export function createServerAdmin(deps) {
       onChange: (on) => {
         chanRoles = chanRoles.filter((id) => id !== role.id);
         if (on) chanRoles.push(role.id);
+        touchChannel(150);
       },
     })));
 
@@ -948,7 +1166,8 @@ export function createServerAdmin(deps) {
       x.disabled = !canEdit;
       x.addEventListener('click', () => {
         chanUsers = chanUsers.filter((u) => u !== id);
-        renderChannelEditor();
+        renderChannelEditor({ force: true });
+        touchChannel(150);
       });
       chip.append(x);
       return chip;
@@ -963,10 +1182,15 @@ export function createServerAdmin(deps) {
     ch.userAdd.disabled = !canEdit;
     if (isGroup && !isNew) show(ch.follows, t('server_admin.group_applies'));
 
-    ch.save.disabled = isNew ? !actor.can('channels.create') : !(canEdit || canPassword);
+    // Create only for one that is not made yet; one that is made is saved as it is changed.
+    ch.save.hidden = !isNew;
+    ch.save.disabled = isNew ? !actor.can('channels.create') : false;
     ch.remove.hidden = isNew;
     ch.remove.disabled = !actor.can('channels.delete');
-    show(ch.error, '');
+    if (isNew) {
+      ch.status.textContent = '';
+      show(ch.error, '');
+    }
   }
 
   function renderChannels() {
@@ -974,12 +1198,29 @@ export function createServerAdmin(deps) {
     renderChannelEditor();
   }
 
-  ch.name.addEventListener('input', () => { chanName = ch.name.value; });
-  ch.password.addEventListener('input', () => { chanPassword = ch.password.value; });
+  ch.name.addEventListener('input', () => {
+    chanName = ch.name.value;
+    touchChannel(700);
+  });
+  ch.password.addEventListener('input', () => {
+    chanPassword = ch.password.value;
+    chanPasswordReady = false;
+  });
+  // A password is sent when the box is let go of (or Enter is pressed in it): that is what `change` is.
+  ch.password.addEventListener('change', () => {
+    if (!ch.password.value) return;
+    chanPasswordReady = true;
+    touchChannel(0);
+  });
+  ch.passwordOff.addEventListener('change', () => {
+    if (ch.passwordOff.checked) touchChannel(0);
+  });
+  ch.group.addEventListener('change', () => touchChannel(0));
   ch.userAdd.addEventListener('change', () => {
     const id = Number(ch.userAdd.value);
     if (id && !chanUsers.includes(id)) chanUsers.push(id);
-    renderChannelEditor();
+    renderChannelEditor({ force: true });
+    touchChannel(150);
   });
 
   ch.newText.addEventListener('click', () => selectChannel({ kind: 'new-text' }));
@@ -987,68 +1228,82 @@ export function createServerAdmin(deps) {
   ch.newForum.addEventListener('click', () => selectChannel({ kind: 'new-forum' }));
   ch.newGroup.addEventListener('click', () => selectChannel({ kind: 'new-group' }));
 
-  const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
 
+  /** Sends the channel or group on show, as it is now: what `touch` was for. */
+  async function saveChannel() {
+    const sel = chanSelected;
+    if (!sel || sel.kind.startsWith('new')) return false;
+    const subject = currentSubject();
+    if (!subject) return false;
+    const name = ch.name.value.trim();
+    const typed = chanPasswordReady ? ch.password.value : '';
+    const removePassword = ch.passwordOff.checked;
+    const isGroup = sel.kind === 'group';
+    const wantsGroup = ch.group.value === '' ? null : Number(ch.group.value);
+    const was = subject.groupId ?? null;
+    const joining = !isGroup && wantsGroup !== null && wantsGroup !== was;
+    const leaving = !isGroup && wantsGroup === null && was !== null;
+
+    // Leaving a group first: until it has, the channel follows the group
+    // and the server refuses a password or roles of its own.
+    if (leaving) await deps.moveToGroup(subject.id, null);
+
+    const following = !isGroup && was !== null && !leaving;
+    const body = {};
+    // An empty name is not a name: the box is left to be typed into, and nothing is sent for it.
+    if (name && name !== subject.name) body.name = name;
+    // A channel in a group, or about to be, takes neither: they are the group's.
+    if (!joining && !following) {
+      if (removePassword) body.password = '';
+      else if (typed) body.password = typed;
+      if (!sameSet(chanRoles, subject.roles ?? [])) body.roles = chanRoles;
+      if (!sameSet(chanUsers, subject.users ?? [])) body.users = chanUsers;
+    }
+    if (Object.keys(body).length) {
+      if (isGroup) await harmony.api.updateGroup(server(), subject.id, body);
+      else await harmony.api.updateChannel(server(), subject.id, body);
+    }
+    if (joining) await deps.moveToGroup(subject.id, wantsGroup);
+    const sent = Object.keys(body).length > 0 || joining || leaving;
+    // What has been sent is no longer waiting in the boxes. A name typed since is kept.
+    if (chanName === name) chanName = null;
+    if ('password' in body) {
+      chanPassword = '';
+      chanPasswordReady = false;
+      ch.password.value = '';
+      ch.passwordOff.checked = false;
+    }
+    renderChannels();
+    return sent;
+  }
+
+  // Making a channel or a group: it waits for a button, because everybody is told of it. Once it is made, it is live.
   ch.save.addEventListener('click', async () => {
     show(ch.error, '');
     const sel = chanSelected;
-    if (!sel) return;
+    if (!sel || !sel.kind.startsWith('new')) return;
     const actor = ctx();
     const name = ch.name.value.trim();
     const typed = ch.password.value;
-    const removePassword = ch.passwordOff.checked;
     try {
-      if (sel.kind.startsWith('new')) {
-        const body = { name };
-        if (typed && actor.can('channels.password')) body.password = typed;
-        if (chanRoles.length) body.roles = chanRoles;
-        if (chanUsers.length) body.users = chanUsers;
-        let created;
-        if (sel.kind === 'new-group') {
-          created = (await harmony.api.createGroup(server(), name, body)).group;
-          chanSelected = { kind: 'group', id: created.id };
-        } else {
-          body.kind = { 'new-voice': 'voice', 'new-forum': 'forum' }[sel.kind] ?? 'text';
-          created = (await harmony.api.createChannel(server(), body)).channel;
-          chanSelected = { kind: 'channel', id: created.id };
-        }
-        chanRoles = [...(created.roles ?? [])];
-        chanUsers = [...(created.users ?? [])];
-        chanName = null;
-        chanPassword = '';
-        renderChannels();
-        return;
+      const body = { name };
+      if (typed && actor.can('channels.password')) body.password = typed;
+      if (chanRoles.length) body.roles = chanRoles;
+      if (chanUsers.length) body.users = chanUsers;
+      let created;
+      if (sel.kind === 'new-group') {
+        created = (await harmony.api.createGroup(server(), name, body)).group;
+        chanSelected = { kind: 'group', id: created.id };
+      } else {
+        body.kind = { 'new-voice': 'voice', 'new-forum': 'forum' }[sel.kind] ?? 'text';
+        created = (await harmony.api.createChannel(server(), body)).channel;
+        chanSelected = { kind: 'channel', id: created.id };
       }
-
-      const subject = currentSubject();
-      if (!subject) return;
-      const isGroup = sel.kind === 'group';
-      const wantsGroup = ch.group.value === '' ? null : Number(ch.group.value);
-      const was = subject.groupId ?? null;
-      const joining = !isGroup && wantsGroup !== null && wantsGroup !== was;
-      const leaving = !isGroup && wantsGroup === null && was !== null;
-
-      // Leaving a group first: until it has, the channel follows the group
-      // and the server refuses a password or roles of its own.
-      if (leaving) await deps.moveToGroup(subject.id, null);
-
-      const following = !isGroup && was !== null && !leaving;
-      const body = {};
-      if (name && name !== subject.name) body.name = name;
-      // A channel in a group, or about to be, takes neither: they are the group's.
-      if (!joining && !following) {
-        if (removePassword) body.password = '';
-        else if (typed) body.password = typed;
-        if (!sameSet(chanRoles, subject.roles ?? [])) body.roles = chanRoles;
-        if (!sameSet(chanUsers, subject.users ?? [])) body.users = chanUsers;
-      }
-      if (Object.keys(body).length) {
-        if (isGroup) await harmony.api.updateGroup(server(), subject.id, body);
-        else await harmony.api.updateChannel(server(), subject.id, body);
-      }
-      if (joining) await deps.moveToGroup(subject.id, wantsGroup);
+      chanRoles = [...(created.roles ?? [])];
+      chanUsers = [...(created.users ?? [])];
       chanName = null;
       chanPassword = '';
+      chanPasswordReady = false;
       renderChannels();
     } catch (err) {
       show(ch.error, err.message);
@@ -1059,6 +1314,8 @@ export function createServerAdmin(deps) {
     const subject = currentSubject();
     if (!subject) return;
     const isGroup = chanSelected.kind === 'group';
+    // What was being changed on it is of no use now.
+    chanAuto.cancel();
     if (!await deps.confirm(t(isGroup ? 'server_admin.delete_group_title' : 'server_admin.delete_channel_title', { name: subject.name }), {
       text: t(isGroup ? 'server_admin.delete_group_text' : 'server_admin.delete_channel_text'),
       okLabel: t('server_admin.delete'),
@@ -1088,6 +1345,7 @@ export function createServerAdmin(deps) {
     pick: $('badge-image-pick'),
     removeImage: $('badge-image-remove'),
     error: $('badge-error'),
+    status: $('server-status'),
     save: $('badge-save'),
     remove: $('badge-delete'),
   };
@@ -1095,6 +1353,11 @@ export function createServerAdmin(deps) {
   let badgeSelected = null;
   /** What the editor holds; the image is a hash already uploaded, with a preview to show. */
   let badgeDraft = null;
+  const badgeAuto = autosave(saveBadge, statusLine(bd.status, bd.error));
+  /** The badge on show changed: it is sent in `delay` ms. Not a new one, which waits for Create. */
+  const touchBadge = (delay) => {
+    if (badgeDraft && badgeSelected !== 'new' && badgeSelected !== null) badgeAuto.touch(delay);
+  };
 
   function renderBadgeList() {
     const actor = ctx();
@@ -1116,9 +1379,13 @@ export function createServerAdmin(deps) {
     bd.add.hidden = !actor.can('badges.create');
   }
 
-  function selectBadge(id) {
+  async function selectBadge(id) {
+    // What was changed on the one being left is sent first: it is read from the draft this replaces.
+    await badgeAuto.flush();
     badgeSelected = id;
     badgeDraft = null;
+    bd.status.textContent = '';
+    show(bd.error, '');
     renderBadges();
   }
 
@@ -1153,11 +1420,16 @@ export function createServerAdmin(deps) {
     bd.emoji.value = d.emoji;
     for (const input of [bd.name, bd.description, bd.emoji, bd.pick, bd.removeImage]) input.disabled = !editable;
     bd.removeImage.disabled = !editable || !d.imageHash;
+    // Create only for a badge that is not made yet; one that is made is saved as it is changed.
+    bd.save.hidden = !isNew;
     bd.save.disabled = !editable;
     bd.remove.hidden = isNew;
     bd.remove.disabled = !actor.can('badges.edit');
     paintBadgePreview();
-    show(bd.error, '');
+    if (isNew) {
+      bd.status.textContent = '';
+      show(bd.error, '');
+    }
   }
 
   function renderBadges() {
@@ -1166,12 +1438,21 @@ export function createServerAdmin(deps) {
   }
 
   bd.add.addEventListener('click', () => selectBadge('new'));
-  bd.name.addEventListener('input', () => { if (badgeDraft) badgeDraft.name = bd.name.value; });
-  bd.description.addEventListener('input', () => { if (badgeDraft) badgeDraft.description = bd.description.value; });
+  bd.name.addEventListener('input', () => {
+    if (!badgeDraft) return;
+    badgeDraft.name = bd.name.value;
+    touchBadge(600);
+  });
+  bd.description.addEventListener('input', () => {
+    if (!badgeDraft) return;
+    badgeDraft.description = bd.description.value;
+    touchBadge(600);
+  });
   bd.emoji.addEventListener('input', () => {
     if (!badgeDraft) return;
     badgeDraft.emoji = bd.emoji.value;
     paintBadgePreview();
+    touchBadge(600);
   });
   bd.pick.addEventListener('click', () => {
     const picker = document.createElement('input');
@@ -1187,6 +1468,7 @@ export function createServerAdmin(deps) {
         badgeDraft.imageHash = hash;
         badgeDraft.previewUrl = preview;
         renderBadgeEditor();
+        touchBadge(0);
       } catch (err) {
         show(bd.error, err.message);
       } finally {
@@ -1200,25 +1482,36 @@ export function createServerAdmin(deps) {
     badgeDraft.imageHash = null;
     badgeDraft.previewUrl = null;
     renderBadgeEditor();
+    touchBadge(0);
   });
 
+  /** What the badge editor holds, as the request that makes or changes a badge. */
+  const badgeBody = (d) => ({
+    name: d.name,
+    description: d.description,
+    emoji: d.emoji,
+    imageHash: d.imageHash,
+  });
+
+  /** Sends the badge on show, as it is now: what `touch` was for. */
+  async function saveBadge() {
+    const d = badgeDraft;
+    const id = badgeSelected;
+    if (!d || id === 'new' || id === null) return false;
+    // No name yet (it is being retyped): nothing to send, and nothing to complain about meanwhile.
+    if (!d.name.trim()) return false;
+    await harmony.api.updateBadge(server(), id, badgeBody(d));
+    return true;
+  }
+
+  // Making a badge waits for a button, because everybody is told of it. Once it is made, it is live.
   bd.save.addEventListener('click', async () => {
     show(bd.error, '');
     const d = badgeDraft;
-    if (!d) return;
-    const body = {
-      name: d.name,
-      description: d.description,
-      emoji: d.emoji,
-      imageHash: d.imageHash,
-    };
+    if (!d || badgeSelected !== 'new') return;
     try {
-      if (badgeSelected === 'new') {
-        const { badge } = await harmony.api.createBadge(server(), body);
-        badgeSelected = badge.id;
-      } else {
-        await harmony.api.updateBadge(server(), badgeSelected, body);
-      }
+      const { badge } = await harmony.api.createBadge(server(), badgeBody(d));
+      badgeSelected = badge.id;
       badgeDraft = null;
       renderBadges();
     } catch (err) {
@@ -1229,6 +1522,8 @@ export function createServerAdmin(deps) {
   bd.remove.addEventListener('click', async () => {
     const badge = badges().find((b) => b.id === badgeSelected);
     if (!badge) return;
+    // What was being changed on it is of no use now.
+    badgeAuto.cancel();
     if (!await deps.confirm(t('server_admin.delete_badge_title', { name: badge.name }), {
       text: t('server_admin.delete_badge_text'),
       okLabel: t('server_admin.delete'),
@@ -1259,12 +1554,15 @@ export function createServerAdmin(deps) {
   return {
     render,
     /** Open on a channel or group, as the sidebar's "Edit" asks. */
-    focusChannel(selection) {
+    async focusChannel(selection) {
+      await chanAuto.flush();
       chanSelected = selection;
       chanRoles = [...(currentSubject()?.roles ?? [])];
       chanUsers = [...(currentSubject()?.users ?? [])];
       chanName = null;
       chanPassword = '';
+      chanPasswordReady = false;
+      ch.status.textContent = '';
       renderChannels();
     },
     focusMember(id) {
@@ -1272,5 +1570,8 @@ export function createServerAdmin(deps) {
       renderMembers();
     },
     reload: reloadRoles,
+    /** Everything that has been changed and not yet sent, sent: to be awaited before the dialog goes. */
+    flush: () => Promise.all([roleAuto.flush(), chanAuto.flush(), badgeAuto.flush()]),
+    get pending() { return roleAuto.pending || chanAuto.pending || badgeAuto.pending; },
   };
 }

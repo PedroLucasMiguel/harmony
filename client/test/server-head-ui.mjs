@@ -184,12 +184,11 @@ async function run() {
   await cdp.evaluate("document.querySelector('dialog.image-editor .ie-save').click(); return true;");
   await waitFor(cdp, "document.getElementById('server-banner-preview').hasAttribute('data-has')", { label: 'the preview' });
   check('what was cut is shown in the field, and can be removed', await cdp.evaluate("return !document.getElementById('server-banner-remove').disabled"));
-  check('nothing has changed on the screen before Save', !(await visible('#server-head-banner')));
-  await cdp.evaluate("document.getElementById('server-form').requestSubmit(); return true;");
+  // No Save to press: the banner is the server's as soon as it is cut.
   await waitFor(cdp, "document.getElementById('view-channels').hasAttribute('data-server-banner')", { label: 'the banner arriving', timeoutMs: 15_000 });
-  await waitFor(cdp, "!document.getElementById('server-dialog').open", { label: 'the dialog closing' }).catch(() => {});
   await sleep(500);
-  check('Save puts the banner behind the name', await visible('#server-head-banner'));
+  check('the banner is behind the name as soon as it is cut, with the dialog still open', (await visible('#server-head-banner')) && await cdp.evaluate("return document.getElementById('server-dialog').open"));
+  await cdp.evaluate("document.getElementById('server-dialog').close(); return true;");
 
   // ---- with a banner
   head = await rect('#server-head');
@@ -244,9 +243,7 @@ async function run() {
     window.__picked.files = dt.files; window.__picked.dispatchEvent(new Event('change')); return true;`);
   await waitFor(cdp, "!!document.querySelector('dialog.image-editor[open] .ie-save')", { label: 'the editor, again' });
   await cdp.evaluate("document.querySelector('dialog.image-editor .ie-save').click(); return true;");
-  await sleep(800);
-  await cdp.evaluate("document.getElementById('server-form').requestSubmit(); return true;");
-  await waitFor(cdp, "!document.getElementById('server-dialog').open", { label: 'the dialog closing after the change', timeoutMs: 15_000 });
+  await waitFor(cdp, "document.getElementById('server-status').dataset.state === 'saved'", { label: 'the change saved by itself', timeoutMs: 15_000 });
   await sleep(800);
   const hashAfter = await hashOf();
   check('a banner replaced by another is saved: the server now has a different one', Boolean(hashAfter) && hashAfter !== hashBefore, `${hashBefore} -> ${hashAfter}`);
@@ -274,10 +271,9 @@ async function run() {
     await cdp.evaluate("document.querySelector('dialog.image-editor .ie-save')?.click(); return true;");
     await sleep(2500);
     const staged = await cdp.evaluate("return { err: document.getElementById('server-error').hidden ? null : document.getElementById('server-error').textContent, preview: document.getElementById('server-banner-preview').hasAttribute('data-has') }");
-    await cdp.evaluate("document.getElementById('server-form').requestSubmit(); return true;");
     await sleep(3000);
     const saved = await cdp.evaluate("return { open: document.getElementById('server-dialog').open, err: document.getElementById('server-error').hidden ? null : document.getElementById('server-error').textContent }");
-    check(`a ${made.type} picture (${Math.round(made.size / 1024)} KB) goes through the editor, is staged and saved`, stage === 'editor' && staged.preview && !staged.err && !saved.open && !saved.err && (await hashOf()) !== was, JSON.stringify({ made, stage, staged, saved }));
+    check(`a ${made.type} picture (${Math.round(made.size / 1024)} KB) goes through the editor and is saved as soon as it is cut`, stage === 'editor' && staged.preview && !staged.err && !saved.err && (await hashOf()) !== was, JSON.stringify({ made, stage, staged, saved }));
     await cdp.evaluate("if (document.getElementById('server-dialog').open) document.getElementById('server-dialog').close(); return true;");
   }
 
@@ -295,11 +291,10 @@ async function run() {
     await cdp.evaluate("document.querySelector('dialog.image-editor .ie-save')?.click(); return true;");
     await sleep(4000);
     const staged = await cdp.evaluate("return { err: document.getElementById('server-error').hidden ? null : document.getElementById('server-error').textContent, preview: document.getElementById('server-banner-preview').hasAttribute('data-has') }");
-    await cdp.evaluate("document.getElementById('server-form').requestSubmit(); return true;");
     await sleep(3000);
     const saved = await cdp.evaluate("return { open: document.getElementById('server-dialog').open, err: document.getElementById('server-error').hidden ? null : document.getElementById('server-error').textContent }");
     const type = (await fetch(`${BASE}/api/server/banner`)).headers.get('content-type');
-    check('an animated GIF goes through the editor, is staged and saved, and is kept as a GIF', opened === 'editor' && staged.preview && !staged.err && !saved.open && !saved.err && (await hashOf()) !== was && /gif/.test(type ?? ''), JSON.stringify({ opened, staged, saved, type }));
+    check('an animated GIF goes through the editor and is saved as soon as it is cut, and is kept as a GIF', opened === 'editor' && staged.preview && !staged.err && !saved.err && (await hashOf()) !== was && /gif/.test(type ?? ''), JSON.stringify({ opened, staged, saved, type }));
     await cdp.evaluate("if (document.getElementById('server-dialog').open) document.getElementById('server-dialog').close(); return true;");
   }
 
@@ -307,9 +302,11 @@ async function run() {
   await cdp.evaluate("document.getElementById('server-settings').click(); return true;");
   await waitFor(cdp, "document.getElementById('server-dialog').open", { label: 'the dialog again' });
   check('the field shows the banner that is set', await cdp.evaluate("return document.getElementById('server-banner-preview').hasAttribute('data-has') && !document.getElementById('server-banner-remove').disabled"));
-  await cdp.evaluate("document.getElementById('server-banner-remove').click(); document.getElementById('server-form').requestSubmit(); return true;");
+  await cdp.evaluate("document.getElementById('server-banner-remove').click(); return true;");
   await waitFor(cdp, "!document.getElementById('view-channels').hasAttribute('data-server-banner')", { label: 'the banner going', timeoutMs: 15_000 });
   await sleep(500);
+  // The dialog stays open on its own now (nothing to Save): closed, as a person would, before the pointer goes to the rail.
+  await cdp.evaluate("document.getElementById('server-dialog').close(); return true;");
   check('removed, the head is the strip\'s height again and the list is back where it was', (await rect('#server-head')).h === (await rect('#view-channels > .bar')).h && (await rect('.channel-list-head')).y === listTopBefore);
 
   // ---- without a banner the card is the picture and the name

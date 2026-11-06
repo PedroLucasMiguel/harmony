@@ -682,17 +682,63 @@ function noiseBuffer(ctx) {
   return buffer;
 }
 
+/*
+ * When the sound being heard ends, as a performance.now() time. Switching the speakers restarts the context's output,
+ * which is a gap in whatever is playing; the switch (setOutputDevice) waits for this rather than cut a cue in half.
+ */
+let soundEndsAt = 0;
+const soundFor = (seconds) => { soundEndsAt = Math.max(soundEndsAt, performance.now() + seconds * 1000); };
+/** The longest a change of speakers is held back for a sound that is playing: a join sound can be ten seconds. */
+const SINK_WAIT_MS = 1200;
+
+/** Where a note starts when the output is already running: just ahead of now. */
+const WARM_LEAD_S = 0.01;
+/** ...and when it was only just started for this cue: a little more, for the device to settle before the first note. */
+const COLD_LEAD_S = 0.08;
+/** A cue that had to wait for the output to start is not played after this long: it would be a sound for a moment gone. */
+const COLD_GIVE_UP_MS = 1500;
+
 export function playCue(name, volume = 1) {
   const cue = CUES[name];
   if (!cue) return;
   const level = Math.max(0, Math.min(2, volume)) * cueVolume * CUE_PEAK * cue.level;
   if (level <= 0) return;
   const ctx = context();
+  if (ctx.state === 'running') {
+    sound(ctx, cue, level, WARM_LEAD_S);
+    return;
+  }
+  /*
+   * The output has not been started yet (the first sound of the session, with the first gesture being the click that
+   * asked for it) or has been parked. Notes scheduled now start while the device is still opening and break up --
+   * the first join sound of a session used to stutter that way. Wait until it is running, then place them.
+   */
+  soundFor(1);
+  const asked = performance.now();
+  ctx.resume().then(() => {
+    if (performance.now() - asked < COLD_GIVE_UP_MS) sound(ctx, cue, level, COLD_LEAD_S);
+  }).catch(() => { /* never allowed to run: nothing to be heard */ });
+}
+
+/**
+ * Get the output ready before the first sound wants it: the context made and running, and the little things a cue is
+ * made with built, so that when one is wanted it only has to be scheduled. Called on the first thing a person does in
+ * the window, which is also what lets the browser start the output at all.
+ */
+export function warmAudio() {
+  const c = context();
+  bus(c);
+  noiseBuffer(c);
+}
+
+/** Schedules a cue's notes `lead` seconds from now, on a running context. */
+function sound(ctx, cue, level, lead) {
   const out = bus(ctx);
   const voice = VOICES[cue.voice];
+  soundFor(lead + Math.max(...cue.notes.map(([, delay]) => delay)) + cue.length + 0.1);
 
   for (const [frequency, delay] of cue.notes) {
-    const start = ctx.currentTime + 0.01 + delay;
+    const start = ctx.currentTime + lead + delay;
     const end = start + cue.length;
 
     const envelope = ctx.createGain();
@@ -1193,6 +1239,7 @@ export async function playJoinSound(url, { maxSeconds = 10 } = {}) {
   node.connect(bus(ctx));
   const duration = Math.min(buffer.duration, maxSeconds);
   source.start(0, 0, duration);
+  soundFor(duration);
   activeJoinSounds.add(source);
   source.addEventListener('ended', () => {
     activeJoinSounds.delete(source);
@@ -1246,6 +1293,16 @@ export async function setOutputDevice(deviceId) {
   // to the device it is on, and every devicechange used to ask for exactly
   // that -- which is a restart of everything playing, for nothing.
   if (typeof ctx.sinkId === 'string' && ctx.sinkId === (deviceId || '')) return true;
+  /*
+   * Not in the middle of a sound. Joining a room is when the saved speakers are first found (their ids stay blank
+   * until the microphone has been allowed, which is part of joining), and the arriving sound is still playing then:
+   * the restart of the output cut it, and what was left of it was a stutter.
+   */
+  const wait = Math.min(SINK_WAIT_MS, soundEndsAt - performance.now());
+  if (wait > 0) {
+    await new Promise((done) => { setTimeout(done, wait); });
+    if (typeof ctx.sinkId === 'string' && ctx.sinkId === (deviceId || '')) return true;
+  }
   try {
     // '' is the system default. setSinkId takes the empty string for that,
     // the same as an <audio> element does.

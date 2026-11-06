@@ -546,6 +546,33 @@ p {
 .rail-item[data-drop='after']::after {
   bottom: -6px;
 }
+/* Moving one: the bubble in the hand is a copy that follows the pointer; where it came from is dimmed. */
+.rail-item[data-dragging] {
+  opacity: 0.35;
+}
+#server-rail[data-reordering],
+#server-rail[data-reordering] .rail-item {
+  cursor: grabbing;
+}
+.rail-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0.92;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.5);
+  transition: none;
+}
+/* The picture on a bubble is for looking at: it is not something to pick up by itself. */
+.rail-item img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+/* A finger on a bubble is for holding it, and the rail's own scrolling is the one gesture left to the page. */
+.rail-item[data-server] {
+  touch-action: pan-y;
+}
 /* A call is up on this server. */
 .rail-item[data-in-call] {
   box-shadow: 0 0 0 2px var(--live);
@@ -1114,6 +1141,10 @@ select:focus {
   grid-template-columns: var(--side-col, minmax(calc(200px * var(--text-scale, 1)), calc(260px * var(--text-scale, 1)))) minmax(0, 1fr);
   gap: 1rem;
   padding: 1rem;
+  /* Closer to the server rail than to anything else, as Discord's channel list is: the channels and the group
+     headings sit about half a rem from the rail's edge, not a whole one. (A channel in a group is still set in from
+     its heading: that is the group's own margin.) */
+  padding-left: 0.5rem;
   /* Whatever the bar above it leaves, to the pixel. It was calc(100% - 3.5rem), a
      guess at the bar's height: the bar is a little taller, the grid ran past the
      window by the difference, and only a chat too short to need a scrollbar let
@@ -1318,6 +1349,8 @@ select:focus {
 /* Only the channels scroll. The panel stays put, or "Disconnect" is
    something you have to go looking for while twelve people talk over you. */
 #channel-items {
+  /* What the landing preview is placed against. */
+  position: relative;
   overflow-y: auto;
   /* Never sideways: a row that is too wide is cut (names have an ellipsis), not scrolled to. */
   overflow-x: hidden;
@@ -1448,9 +1481,10 @@ select:focus {
 /* A line where it would land, rather than moving the rows around under the
    cursor: the sidebar is short and reflowing it mid-drag makes the target
    you were aiming at move away from you. */
+/* (The line itself is the preview's: see .channel-drop-preview. The mark stays on the row for what reads it.) */
 .channel-row[data-drop-before],
 .channel-group[data-drop-before] {
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: none;
 }
 /*
  * A heading is two targets at once, and the mark says which.
@@ -9390,9 +9424,17 @@ body.pip-window {
   width: 7rem;
   font-family: ui-monospace, monospace;
 }
-#members-filter {
+#members-filter,
+#roles-filter {
   width: 100%;
   margin-bottom: 0.7rem;
+}
+/* What a filtered list says when nothing is left in it. */
+.admin-list .admin-empty {
+  cursor: default;
+  padding: 0.6rem 0.7rem;
+  color: var(--muted);
+  font-size: calc(0.85rem * var(--text-scale, 1));
 }
 @media (max-width: 640px) {
   .admin-split {
@@ -9919,9 +9961,6 @@ input[type='color'] {
 .channel-row[data-drop-in-group] {
   background: rgb(var(--accent-rgb) / 0.1);
   box-shadow: inset 3px 0 0 var(--accent);
-}
-.channel-row[data-drop-in-group][data-drop-before] {
-  box-shadow: inset 3px 0 0 var(--accent), inset 0 2px 0 var(--accent);
 }
 .channel-group[data-drop-into] {
   background: rgb(var(--accent-rgb) / 0.26);
@@ -12869,4 +12908,95 @@ html[data-titlebar]:not([data-platform='darwin']) .titlebar {
 .server-card-more {
   font-size: calc(0.8rem * var(--text-scale, 1));
   color: var(--muted);
+}
+
+/*
+ * Where a dragged channel or group will land: a line with a ring at its start, at the level it will be at, and a tag
+ * with the name of what is being moved. It floats over the list (see paintDropPreview in app.js), so the rows do not
+ * move under the pointer.
+ */
+.channel-drop-preview {
+  position: absolute;
+  z-index: 4;
+  height: 0;
+  pointer-events: none;
+}
+.channel-drop-preview::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1.5px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.6);
+}
+.channel-drop-preview::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  background: var(--bg);
+}
+.channel-drop-preview .drop-tag {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 70%;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: calc(0.72rem * var(--text-scale, 1));
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
+}
+.channel-drop-preview .drop-tag-icon {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+.channel-drop-preview .drop-tag-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- changes made live on the server's pages ---------- */
+
+/* "Saving..." and "Saved" under an editor: quiet, and in the same place every time. */
+.admin-status {
+  margin: 0.3rem 0 0;
+  min-height: 1.1em;
+  font-size: calc(0.8rem * var(--text-scale, 1));
+}
+.admin-status:empty {
+  display: none;
+}
+.admin-status[data-state='saved']::before {
+  content: '\2713\00a0';
+  color: var(--live);
+}
+.admin-status[data-state='saving'] {
+  opacity: 0.6;
+}
+.admin-status[data-state='error'] {
+  color: var(--danger-soft);
+  opacity: 1;
+}
+/* In the dialog's footer, at the left, opposite Done. */
+.settings-footer .admin-status {
+  margin: 0 auto 0 0;
+  align-self: center;
 }

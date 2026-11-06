@@ -288,11 +288,9 @@ async function run() {
   await until(bobPage, "document.getElementById('server-dialog').open", { label: 'Bob\'s dialog' });
   const bobTabs = await bobPage.evaluate("return [...document.querySelectorAll('#server-dialog .settings-tab')].filter((t) => !t.hidden).map((t) => t.dataset.tab)");
   check('and sees only the pages he can use: Roles and Members, not General or Channels', JSON.stringify(bobTabs) === JSON.stringify(['roles', 'members']), JSON.stringify(bobTabs));
-  const ownRoleEditable = await bobPage.evaluate(`{
-    const item = [...document.querySelectorAll('#roles-list .admin-item')].find((li) => li.textContent.includes('Moderator'));
-    item.click();
-    return !document.getElementById('role-save').disabled;
-  }`);
+  await bobPage.evaluate(`[...document.querySelectorAll('#roles-list .admin-item')].find((li) => li.textContent.includes('Moderator')).click(); return true;`);
+  await until(bobPage, "!document.getElementById('roles-editor').hidden && document.getElementById('role-name').value === 'Moderator'", { label: 'his own role in the editor' });
+  const ownRoleEditable = await bobPage.evaluate("return !document.getElementById('role-name').disabled;");
   check('he cannot edit his own role', !ownRoleEditable, '');
   const ownUpDown = await bobPage.evaluate(`{
     const item = [...document.querySelectorAll('#roles-list .admin-item')].find((li) => li.textContent.includes('Moderator'));
@@ -325,7 +323,7 @@ async function run() {
     g.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   }`);
-  await click(owner, '#chan-save');
+  // No Save: choosing the group is what moves it.
   await until(owner, `document.querySelector('#chan-list .admin-item[data-channel-id="${loungeId}"]')?.dataset.nested !== undefined`, { label: 'the channel inside the group' });
   const after = (await rest('chief', '/api/channels')).body.channels.find((c) => c.id === loungeId);
   check('a channel moved into the group takes its password and its roles', after.locked && JSON.stringify(after.roles) === JSON.stringify([mod.id]), JSON.stringify(after));
@@ -365,8 +363,8 @@ async function run() {
   check('and the list says how many people are named', await owner.evaluate("return [...document.querySelectorAll('#chan-list .admin-item')].find((li) => li.textContent.includes('duo')).textContent.includes('1 person')"), '');
   check('Carol, who holds neither role, sees it because she is named', (await rest('carol', '/api/channels')).body.channels.some((c) => c.name === 'duo'), '');
   await owner.evaluate("document.querySelector('#chan-users .chan-person button').click(); return true;");
-  await click(owner, '#chan-save');
-  await until(owner, "!document.querySelector('#chan-users .chan-person')", { label: 'the person removed' });
+  // No Save: taking the name off is what does it, and the page says so.
+  await until(owner, "!document.querySelector('#chan-users .chan-person') && document.getElementById('server-status').dataset.state === 'saved'", { label: 'the person removed, and saved' });
   await sleep(500);
   check('and taking her off the list hides it from her again', !(await rest('carol', '/api/channels')).body.channels.some((c) => c.name === 'duo'), '');
 

@@ -194,6 +194,17 @@ async function run() {
   check('taking one out leaves the other', (await count('.forum-compose-preview')) === 1);
   await pickFiles(['third.png']);
   await waitFor(cdp, "document.querySelectorAll('[data-testid=\"forum-previews\"] .forum-compose-preview').length === 2", { label: 'two again' });
+  // A paste too long to be a post's words goes with it as a text file; a short one is just pasted.
+  const bodyBefore = await cdp.evaluate(`return document.querySelector('[data-testid="forum-body"]').value;`);
+  const paste = (text) => cdp.evaluate(`const b = document.querySelector('[data-testid="forum-body"]'); const dt = new DataTransfer(); dt.setData('text/plain', ${JSON.stringify(text)});
+    const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); b.dispatchEvent(e); return e.defaultPrevented;`);
+  check('a short paste is left to be pasted as text', (await paste('just a few words')) === false && (await count('.forum-compose-preview')) === 2);
+  check('a huge paste is taken over', (await paste('a line of a very long log\n'.repeat(400))) === true);
+  await waitFor(cdp, "document.querySelectorAll('[data-testid=\"forum-previews\"] .forum-compose-preview').length === 3", { label: 'the pasted text as a file' });
+  check('and goes with the post as message.txt, the words in the box as they were', (await cdp.evaluate(`return document.querySelector('[data-testid="forum-body"]').value;`)) === bodyBefore
+    && /message\.txt/.test(await cdp.evaluate(`return document.querySelector('[data-testid="forum-previews"]').textContent;`)));
+  await click('.forum-compose-remove', 2);
+  check('and can be taken out like any other', (await count('.forum-compose-preview')) === 2);
   await shot('2-compose');
   await click('[data-testid="forum-post"]');
   await waitFor(cdp, "!document.querySelector('[data-testid=\"forum-compose\"]') && !document.getElementById('chat-active').hidden", { label: 'the post opening', timeoutMs: 20_000 });

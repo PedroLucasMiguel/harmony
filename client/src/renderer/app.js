@@ -10,7 +10,7 @@ import { drawTrayIcons } from './tray-icons.js';
 import { t, texts, setLanguage, languages, currentLanguage, resolveLanguage, cachedPreference, onLanguageChange } from './i18n.js';
 import {
   createSink, MAX_GAIN, asPercent, playSample, stopSamples, setOutputDevice, monitorStream, playCue,
-  setCueVolume, setMasterVolume, playJoinSound, preloadJoinSound, stopJoinSounds, cueStatus,
+  setCueVolume, setMasterVolume, playJoinSound, preloadJoinSound, stopJoinSounds, cueStatus, warmAudio,
 } from './gain.js';
 import { NAME_FONTS, nameFontOf } from './name-fonts.js';
 import { prepareJoinSound, MAX_JOIN_SOUND_SECONDS } from './join-sound.js';
@@ -20,6 +20,7 @@ import { createDmUi } from './dm-ui.js';
 import { createCalls, isCallRoom } from './calls-ui.js';
 import { createCallScreen } from './call-screen.js';
 import { createAudioMenu } from './audio-menu.js';
+import { fileFromPaste } from './paste-text.js';
 import { createTyping } from './typing-ui.js';
 import { messageTime } from './message-time.js';
 import { createPollUi } from './poll-ui.js';
@@ -43,7 +44,7 @@ import { serverKeyOf } from './server-key.js';
 import {
   canAdminister, contextOf, nameLookOf, roleByHandle, roleHandle, roleIcon, rolesOf, roleLook, sortRoles,
 } from './roles.js';
-import { createServerAdmin } from './server-admin.js';
+import { createServerAdmin, autosave } from './server-admin.js';
 import { createSearchUi } from './search-ui.js';
 import { attachmentThumb, createPins, messageCard, toolButton } from './pins-ui.js';
 import { StarError, channelSnapshot, createStarStore, matches as hasWords } from './stars-store.js';
@@ -334,7 +335,7 @@ const el = {
   serverMusicNote: $('server-music-note'),
   serverPasswordNote: $('server-password-note'),
   serverErrorLine: $('server-error'),
-  serverNote: $('server-note'),
+  serverNote: $('server-status'),
   serverCancel: $('server-cancel'),
   rowMenu: $('row-menu'),
   rowMenuName: $('row-menu-name'),
@@ -1214,6 +1215,11 @@ async function boot() {
   // The chosen speakers from the start: the sounds and the streams watched outside a call play on them too, and
   // used to play on the system default until the settings were opened.
   refreshVoiceDevices().catch((err) => console.warn('[devices]', err.message));
+  // The output is started by the first thing done in the window, a long while before the first sound is wanted, so
+  // that the sound for joining a room does not have to be the thing that opens the speakers (see warmAudio).
+  for (const type of ['pointerdown', 'keydown']) {
+    document.addEventListener(type, () => warmAudio(), { once: true, capture: true });
+  }
   if (harmony.capabilities.tray) {
     // Off the critical path: the tray shows the app's own icon until these
     // arrive, which is what it shows outside a call anyway.
@@ -4578,7 +4584,100 @@ function clearDropMarks() {
     node.removeAttribute('data-drop-in-group');
     node.removeAttribute('data-drop-label');
   }
+  el.channelItems.removeAttribute('data-drop-end');
 }
+
+/*
+ * A preview of where the thing being dragged will land: a line, with a ring at its start, drawn at the exact place
+ * and set in to the level it will be at (inside a group it is indented as the group's channels are), and a small tag
+ * with the name of what is being moved sitting on it.
+ *
+ * It is drawn from the marks the drop targets already put on the rows (data-drop-before, data-drop-into and
+ * data-drop-end on the list itself), so it can never say something other than what the drop will do, and it floats
+ * over the list instead of being a row in it: the sidebar is short, and rows that move out of the way mid-drag take
+ * the target away from the pointer.
+ */
+let dropPreview = null;
+
+function dropPreviewNode() {
+  if (dropPreview) return dropPreview;
+  dropPreview = document.createElement('div');
+  dropPreview.className = 'channel-drop-preview';
+  dropPreview.setAttribute('aria-hidden', 'true');
+  const tag = document.createElement('span');
+  tag.className = 'drop-tag';
+  const icon = document.createElement('span');
+  icon.className = 'drop-tag-icon';
+  const name = document.createElement('span');
+  name.className = 'drop-tag-name';
+  tag.append(icon, name);
+  dropPreview.append(tag);
+  return dropPreview;
+}
+
+/** Where the line goes, in the list's own coordinates: from what is marked, or null when nothing is. */
+function dropPreviewPlace() {
+  const list = el.channelItems;
+  const box = list.getBoundingClientRect();
+  const at = (rect, y) => ({
+    top: y - box.top + list.scrollTop, left: rect.left - box.left + list.scrollLeft, width: rect.width,
+  });
+  const into = list.querySelector('li.channel-group[data-drop-into]');
+  if (into) {
+    const id = into.dataset.groupId;
+    const rows = [...list.querySelectorAll(`li[data-group-id="${id}"]:not(.channel-group)`)];
+    // At the end of the group, where it joins: under its last channel, or under the heading of one that has none.
+    if (rows.length) return at(rows[0].getBoundingClientRect(), rows.at(-1).getBoundingClientRect().bottom + 1);
+    const head = into.getBoundingClientRect();
+    const indent = parseFloat(getComputedStyle(into).fontSize) * 1.5;
+    return at({ left: head.left + indent, width: head.width - indent }, head.bottom + 1);
+  }
+  const before = list.querySelector('[data-drop-before]');
+  if (before) {
+    const rect = before.getBoundingClientRect();
+    return at(rect, rect.top - 2);
+  }
+  if (list.hasAttribute('data-drop-end')) {
+    const rows = [...list.querySelectorAll(':scope > li')];
+    const last = rows.at(-1);
+    const first = rows.find((r) => r.dataset.groupId === undefined) ?? rows[0];
+    if (!last || !first) return null;
+    return at(first.getBoundingClientRect(), last.getBoundingClientRect().bottom + 2);
+  }
+  return null;
+}
+
+function paintDropPreview() {
+  const node = dropPreviewNode();
+  const place = dragging && dragging.kind !== 'member' ? dropPreviewPlace() : null;
+  if (!place) {
+    node.remove();
+    return;
+  }
+  const channel = dragging.kind === 'channel' ? state.channels.list.find((c) => c.id === dragging.id) : null;
+  const group = dragging.kind === 'group' ? state.channels.groups.find((g) => g.id === dragging.id) : null;
+  node.querySelector('.drop-tag-name').textContent = channel?.name ?? group?.name ?? '';
+  const icon = node.querySelector('.drop-tag-icon');
+  // The same picture the row has, so the tag reads as the thing in the hand.
+  const from = channel ? el.channelItems.querySelector(`li.channel-row[data-id="${channel.id}"] .kind`) : null;
+  if (from?.dataset.icon) icon.dataset.icon = from.dataset.icon;
+  else delete icon.dataset.icon;
+  icon.textContent = from?.dataset.icon ? '' : (group ? '\u25BE' : '#');
+  node.dataset.kind = dragging.kind;
+  node.style.top = `${place.top}px`;
+  node.style.left = `${place.left}px`;
+  node.style.width = `${place.width}px`;
+  if (node.parentNode !== el.channelItems) el.channelItems.append(node);
+}
+
+// The marks are set and cleared in a few places, one after the other: watching them draws the line once, after.
+new MutationObserver(() => paintDropPreview()).observe(el.channelItems, {
+  attributes: true,
+  subtree: true,
+  attributeFilter: ['data-drop-before', 'data-drop-into', 'data-drop-end'],
+});
+document.addEventListener('dragend', () => paintDropPreview(), true);
+document.addEventListener('drop', () => requestAnimationFrame(paintDropPreview), true);
 
 /**
  * Light up a whole group -- its heading and every row in it -- as the place the
@@ -5106,6 +5205,7 @@ async function stageServerLogo(file) {
   });
   paintLogoPreview(shown);
   el.serverLogoRemove.disabled = false;
+  serverAuto.touch(0);
 }
 
 /** The banner field's preview: a picture in a strip as wide as the banner is shown, or an empty strip. */
@@ -5140,6 +5240,7 @@ async function stageServerBanner(file) {
   });
   paintBannerPreview(shown);
   el.serverBannerRemove.disabled = false;
+  serverAuto.touch(0);
 }
 
 /*
@@ -5218,12 +5319,8 @@ function openServerDialog(tab) {
   paintBannerPreview(serverInfo.banner ? harmony.mediaUrl(serverInfo.banner) : null);
   el.serverBannerRemove.disabled = !serverInfo.banner;
   el.serverNameInput.value = serverInfo.name;
-  el.serverPasswordInput.value = '';
-  el.serverPasswordOff.checked = false;
-  el.serverPasswordInput.disabled = false;
-  el.serverPasswordNote.textContent = serverInfo.passwordRequired
-    ? t('app.this_server_has_a_password')
-    : t('app.this_server_has_no_password');
+  serverPasswordReady = false;
+  syncServerPassword();
   // Files: shown only by a server that says its limits.
   el.serverUploads.hidden = !serverInfo.maxFileBytes;
   if (serverInfo.maxFileBytes) {
@@ -5247,7 +5344,9 @@ function openServerDialog(tab) {
   el.serverMusicNote.hidden = Boolean(serverInfo.musicAvailable);
   el.serverMusicNote.textContent = t('music.owner_missing');
   el.serverErrorLine.hidden = true;
-  el.serverNote.hidden = true;
+  el.serverNote.hidden = false;
+  el.serverNote.textContent = '';
+  delete el.serverNote.dataset.state;
   const allowed = serverTabsAllowed();
   const first = Object.keys(allowed).find((name) => allowed[name]);
   if (!first) return;
@@ -5257,12 +5356,39 @@ function openServerDialog(tab) {
   if (allowed.general && (allowed[tab] ? tab : first) === 'general') el.serverNameInput.focus();
 }
 
+/**
+ * The password box and the switch beside it, as the server is: the switch is ticked while there is no password, and the
+ * note says which it is. (They are drawn from here after every save, so they never say what was true before it.)
+ */
+function syncServerPassword() {
+  el.serverPasswordInput.value = '';
+  el.serverPasswordInput.disabled = false;
+  el.serverPasswordOff.checked = !serverInfo.passwordRequired;
+  el.serverPasswordNote.textContent = serverInfo.passwordRequired
+    ? t('app.this_server_has_a_password')
+    : t('app.this_server_has_no_password');
+}
+
+/** A new password is sent when the box has been let go of, not as it is typed: half of one would lock everybody out. */
+let serverPasswordReady = false;
+
+/**
+ * Sends what the General page holds that the server does not have, as it is now. Nothing is sent that has not changed:
+ * the default sent back would pin it, and a later change to the server's defaults would then pass this server by.
+ *
+ * Runs whenever something on the page changes (see serverAuto) and never closes the dialog: the page is live.
+ *
+ * @returns {Promise<boolean>} false when there was nothing to send
+ */
 async function saveServerSettings() {
   const name = el.serverNameInput.value.trim();
-  const off = el.serverPasswordOff.checked;
-  const typed = el.serverPasswordInput.value;
+  const typed = serverPasswordReady ? el.serverPasswordInput.value : '';
+  // Ticked while there is one is "take it off"; ticked while there is none is just how it is.
+  const off = el.serverPasswordOff.checked && serverInfo.passwordRequired;
 
-  const body = { name };
+  const body = {};
+  // An empty name is not a name: the box is being retyped, and the server keeps the one it has.
+  if (name && name !== serverInfo.name) body.name = name;
   if (pendingLogo !== undefined) body.logo = pendingLogo;
   if (pendingBanner !== undefined) body.banner = pendingBanner;
   // An absent field and an empty string are different answers, and the
@@ -5271,8 +5397,6 @@ async function saveServerSettings() {
   if (off) body.password = '';
   else if (typed) body.password = typed;
 
-  // Only what changed: sending the default back would pin it, and a later
-  // change to the server's defaults would then pass this server by.
   if (serverInfo.maxFileBytes) {
     const maxFile = Number(el.serverMaxFile.value);
     if (maxFile !== serverInfo.maxFileBytes) body.maxFileBytes = maxFile;
@@ -5284,44 +5408,64 @@ async function saveServerSettings() {
   if (serverInfo.musicAvailable !== undefined && el.serverMusic.checked !== Boolean(serverInfo.musicEnabled)) {
     body.musicEnabled = el.serverMusic.checked;
   }
+  if (!Object.keys(body).length) return false;
 
-  try {
-    const { server } = await harmony.api.updateServer(state.server, body);
-    applyServerInfo(server);
-    // A server from before banners takes the rest and says nothing of this: it would look saved, and not be.
-    if (body.banner && !('banner' in server)) {
-      el.serverErrorLine.textContent = t('server.banner_unsupported');
-      el.serverErrorLine.hidden = false;
-      return;
-    }
-    // The new picture (or none) into this server's profile and the rail, without waiting for the broadcast.
-    await syncLogo(state.server, el.password.value, server.logo ?? null);
-    await syncBanner(state.server, el.password.value, server.banner ?? null);
+  const { server } = await harmony.api.updateServer(state.server, body);
+  applyServerInfo(server);
+  // What was staged is the server's now.
+  if ('logo' in body) pendingLogo = undefined;
+  if ('banner' in body) pendingBanner = undefined;
+  // A server from before banners takes the rest and says nothing of this: it would look saved, and not be.
+  if (body.banner && !('banner' in server)) throw new Error(t('server.banner_unsupported'));
+  // The new picture (or none) into this server's profile and the rail, without waiting for the broadcast.
+  await syncLogo(state.server, el.password.value, server.logo ?? null);
+  await syncBanner(state.server, el.password.value, server.banner ?? null);
 
-    /*
-     * Tell this client the new key before anything else asks for it.
-     *
-     * The change takes effect on the very next request, including the
-     * ones this client is about to make -- so without this the owner
-     * locks themselves out the moment they press Save.
-     */
-    if (body.password !== undefined) {
-      await harmony.api.setPassword(body.password, state.server);
-      // Into this server's profile as well, or switching away and back
-      // would bring the old password with it.
-      el.password.value = body.password;
-      await saveProfile({ password: body.password });
-    }
-
-    el.serverDialog.close();
-    el.chatNote.textContent = server.restartRequired
-      ? t('app.saved_the_media_relay_keeps')
-      : t('app.saved');
-  } catch (err) {
-    el.serverErrorLine.textContent = err.message;
-    el.serverErrorLine.hidden = false;
+  /*
+   * Tell this client the new key before anything else asks for it.
+   *
+   * The change takes effect on the very next request, including the
+   * ones this client is about to make -- so without this the owner
+   * locks themselves out the moment it is applied.
+   */
+  if (body.password !== undefined) {
+    await harmony.api.setPassword(body.password, state.server);
+    // Into this server's profile as well, or switching away and back
+    // would bring the old password with it.
+    el.password.value = body.password;
+    await saveProfile({ password: body.password });
+    serverPasswordReady = false;
+    syncServerPassword();
   }
+  if (server.restartRequired) el.chatNote.textContent = t('app.saved_the_media_relay_keeps');
+  return true;
 }
+
+/** "Saving..." and "Saved" on the General page, with a failure on its own line. */
+const serverAuto = autosave(saveServerSettings, (state_, message) => {
+  if (state_ === 'error') {
+    el.serverNote.textContent = message;
+    el.serverNote.dataset.state = 'error';
+    el.serverNote.hidden = false;
+    el.serverErrorLine.textContent = message;
+    el.serverErrorLine.hidden = false;
+    // A dialog that has been closed is not there to say it: the page's own line says so.
+    if (!el.serverDialog.open) el.chatNote.textContent = message;
+    return;
+  }
+  el.serverErrorLine.hidden = true;
+  if (state_ === 'idle') {
+    el.serverNote.textContent = '';
+    delete el.serverNote.dataset.state;
+    return;
+  }
+  el.serverNote.textContent = state_ === 'saving' ? t('server_admin.saving') : t('server_admin.saved_live');
+  el.serverNote.dataset.state = state_;
+  el.serverNote.hidden = false;
+});
+
+/** Everything on the server's pages that has been changed and not sent yet, sent. Awaited before the dialog goes. */
+const flushServerPages = () => Promise.all([serverAuto.flush(), serverAdmin?.flush?.()]);
 
 /**
  * Everybody with an account, online first.
@@ -16781,7 +16925,13 @@ function applyMemberList(show) {
 }
 
 el.serverSettings.addEventListener('click', () => openServerDialog());
-el.serverCancel.addEventListener('click', () => el.serverDialog.close());
+// Done: what was changed a moment ago is sent first, so that a dialog that goes does not take it with it.
+el.serverCancel.addEventListener('click', async () => {
+  await flushServerPages().catch(() => {});
+  el.serverDialog.close();
+});
+// Closed by Escape or any other way: the same, without waiting for it (the values are still in the boxes).
+el.serverDialog.addEventListener('close', () => { flushServerPages().catch(() => {}); });
 el.serverLogoPick.addEventListener('click', () => {
   const picker = document.createElement('input');
   picker.type = 'file';
@@ -16806,6 +16956,7 @@ el.serverLogoRemove.addEventListener('click', () => {
   pendingLogo = null;
   paintLogoPreview(null);
   el.serverLogoRemove.disabled = true;
+  serverAuto.touch(0);
 });
 el.serverBannerPick.addEventListener('click', () => {
   const picker = document.createElement('input');
@@ -16831,6 +16982,7 @@ el.serverBannerRemove.addEventListener('click', () => {
   pendingBanner = null;
   paintBannerPreview(null);
   el.serverBannerRemove.disabled = true;
+  serverAuto.touch(0);
 });
 // A box the form will not accept says so on the dialog's own line: Electron draws no bubble of its own, and a form
 // that silently does nothing when Save is pressed is no answer.
@@ -16840,17 +16992,39 @@ el.serverForm.addEventListener('invalid', (event) => {
   el.serverErrorLine.hidden = false;
 }, true);
 el.serverForm.addEventListener('submit', (event) => {
-  // The dialog's own method="dialog" would close it before the save was
-  // even attempted, and a failure would have nowhere to be shown.
+  // The dialog's own method="dialog" would close it, and the page is live: Enter in a box is "this one is done".
   event.preventDefault();
   el.serverErrorLine.hidden = true;
-  saveServerSettings();
+  if (el.serverPasswordInput.value) serverPasswordReady = true;
+  serverAuto.touch(0);
+});
+
+/*
+ * The General page is live: each control sends what it changed as it is changed, and the page says "Saving..." and
+ * "Saved". A switch or a menu is sent at once; a name a moment after the typing stops; a password only when its box is
+ * let go of (or Enter is pressed in it); the storage figure when its box is.
+ */
+el.serverNameInput.addEventListener('input', () => serverAuto.touch(700));
+el.serverNameInput.addEventListener('change', () => serverAuto.touch(0));
+el.serverMaxFile.addEventListener('change', () => serverAuto.touch(0));
+el.serverStorage.addEventListener('change', () => serverAuto.touch(0));
+el.serverMusic.addEventListener('change', () => serverAuto.touch(0));
+el.serverPasswordInput.addEventListener('input', () => { serverPasswordReady = false; });
+el.serverPasswordInput.addEventListener('change', () => {
+  if (!el.serverPasswordInput.value) return;
+  serverPasswordReady = true;
+  serverAuto.touch(0);
 });
 el.serverPasswordOff.addEventListener('change', () => {
-  // Typing a password and ticking "no password" is two contradictory
-  // answers, so the box goes away rather than being quietly ignored.
-  el.serverPasswordInput.disabled = el.serverPasswordOff.checked;
-  if (el.serverPasswordOff.checked) el.serverPasswordInput.value = '';
+  if (el.serverPasswordOff.checked) {
+    // Take it off: and the box has nothing to say meanwhile.
+    el.serverPasswordInput.value = '';
+    serverPasswordReady = false;
+    serverAuto.touch(0);
+  } else if (!serverInfo.passwordRequired) {
+    // "There is no password" unticked is "there should be one": the box to write it in.
+    el.serverPasswordInput.focus();
+  }
 });
 
 // Same dismissal as the peer menu: pointerdown, captured, so it closes on
@@ -17764,8 +17938,10 @@ document.addEventListener('click', (event) => {
   if (el.emojiPop.contains(event.target)) return;
   if (el.chatEmoji.contains(event.target)) return;
   // The button that just opened it. Without this the same click that
-  // opens the picker from a message reaches this handler and closes it.
-  if (event.target.closest?.('.react-btn')) return;
+  // opens the picker from a message reaches this handler and closes it. A
+  // composer's own button says so with data-emoji-trigger (the private
+  // messages' did not, and its picker closed as fast as it opened).
+  if (event.target.closest?.('.react-btn, [data-emoji-trigger]')) return;
   closeEmojiPicker();
 });
 
@@ -17962,7 +18138,15 @@ el.chatInput.addEventListener('paste', (event) => {
   // Any file: one copied in the file manager arrives here too, with its own
   // name and whatever type it is. Text on the clipboard is left alone.
   const files = [...(event.clipboardData?.files ?? [])];
-  if (!files.length) return;
+  if (!files.length) {
+    // Text, and too much of it for a message: a file of it goes with the message instead (see paste-text.js).
+    const text = fileFromPaste(event, el.chatInput, state.chat.pendingFiles.map((f) => f.name));
+    if (text) {
+      event.preventDefault();
+      addPendingFiles([text]);
+    }
+    return;
+  }
 
   event.preventDefault();
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
@@ -18033,6 +18217,11 @@ el.channelItems.addEventListener('dragover', (event) => {
     return;
   }
   event.preventDefault();
+  // On the empty space under the rows -- the one place a drop means "the end" -- the preview says so.
+  if (event.target === el.channelItems && !el.channelItems.hasAttribute('data-drop-end')) {
+    clearDropMarks();
+    el.channelItems.setAttribute('data-drop-end', '');
+  }
 });
 el.channelItems.addEventListener('drop', (event) => {
   if (!dragging || dragging.kind === 'member') return;

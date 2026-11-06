@@ -1207,7 +1207,7 @@
                           title="Attach a file" data-i18n-title="chat_form.attach_a_file" data-i18n="chat_attach.attach">Attach</button>
                   <textarea id="dm-input" placeholder="Write a private message" autocomplete="off" maxlength="4000" rows="1"
                             data-i18n-placeholder="dm.placeholder"></textarea>
-                  <button type="button" class="composer-btn" id="dm-emoji" data-icon="smiley"
+                  <button type="button" class="composer-btn" id="dm-emoji" data-emoji-trigger data-icon="smiley"
                           title="Emoji" data-i18n-title="chat_form.emoji" data-i18n="chat_emoji.emoji">Emoji</button>
                   <button type="button" class="composer-btn" id="dm-poll" data-icon="chart-bar-horizontal"
                           title="Create a poll" data-i18n-title="poll.new" data-i18n="poll.new_button">Poll</button>
@@ -1467,6 +1467,8 @@
 
         Settings is about THIS MACHINE and takes effect for nobody else; every
         page here changes the server for everybody, and most of them at once.
+        A change is applied as it is made, on every page: there is no Save. (A
+        role, channel or badge that does not exist yet is made with Create.)
       -->
       <div class="settings-shell">
         <nav class="settings-nav" role="tablist" aria-orientation="vertical" aria-label="Server" data-i18n-aria-label="server_admin.title">
@@ -1580,10 +1582,6 @@
                 </span>
               </label>
                 <p class="error" id="server-error" hidden></p>
-                <p class="muted" id="server-note" hidden></p>
-                <div class="ask-buttons">
-                  <button type="submit" class="primary" id="server-save" data-i18n="server_save.save">Save</button>
-                </div>
               </form>
             </section>
 
@@ -1591,6 +1589,7 @@
             <section class="settings-page admin-page" role="tabpanel" data-page="roles" hidden>
               <h3 class="settings-page-title" data-i18n="server_admin.roles">Roles</h3>
               <p class="muted" data-i18n="server_admin.roles_hint">The role at the top outranks the ones below it. The owner and super admins are above every role.</p>
+              <input id="roles-filter" type="search" autocomplete="off" placeholder="Find a role" data-i18n-placeholder="server_admin.find_role" />
               <div class="admin-split">
                 <div class="admin-list-col">
                   <ul class="admin-list" id="roles-list" aria-label="Roles" data-i18n-aria-label="server_admin.roles"></ul>
@@ -1626,7 +1625,8 @@
                   <p class="error" id="role-error" hidden></p>
                   <div class="ask-buttons">
                     <button type="button" class="ghost danger" id="role-delete" data-i18n="server_admin.delete_role">Delete role</button>
-                    <button type="button" class="primary" id="role-save" data-i18n="server_save.save">Save</button>
+                    <!-- Only for a role that is not made yet: once it is, every change is applied as it is made. -->
+                    <button type="button" class="primary" id="role-save" data-i18n="server_admin.create" hidden>Create</button>
                   </div>
                 </div>
               </div>
@@ -1705,7 +1705,7 @@
                   <p class="error" id="chan-error" hidden></p>
                   <div class="ask-buttons">
                     <button type="button" class="ghost danger" id="chan-delete" data-i18n="server_admin.delete">Delete</button>
-                    <button type="button" class="primary" id="chan-save" data-i18n="server_save.save">Save</button>
+                    <button type="button" class="primary" id="chan-save" data-i18n="server_admin.create" hidden>Create</button>
                   </div>
                 </div>
               </div>
@@ -1742,13 +1742,15 @@
                   <p class="error" id="badge-error" hidden></p>
                   <div class="ask-buttons">
                     <button type="button" class="ghost danger" id="badge-delete" data-i18n="server_admin.delete">Delete</button>
-                    <button type="button" class="primary" id="badge-save" data-i18n="server_save.save">Save</button>
+                    <button type="button" class="primary" id="badge-save" data-i18n="server_admin.create" hidden>Create</button>
                   </div>
                 </div>
               </div>
             </section>
           </div>
           <div class="ask-buttons settings-footer">
+            <!-- Every change on every page is applied as it is made: this says so, and says when it has been (or why not). -->
+            <span class="admin-status" id="server-status" role="status" aria-live="polite"></span>
             <button type="button" class="primary" id="server-cancel" data-i18n="devices_close.done">Done</button>
           </div>
         </div>

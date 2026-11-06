@@ -164,9 +164,11 @@ async function run() {
   await sleep(600);
   const refused = await cdp.evaluate("const e = document.getElementById('server-error'); return { open: document.getElementById('server-dialog').open, shown: !e.hidden, text: e.textContent }");
   check('a value it will not take is said on the dialog, not silently ignored', refused.open && refused.shown && refused.text.length > 5, JSON.stringify(refused));
-  await cdp.evaluate(`${setInput('server-storage', '3')} document.getElementById('server-form').requestSubmit(); return true;`);
-  await waitFor(cdp, "!document.getElementById('server-dialog').open", { label: 'the dialog closing on Save', timeoutMs: 15_000 });
-  check('and a whole number of GB saves, with the error gone', await cdp.evaluate("return document.getElementById('server-error').hidden"), '');
+  // No Save: the box is let go of, and it is sent. The dialog stays, saying so.
+  await cdp.evaluate(`${setInput('server-storage', '3')} return true;`);
+  await waitFor(cdp, "document.getElementById('server-status').dataset.state === 'saved' && !document.getElementById('server-status').hidden", { label: 'the page saying it is saved', timeoutMs: 15_000 });
+  check('and a whole number of GB saves by itself, with the error gone and the dialog still open', await cdp.evaluate("return document.getElementById('server-error').hidden && document.getElementById('server-dialog').open"), '');
+  check('there is no Save button on the page', await cdp.evaluate("return !document.getElementById('server-save')"), '');
 
   // --- everything follows at once, with no switching away ----------------------------------------------------------------
   await waitFor(cdp, "document.querySelector('#server-icon img')", { label: 'the logo beside the name', timeoutMs: 15_000 });
@@ -180,8 +182,7 @@ async function run() {
   // --- taking it away, the same ------------------------------------------------------------------------------------------------------------
   await cdp.evaluate("document.getElementById('server-settings').click(); return true;");
   await sleep(500);
-  await cdp.evaluate("document.getElementById('server-logo-remove').click(); document.getElementById('server-form').requestSubmit(); return true;");
-  await waitFor(cdp, "!document.getElementById('server-dialog').open", { label: 'the dialog closing', timeoutMs: 15_000 });
+  await cdp.evaluate("document.getElementById('server-logo-remove').click(); return true;");
   await waitFor(cdp, "!document.querySelector('#server-icon img') && !document.querySelector('#server-rail .rail-item[data-server] .server-badge img')", { label: 'the logo going from both', timeoutMs: 15_000 });
   check('removing it takes it from the sidebar and the rail at once', true, JSON.stringify(await look()));
 }

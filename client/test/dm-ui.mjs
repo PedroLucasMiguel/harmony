@@ -257,6 +257,60 @@ async function run() {
   await shot(alice, '3-alice-conversation');
   check("Bob's answer reaches Alice, live", true, '');
 
+  // --- one message in, one row drawn: the rest of the screen is left as it is ---------------------------------------------------
+  // Every row is marked and what is taken out of the page is written down; a message is sent; what was there is still
+  // there, and only the list's row (whose last words are new) has been drawn again.
+  const watch = (page) => page.evaluate(`
+    for (const r of document.querySelectorAll('#dm-log .chat-msg')) r.__kept = true;
+    window.__removed = [];
+    window.__watch?.disconnect();
+    window.__watch = new MutationObserver((records) => {
+      for (const rec of records) for (const n of rec.removedNodes) if (n.nodeType === 1) window.__removed.push((n.className || n.tagName) + '@' + (rec.target.id || rec.target.className));
+    });
+    window.__watch.observe(document.getElementById('view-dms'), { childList: true, subtree: true });
+    return true;`);
+  const watched = (page) => page.evaluate(`return {
+    rows: document.querySelectorAll('#dm-log .chat-msg').length,
+    marked: [...document.querySelectorAll('#dm-log .chat-msg')].filter((r) => r.__kept).length,
+    removed: window.__removed,
+  };`);
+  await watch(alice);
+  await watch(bob);
+  const before = (await watched(alice)).rows;
+  await bob.evaluate(`const i = document.getElementById('dm-input'); i.value = 'one more, no redraw'; i.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('dm-send').click(); return true;`);
+  await until(alice, "document.getElementById('dm-log').textContent.includes('no redraw')", { label: 'the message on her screen' });
+  await until(bob, "document.getElementById('dm-log').textContent.includes('no redraw')", { label: 'the sent message on his screen' });
+  await sleep(600);
+  for (const [who, page] of [['the sender', bob], ['the reader', alice]]) {
+    const seen = await watched(page);
+    check(`${who}: the rows that were there are the same rows, and one is added`, seen.marked === before && seen.rows === before + 1, JSON.stringify(seen));
+    const outside = seen.removed.filter((n) => !n.endsWith('@dm-list'));
+    check(`${who}: nothing but the list's own row is taken out of the page for it`, outside.length === 0 && seen.removed.length <= 4, JSON.stringify(seen.removed));
+  }
+
+  // --- the emoji picker opens from the box, and puts what is picked in it -----------------------------------------------------
+  await bob.evaluate("document.getElementById('dm-emoji').click(); return true;");
+  await sleep(250);
+  check('the emoji button opens the picker (and the click that opened it does not close it)', await bob.evaluate("return !document.getElementById('emoji-pop').hidden"), '');
+  const placed = await bob.evaluate(`const r = document.getElementById('emoji-pop').getBoundingClientRect(); return r.width > 100 && r.height > 100 && r.top >= 0 && r.bottom <= innerHeight;`);
+  check('and it is on the screen, with a grid to pick from', placed, '');
+  await bob.evaluate("document.querySelector('#emoji-grid button, #emoji-grid .emoji-cell')?.click(); return true;");
+  await sleep(250);
+  const picked = await bob.evaluate("return { box: document.getElementById('dm-input').value, open: !document.getElementById('emoji-pop').hidden };");
+  check('picking one puts it in the box and puts the picker away', picked.box.length > 0 && !picked.open, JSON.stringify(picked));
+  await bob.evaluate("const i = document.getElementById('dm-input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); return true;");
+
+  // --- a paste too long for a message is a text file, attached ---------------------------------------------------------------------
+  const pasteIn = (page, text) => page.evaluate(`const i = document.getElementById('dm-input'); i.focus(); const dt = new DataTransfer(); dt.setData('text/plain', ${JSON.stringify(text)});
+    const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); i.dispatchEvent(e); return e.defaultPrevented;`);
+  check('a short paste is left to be pasted as text', (await pasteIn(bob, 'just a few words')) === false, '');
+  check('a huge paste is taken over', (await pasteIn(bob, 'one more line of a long log\n'.repeat(300))) === true, '');
+  await until(bob, "!document.getElementById('dm-pending').hidden", { label: 'the pasted text as the pending file' });
+  const pending = await bob.evaluate("return { name: document.getElementById('dm-pending-name').textContent, box: document.getElementById('dm-input').value, send: !document.getElementById('dm-send').disabled };");
+  check('it is the pending file, message.txt, and the box is as it was', pending.name.startsWith('message.txt') && pending.box === '' && pending.send, JSON.stringify(pending));
+  await bob.evaluate("document.getElementById('dm-pending-clear').click(); return true;");
+
   // --- editing, in the box -- the way a channel does it ------------------------------------------------------------------------
   const press = (page, k) => page.evaluate(`const i = document.getElementById('dm-input'); i.focus();
     i.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true })); return true;`);
