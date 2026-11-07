@@ -70,6 +70,8 @@ export function createDebugLog({ harmony, voice, effectStats, settings, live = (
   let longTasks = { count: 0, total: 0, max: 0 };
   let frames = { count: 0, blocking: 0, max: 0 };
   let busy = false;
+  /** The encoder each kind of send was last seen on, so a change of it (a fall back to the CPU) is written down when it happens. */
+  const encoderSeen = new Map();
 
   const send = (kind, text) => { harmony.debug.event(kind, text).catch(() => {}); };
 
@@ -182,7 +184,21 @@ export function createDebugLog({ harmony, voice, effectStats, settings, live = (
       // should have to know that.
       const named = (section, field) => {
         if (!section) return;
-        section.encoder = section[field] ? `hardware:${section[field]}` : 'software-or-not-reported';
+        const name = section[field];
+        // OpenH264 and its kind are named too, and are the CPU.
+        section.encoder = !name ? 'software-or-not-reported'
+          : /OpenH264|libvpx|libaom|SVT|x264|software/i.test(name) ? `software:${name}` : `hardware:${name}`;
+      };
+
+      // An encoder that changes under a running stream, from the GPU's to the CPU's, is how a share goes from smooth to a slideshow
+      // with nothing else in the log to say why: write the moment down.
+      const noteEncoder = (kind, section) => {
+        const now = section?.encoder;
+        if (!section) encoderSeen.delete(kind);
+        if (!now || now === 'software-or-not-reported') return;
+        const was = encoderSeen.get(kind);
+        if (was !== now) send('EVENT', was ? `${kind} encoder changed: ${was} -> ${now}` : `${kind} encoder: ${now}`);
+        encoderSeen.set(kind, now);
       };
 
       // A live or a screen share: the same questions as for the camera -- is the encoder keeping up, what is it
@@ -191,22 +207,28 @@ export function createDebugLog({ harmony, voice, effectStats, settings, live = (
       if (sharing?.pc) {
         const net = await describePc(sharing.pc);
         named(net.outVideo, 'encoderImplementation');
+        noteEncoder('share', net.outVideo);
         send('NET', `live ${pairs('net:live', net, dt)}`);
         const s = sharing.videoTrack?.getSettings?.() ?? {};
         send('AUDIO', `liveCapture ${pairs('liveCapture', {
           state: sharing.videoTrack?.readyState,
           size: s.width ? `${s.width}x${s.height}` : undefined,
           fps: s.frameRate,
+          // monitor (the whole screen) or window: a fullscreen game behaves very differently under the two.
+          surface: s.displaySurface,
           contentHint: sharing.videoTrack?.contentHint || undefined,
           audioMode: sharing.audioMode,
           ...(sharing.mix ?? {}),
         }, dt)}`);
+      } else {
+        encoderSeen.delete('share');
       }
 
       const v = voice();
       if (v?.channelId != null) {
         const snap = await v.debugSnapshot();
         named(snap.cam?.outVideo, 'encoderImplementation');
+        noteEncoder('camera', snap.cam?.outVideo);
         for (const s of snap.video) named(s.inVideo, 'decoderImplementation');
         const rtt = await v.rtt().catch(() => null);
         send('AUDIO', pairs('room', { ...snap.room, relayRtt_ms: rtt }, dt));

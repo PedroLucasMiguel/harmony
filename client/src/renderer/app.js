@@ -1385,6 +1385,9 @@ async function refreshGpuStatus() {
   }
 }
 
+/** Encoders that run on the CPU, whatever they are called by the stats. */
+const SOFTWARE_ENCODER = /OpenH264|libvpx|libaom|SVT|x264|software/i;
+
 /**
  * A short label for the stats line, saying what is really encoding.
  *
@@ -1396,7 +1399,8 @@ async function refreshGpuStatus() {
  * in the same direction.
  */
 function encoderLabel(stats) {
-  if (stats?.implementation) {
+  // OpenH264 and the like are named too, and are the CPU: only a hardware encoder gets a vendor.
+  if (stats?.implementation && !SOFTWARE_ENCODER.test(stats.implementation)) {
     const vendor = /NVIDIA/i.test(stats.implementation)
       ? 'NVENC'
       : /AMD|AMF/i.test(stats.implementation)

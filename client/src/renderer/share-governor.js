@@ -42,6 +42,13 @@ const FAST_ENCODE_MS = 12;
  */
 const LINK_ROOM = 1.05;
 
+/**
+ * Readings are judged over this many seconds together, not one at a time. A share that is held back to a frame or two a
+ * second has seconds with no frame at all, and read alone those look like an encoder with nothing to do: they used to
+ * reset the count, and a friend's share sat at 0-9 fps for two minutes without ever being lowered.
+ */
+const WINDOW_S = 4;
+
 /** In samples (about a second each). */
 const STEP_DOWN_AFTER = 6;
 const STEP_UP_AFTER = 30;
@@ -64,6 +71,8 @@ export function createShareGovernor(ask) {
   let behind = 0;
   let keeping = 0;
   let settling = 0;
+  /** The last few seconds' worth of readings, as differences: {seconds, frames, encode (s)}. */
+  let recent = [];
   let hold = 0;
   let holdFor = HOLD_FIRST;
   /** Samples left in which being starved again means the last step up was a mistake. */
@@ -93,6 +102,7 @@ export function createShareGovernor(ask) {
     behind = 0;
     keeping = 0;
     settling = SETTLE;
+    recent = [];
     return { ...plan(), reason };
   };
 
@@ -105,6 +115,7 @@ export function createShareGovernor(ask) {
       behind = 0;
       keeping = 0;
       settling = SETTLE;
+      recent = [];
       last = null;
       return plan();
     },
@@ -133,11 +144,19 @@ export function createShareGovernor(ask) {
         return null;
       }
 
-      const seconds = (sample.at - before.at) / 1000;
-      const frames = sample.framesEncoded - before.framesEncoded;
-      if (frames < 0) return null;
-      const fps = frames / seconds;
-      const encodeMs = frames > 0 ? ((sample.totalEncodeTime - before.totalEncodeTime) / frames) * 1000 : 0;
+      const dt = (sample.at - before.at) / 1000;
+      const newFrames = sample.framesEncoded - before.framesEncoded;
+      if (newFrames < 0) return null;
+      recent.push({ seconds: dt, frames: newFrames, encode: Math.max(0, sample.totalEncodeTime - before.totalEncodeTime) });
+      let span = recent.reduce((sum, r) => sum + r.seconds, 0);
+      while (recent.length > 1 && span - recent[0].seconds >= WINDOW_S) span -= recent.shift().seconds;
+      // Too little to judge yet.
+      if (span < WINDOW_S / 2) return null;
+      const frames = recent.reduce((sum, r) => sum + r.frames, 0);
+      const fps = frames / span;
+      const encodeMs = frames > 0 ? (recent.reduce((sum, r) => sum + r.encode, 0) / frames) * 1000 : 0;
+      // Not one frame in all that time: the encoder has told us nothing, so it is neither starved nor keeping up.
+      if (frames === 0 && sample.limitedBy !== 'cpu') return null;
       const asked = plan().fps;
       const linkLimited = sample.limitedBy === 'bandwidth'
         || (sample.availableKbps != null && sample.kbps != null && sample.availableKbps < sample.kbps * LINK_ROOM);

@@ -56,6 +56,69 @@ const HEAVY_GAME = [
   [13, 886, 9134, 11482]
 ];
 
+/**
+ * The second log, from the same friend with the encoder on the CPU (OpenH264, 40-90 ms to the frame) and the capture held
+ * back to a frame or two a second: [frames in the 2 s, encode time over them (ms), kbps, link kbps], the two minutes the game had the focus.
+ * Many of its windows have no frame at all, which read alone looked like an encoder with nothing to do.
+ */
+const SPARSE_GAME = [
+  [3, 141, 810, 5141],
+  [2, 81, 219, 5141],
+  [3, 139, 724, 5218],
+  [7, 439, 2058, 5218],
+  [7, 554, 5370, 6135],
+  [0, 0, 2786, 6831],
+  [1, 44, 1020, 6831],
+  [14, 1253, 5485, 7320],
+  [10, 874, 3731, 6452],
+  [16, 1331, 5019, 6969],
+  [11, 952, 5343, 5570],
+  [1, 87, 1139, 5969],
+  [0, 0, 0, 5969],
+  [0, 0, 0, 300],
+  [0, 0, 0, 300],
+  [2, 73, 600, 2476],
+  [0, 0, 379, 5963],
+  [0, 0, 0, 5963],
+  [1, 30, 250, 1235],
+  [0, 0, 199, 5534],
+  [1, 49, 324, 5534],
+  [0, 0, 600, 5991],
+  [2, 82, 1244, 5991],
+  [2, 79, 2119, 5991],
+  [1, 43, 932, 5561],
+  [3, 189, 1669, 5561],
+  [0, 0, 42, 5977],
+  [0, 0, 0, 5977],
+  [3, 116, 1610, 5977],
+  [4, 508, 2518, 5444],
+  [0, 0, 0, 5444],
+  [1, 40, 9, 0],
+  [0, 0, 895, 5963],
+  [1, 38, 471, 5963],
+  [9, 1144, 4020, 5995],
+  [0, 0, 1534, 6425],
+  [7, 903, 4461, 6834],
+  [3, 423, 3011, 6210],
+  [2, 316, 1279, 6210],
+  [0, 0, 42, 5950],
+  [0, 0, 0, 5950],
+  [0, 0, 0, 5950],
+  [0, 0, 0, 300],
+  [3, 120, 2377, 5279],
+  [1, 44, 1186, 5443],
+  [1, 42, 1061, 5443],
+  [0, 0, 42, 5581],
+  [4, 212, 1420, 5581],
+  [3, 227, 1329, 5534],
+  [2, 80, 1440, 5534],
+  [6, 570, 2602, 5534],
+  [6, 744, 4062, 6321],
+  [6, 574, 2352, 6855],
+  [2, 241, 880, 5554],
+  [0, 0, 0, 5554]
+];
+
 /** Feeds a governor a stretch of readings, 'every' ms apart, as the page's own running totals; returns what it asked for. */
 function feed(governor, rows, { every = 2000, start = 0, size = { width: 1920, height: 1080 }, totals = { frames: 0, encodeMs: 0 } } = {}) {
   const asked = [];
@@ -85,6 +148,14 @@ describe('a share that the encoder cannot keep up with', () => {
     assert.ok(asked[0].at <= 30_000, 'the first step is within 30 s: ' + asked[0].at);
     assert.equal(asked[0].fps, 30, 'frame rate first');
     assert.equal(asked[0].height, 1080, 'and not the size yet');
+  });
+
+  it('is lowered when the capture gives a frame or two a second and many seconds none', () => {
+    const governor = createShareGovernor({ fps: 60, width: 1920, height: 1080 });
+    const { asked } = feed(governor, SPARSE_GAME);
+    assert.ok(asked.length >= 2, 'it asked for less, and then for less again: ' + asked.length);
+    assert.equal(asked[0].reason, 'starved');
+    assert.ok(asked[0].at <= 30_000, 'the first step is within 30 s: ' + asked[0].at);
   });
 
   it('is lowered again, to a smaller picture, if that is not enough, and no further than the last rung', () => {
