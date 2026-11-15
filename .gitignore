@@ -67,3 +67,10 @@ Thumbs.db
 media/harmony-demo.mp4
 
 ciranda
+
+# v2 (Go client) build output and test binaries
+/v2/harmony2
+/v2/harmony2.exe
+/v2/h2probe
+/v2/*.test
+/v2/build.err
