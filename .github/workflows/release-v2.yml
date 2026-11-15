@@ -1,0 +1,163 @@
+# A beta release of the Go client (v2/), built for every OS and published as a GitHub pre-release.
+#
+#   git tag harmony2-2.0.0-beta.1 && git push origin harmony2-2.0.0-beta.1
+#
+# or the "Run workflow" button with the version typed in (the tag is made on the chosen commit).
+#
+# This is not release.yml and cannot start it: that one runs on tags starting with "v", these start with "harmony2-".
+# The Electron client's updater only looks at the repository's latest release, which GitHub never takes from a
+# pre-release, so a beta here is never offered to anyone running the Electron client. For the same reason this workflow
+# refuses a version without a pre-release suffix: a normal release would become the latest one.
+#
+# The files are named the way v2's own updater looks for them (harmony2-<os>-<arch>, .exe on Windows), with a
+# SHA256SUMS file beside them. The builds are pure Go (no C compiler), so one runner makes each target; macOS builds run
+# on a Mac so the binary can be signed ad hoc, which Apple silicon needs to start it.
+
+name: Release v2 (beta)
+
+on:
+  push:
+    tags: ['harmony2-*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, with a pre-release suffix, e.g. 2.0.0-beta.1'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-v2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.v.outputs.number }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        env:
+          INPUT: ${{ inputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then number="${REF_NAME#harmony2-}"; else number="$INPUT"; fi
+          if ! printf '%s' "$number" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.]+$'; then
+            echo "::error::'$number' is not a pre-release version like 2.0.0-beta.1. A release without a suffix would become the repository's latest release, which the Electron client's updater reads."
+            exit 1
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "tag=harmony2-$number" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: Vet and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: v2/go.mod
+          cache-dependency-path: v2/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet for every target
+        run: |
+          for os in linux windows darwin; do
+            echo "== $os"
+            CGO_ENABLED=0 GOOS=$os go vet -tags nocgo ./...
+          done
+      # Some tests need a sound card or a display that a runner does not have, so a failure here is shown but does not
+      # stop the build; the vet above and the builds below are what a release needs.
+      - name: go test
+        continue-on-error: true
+        run: CGO_ENABLED=0 go test -short -tags nocgo ./...
+
+  build:
+    name: Build (${{ matrix.os }} ${{ matrix.arch }})
+    needs: [version, check]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: linux, arch: amd64, runner: ubuntu-latest, file: harmony2-linux-amd64 }
+          - { os: linux, arch: arm64, runner: ubuntu-latest, file: harmony2-linux-arm64 }
+          - { os: windows, arch: amd64, runner: ubuntu-latest, file: harmony2-windows-amd64.exe }
+          - { os: windows, arch: arm64, runner: ubuntu-latest, file: harmony2-windows-arm64.exe }
+          - { os: darwin, arch: amd64, runner: macos-latest, file: harmony2-darwin-amd64 }
+          - { os: darwin, arch: arm64, runner: macos-latest, file: harmony2-darwin-arm64 }
+    defaults:
+      run:
+        working-directory: v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: v2/go.mod
+          cache-dependency-path: v2/go.sum
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.version.outputs.number }}
+        run: |
+          mkdir -p ../dist
+          go build -trimpath -tags nocgo -ldflags "-s -w -X harmony/v2/internal/version.Number=$VERSION" -o "../dist/${{ matrix.file }}" ./cmd/harmony2
+      - name: Sign ad hoc (macOS)
+        if: matrix.os == 'darwin'
+        run: codesign --force --sign - "../dist/${{ matrix.file }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: dist/${{ matrix.file }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish pre-release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          chmod +x harmony2-linux-* harmony2-darwin-*
+          sha256sum harmony2-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes
+        run: |
+          cat > notes.md <<'EOF'
+          Beta of the Go and raylib client (v2). It runs beside the Electron client against the same server and can share a voice channel with it. The Electron client does not see this release.
+
+          Run the file for your system; there is no installer. Needs nothing else installed (no ffmpeg).
+
+          - macOS: the file is signed ad hoc, not notarised. Open it once with right-click > Open, or run `xattr -d com.apple.quarantine harmony2-darwin-arm64`. Screen recording, camera and input monitoring permissions go to whatever started it (Terminal if you started it there).
+          - Windows and Linux: built and checked for compile errors only so far; the video, capture and global hotkey code has not been run on those systems. Reports are welcome.
+          - Check the files against `SHA256SUMS`.
+          EOF
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          NUMBER: ${{ needs.version.outputs.number }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "Harmony 2 $NUMBER" \
+            --notes-file notes.md
