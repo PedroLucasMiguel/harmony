@@ -17,6 +17,7 @@ type trayKey struct {
 	deafened bool
 	channel  int
 	language string
+	dark     bool
 }
 
 func (d *Desktop) startTray() {
@@ -25,6 +26,7 @@ func (d *Desktop) startTray() {
 		Icon:    tray.Picture(tray.LookApp, iconPixels),
 		OnOpen:  d.opt.Window.Show,
 		Menu:    d.menu,
+		Colours: d.opt.TrayColours,
 	})
 	if d.tray != nil {
 		notify.Balloon = d.tray.Balloon
@@ -34,6 +36,9 @@ func (d *Desktop) startTray() {
 
 func (d *Desktop) key() trayKey {
 	k := trayKey{language: d.opt.Strings().Code()}
+	if d.opt.TrayColours != nil {
+		k.dark = d.opt.TrayColours().Dark()
+	}
 	s := d.session.Load()
 	if s == nil {
 		return k

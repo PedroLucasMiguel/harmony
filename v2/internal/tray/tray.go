@@ -1,6 +1,8 @@
 // Package tray puts Harmony's icon in the system tray (the menu bar on a Mac) with a menu, and shows balloons beside it where the system has no better notifications. Each system has its own file; none needs cgo.
 package tray
 
+import "image/color"
+
 // Item is one line of the tray's menu.
 type Item struct {
 	Label     string
@@ -8,6 +10,16 @@ type Item struct {
 	Disabled  bool
 	Separator bool
 	OnClick   func()
+}
+
+// Colours is the menu's look in the program's own palette, for the systems that let the menu be drawn.
+type Colours struct {
+	Background, Text, Muted, Accent, Highlight color.RGBA
+}
+
+// Dark says whether the menu is a dark one, which is what a system that only has light and dark is told.
+func (c Colours) Dark() bool {
+	return 299*int(c.Background.R)+587*int(c.Background.G)+114*int(c.Background.B) < 128*1000
 }
 
 // Options is what the tray needs when it starts.
@@ -18,6 +30,8 @@ type Options struct {
 	OnOpen func()
 	// Menu builds the menu when it is about to show, so it always reflects the present.
 	Menu func() []Item
+	// Colours is asked when the menu is about to show; nil leaves the menu to the system's colours.
+	Colours func() Colours
 }
 
 // Tray is the icon in the notification area.

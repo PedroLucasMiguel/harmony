@@ -50,9 +50,6 @@ func (s *Screen) navNote() {
 	s.nav.trail.Push(p)
 }
 
-func (s *Screen) CanGoBack() bool    { return s.nav.trail.CanBack() }
-func (s *Screen) CanGoForward() bool { return s.nav.trail.CanForward() }
-
 func (s *Screen) GoBack() { s.navStep(s.nav.trail.Back) }
 
 func (s *Screen) GoForward() { s.navStep(s.nav.trail.Forward) }

@@ -11,7 +11,8 @@ import (
 	"golang.org/x/image/vector"
 )
 
-const coverageGamma = 0.4
+// coverageGamma is the curve an edge's coverage goes through; 1 is the plain coverage, less makes light text on a dark ground heavier.
+const coverageGamma = 0.7
 
 var coverageCurve = func() (table [256]uint8) {
 	for i := range table {
@@ -28,10 +29,15 @@ const (
 )
 
 type glyphKey struct {
-	face *font.Face
-	id   font.GID
-	size int32
+	face  *font.Face
+	id    font.GID
+	size  int32
+	phase uint8
 }
+
+// phases is how many places inside a pixel a glyph can start, as rasterised: the letters of a line sit at their own
+// distances, not the nearest whole pixel's.
+const phases = 4
 
 type bitmap struct {
 	page           int
@@ -62,6 +68,8 @@ func (a *atlas) solidTexture(current uint32) uint32 {
 
 type atlas struct {
 	pages     []rl.Texture2D
+	frames    []uint32
+	gpu       *gpuRaster
 	cursorX   int
 	cursorY   int
 	rowHeight int
@@ -69,25 +77,31 @@ type atlas struct {
 	pending   []color.RGBA
 }
 
-func newAtlas() *atlas { return &atlas{glyphs: map[glyphKey]*bitmap{}} }
+func newAtlas() *atlas { return &atlas{glyphs: map[glyphKey]*bitmap{}, gpu: newGPURaster()} }
 
 func (a *atlas) close() {
-	for _, page := range a.pages {
+	for i, page := range a.pages {
+		if i < len(a.frames) {
+			rl.UnloadFramebuffer(a.frames[i])
+		}
 		rl.UnloadTexture(page)
+	}
+	if a.gpu != nil {
+		a.gpu.close()
 	}
 }
 
-func (a *atlas) lookup(face *font.Face, id font.GID, physicalSize float32) *bitmap {
-	key := glyphKey{face, id, int32(math.Round(float64(physicalSize * sizeQuantum)))}
+func (a *atlas) lookup(face *font.Face, id font.GID, physicalSize float32, phase uint8) *bitmap {
+	key := glyphKey{face, id, int32(math.Round(float64(physicalSize * sizeQuantum))), phase}
 	if b, ok := a.glyphs[key]; ok {
 		return b
 	}
-	b := a.render(face, id, float32(key.size)/sizeQuantum)
+	b := a.render(face, id, float32(key.size)/sizeQuantum, float32(phase)/phases)
 	a.glyphs[key] = b
 	return b
 }
 
-func (a *atlas) render(face *font.Face, id font.GID, size float32) *bitmap {
+func (a *atlas) render(face *font.Face, id font.GID, size, shift float32) *bitmap {
 	outline, ok := face.GlyphDataOutline(id)
 	if !ok || len(outline.Segments) == 0 {
 		return &bitmap{page: -1}
@@ -95,11 +109,16 @@ func (a *atlas) render(face *font.Face, id font.GID, size float32) *bitmap {
 	scale := size / float32(face.Upem())
 	minX, minY, maxX, maxY := bounds(outline, scale)
 	left, top := int(math.Floor(float64(minX))), int(math.Floor(float64(minY)))
-	w, h := int(math.Ceil(float64(maxX)))-left+1, int(math.Ceil(float64(maxY)))-top+1
+	w, h := int(math.Ceil(float64(maxX+shift)))-left+1, int(math.Ceil(float64(maxY)))-top+1
 
+	if a.gpu != nil {
+		if b := a.renderGPU(outline, scale, left, top, w, h, shift); b != nil {
+			return b
+		}
+	}
 	raster := vector.NewRasterizer(w, h)
 	point := func(p opentype.SegmentPoint) (float32, float32) {
-		return p.X*scale - float32(left), -p.Y*scale - float32(top)
+		return p.X*scale - float32(left) + shift, -p.Y*scale - float32(top)
 	}
 	for _, seg := range outline.Segments {
 		switch seg.Op {
@@ -127,6 +146,31 @@ func (a *atlas) render(face *font.Face, id font.GID, size float32) *bitmap {
 		pixels[i] = color.RGBA{255, 255, 255, coverageCurve[coverage.Pix[i]]}
 	}
 	rl.UpdateTextureRec(a.pages[page], rl.Rectangle{X: float32(x), Y: float32(y), Width: float32(w), Height: float32(h)}, pixels)
+	return a.place(page, x, y, w, h, float32(left), float32(top))
+}
+
+// renderGPU queues the glyph for the next pass of the shader and gives its place in the atlas; nil when the outline does not
+// fit the shader's curves, which the processor then rasterises.
+func (a *atlas) renderGPU(outline font.GlyphOutline, scale float32, left, top, w, h int, shift float32) *bitmap {
+	g := a.gpu
+	first, count, ok := g.curves(outline, scale, float32(left), float32(top), shift)
+	if !ok {
+		g.used = first
+		if first > 0 {
+			a.run()
+			if first, count, ok = g.curves(outline, scale, float32(left), float32(top), shift); ok {
+				return a.queue(first, count, left, top, w, h)
+			}
+			g.used = 0
+		}
+		return nil
+	}
+	return a.queue(first, count, left, top, w, h)
+}
+
+func (a *atlas) queue(first, count, left, top, w, h int) *bitmap {
+	page, x, y := a.allocate(w, h)
+	a.gpu.jobs = append(a.gpu.jobs, rasterJob{page: page, x: x, y: y, w: w, h: h, first: first, count: count})
 	return a.place(page, x, y, w, h, float32(left), float32(top))
 }
 
@@ -163,6 +207,11 @@ func (a *atlas) newPage() {
 	texture := rl.LoadTextureFromImage(blank)
 	rl.UnloadImage(blank)
 	rl.SetTextureFilter(texture, rl.FilterBilinear)
+	if a.gpu != nil {
+		frame := rl.LoadFramebuffer()
+		rl.FramebufferAttach(frame, texture.ID, rl.AttachmentColorChannel0, rl.AttachmentTexture2d, 0)
+		a.frames = append(a.frames, frame)
+	}
 	a.pages = append(a.pages, texture)
 	white := [whiteSize * whiteSize]color.RGBA{{255, 255, 255, 255}, {255, 255, 255, 255}, {255, 255, 255, 255}, {255, 255, 255, 255}}
 	rl.UpdateTextureRec(texture, rl.Rectangle{Width: whiteSize, Height: whiteSize}, white[:])

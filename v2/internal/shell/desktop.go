@@ -6,16 +6,19 @@ import (
 	"harmony/v2/internal/app"
 	"harmony/v2/internal/desktop"
 	"harmony/v2/internal/platform"
+	"harmony/v2/internal/tray"
 	"harmony/v2/internal/ui/raw"
 	"harmony/v2/internal/ui/redraw"
+	"harmony/v2/internal/ui/theme"
 )
 
 // startDesktop brings up the hotkeys, the tray icon and the rest of what lives outside the window.
 func (sh *Shell) startDesktop() {
+	sh.syncTrayColours()
 	sh.desktop = desktop.New(desktop.Options{
 		Settings: sh.settings,
 		Window: desktop.Window{
-			Show:    func() { sh.context.Post(showWindow) },
+			Show:    func() { sh.context.Post(sh.showMain) },
 			Hide:    func() { sh.context.Post(hideWindow) },
 			Focused: sh.focused.Load,
 			Quit:    func() { sh.quit.Store(true); redraw.Request() },
@@ -30,6 +33,7 @@ func (sh *Shell) startDesktop() {
 		},
 		ToggleCamera: sh.toggleCamera,
 		Away:         sh.idleAway,
+		TrayColours:  func() tray.Colours { return *sh.trayColours.Load() },
 	})
 }
 
@@ -68,4 +72,13 @@ func (sh *Shell) toggleCamera() {
 		return
 	}
 	go func() { _ = sh.startCamera(session) }()
+}
+
+// trayHighlight is how much of the accent the menu's line under the pointer takes, the same as the program's own menus.
+const trayHighlight = 0.16
+
+// syncTrayColours keeps the palette the tray's menu is drawn in, which its own thread reads, in step with the theme.
+func (sh *Shell) syncTrayColours() {
+	p := sh.context.Theme
+	sh.trayColours.Store(&tray.Colours{Background: p.Surface, Text: p.Text, Muted: p.Muted, Accent: p.Accent, Highlight: theme.Mix(p.Surface, p.Accent, trayHighlight)})
 }

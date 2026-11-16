@@ -46,6 +46,9 @@ type batch struct {
 	white         [4]float32
 	projection    [16]float32
 
+	// prepare runs before the batch is drawn: the glyphs it needs are made there.
+	prepare func()
+
 	dpi                       float32
 	screenH, renderW, renderH float32
 }
@@ -113,6 +116,9 @@ func (b *batch) current() uint32 {
 
 // flush draws everything gathered so far; it runs when the frame ends and when the buffers are full.
 func (b *batch) flush() {
+	if b.prepare != nil {
+		b.prepare()
+	}
 	if b.ni == 0 {
 		return
 	}

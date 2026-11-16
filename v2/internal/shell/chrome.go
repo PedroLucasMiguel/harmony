@@ -64,11 +64,23 @@ type chrome struct {
 	fullscreen bool
 	lastW      int
 	lastH      int
+
+	// where the program keeps the window maximised itself (Windows without a frame), and the place to go back to
+	maximized bool
+	restore   screenRect
 }
+
+// screenRect is a window's place and size on the screen, in pixels.
+type screenRect struct{ x, y, w, h int }
 
 type dragState struct {
 	on     bool
 	ox, oy float32
+	// absolute: the pointer and the window where the drag began, in screen pixels, for a system that can say where the
+	// pointer is; the pointer position inside a window that moves under it lags the window
+	absolute bool
+	px, py   int
+	start    screenRect
 }
 
 type resizeState struct {
@@ -76,6 +88,11 @@ type resizeState struct {
 	edge       edge
 	mx, my     float32
 	x, y, w, h int
+
+	absolute bool
+	px, py   int
+	start    screenRect
+	unit     float32
 }
 
 type edge uint8
@@ -113,8 +130,6 @@ func (sh *Shell) buildBar() {
 	ch := &sh.chrome
 	ch.made = true
 	ch.bar = widget.TitleBar{
-		OnBack:        func() { sh.navigate(false) },
-		OnForward:     func() { sh.navigate(true) },
 		OnAbout:       func() { sh.context.OpenModal(about.New()) },
 		Controls:      frame == frameApp,
 		OnDrag:        sh.startDrag,
@@ -146,20 +161,65 @@ func (sh *Shell) closeWindow() {
 }
 
 func (sh *Shell) startDrag() {
-	sh.chrome.drag = dragState{on: true, ox: sh.in.MouseX, oy: sh.in.MouseY}
+	d := dragState{on: true, ox: sh.in.MouseX, oy: sh.in.MouseY}
+	if px, py, ok := platform.CursorPosition(); ok {
+		if x, y, w, h, ok := platform.WindowRect(sh.window); ok {
+			if sh.chrome.maximized {
+				// dragging a maximised window takes it out of that, with the pointer at the same place along the bar
+				back := sh.chrome.restore
+				share := float64(px-x) / float64(max(w, 1))
+				x, w, h = px-int(share*float64(back.w)), back.w, back.h
+				sh.restoreWindow(screenRect{x, y, w, h})
+			}
+			d.absolute, d.px, d.py, d.start = true, px, py, screenRect{x, y, w, h}
+		}
+	}
+	sh.chrome.drag = d
+}
+
+// ownMaximize says whether the program maximises the window itself. A window without a frame that the window system
+// maximises covers the taskbar too, so on Windows the program takes the monitor's work area, which the taskbar leaves free.
+func ownMaximize() bool { return frame == frameApp && runtime.GOOS == "windows" }
+
+func (sh *Shell) isMaximized() bool {
+	if ownMaximize() {
+		return sh.chrome.maximized
+	}
+	return rl.IsWindowMaximized()
 }
 
 func (sh *Shell) toggleMaximize() {
-	sh.chrome.drag.on = false
+	ch := &sh.chrome
+	ch.drag.on = false
 	if frame == frameMac {
 		platform.ToggleZoom(sh.window)
 		return
 	}
-	if rl.IsWindowMaximized() {
-		rl.RestoreWindow()
-	} else {
-		rl.MaximizeWindow()
+	if !ownMaximize() {
+		if rl.IsWindowMaximized() {
+			rl.RestoreWindow()
+		} else {
+			rl.MaximizeWindow()
+		}
+		return
 	}
+	if ch.maximized {
+		sh.restoreWindow(ch.restore)
+		return
+	}
+	x, y, w, h, ok := platform.WindowRect(sh.window)
+	wx, wy, ww, wh, free := platform.WorkArea(sh.window)
+	if !ok || !free {
+		rl.MaximizeWindow()
+		return
+	}
+	ch.restore, ch.maximized = screenRect{x, y, w, h}, true
+	platform.SetWindowRect(sh.window, wx, wy, ww, wh)
+}
+
+func (sh *Shell) restoreWindow(r screenRect) {
+	sh.chrome.maximized = false
+	platform.SetWindowRect(sh.window, r.x, r.y, r.w, r.h)
 }
 
 // drawBar draws the title bar across the top of bounds.
@@ -174,13 +234,11 @@ func (sh *Shell) drawBar(c *widget.Context, bounds geom.Rect) {
 	}
 	b := &ch.bar
 	b.Title, b.Badged = sh.barTitle()
-	b.CanBack = sh.channels != nil && sh.channels.CanGoBack()
-	b.CanForward = sh.channels != nil && sh.channels.CanGoForward()
 	b.Left = 0
 	if frame == frameMac && !ch.fullscreen {
 		b.Left = macLeft
 	}
-	b.Maximized = frame == frameApp && rl.IsWindowMaximized()
+	b.Maximized = frame == frameApp && sh.isMaximized()
 	b.Draw(c, geom.Rect{X: bounds.X, Y: bounds.Y, W: bounds.W, H: widget.TitleBarHeight})
 }
 
@@ -188,11 +246,17 @@ func (sh *Shell) drawBar(c *widget.Context, bounds geom.Rect) {
 func (sh *Shell) chromeInput() {
 	ch := &sh.chrome
 	if ch.drag.on {
-		if !sh.in.Down {
-			ch.drag.on = false
-		} else if dx, dy := sh.in.MouseX-ch.drag.ox, sh.in.MouseY-ch.drag.oy; dx != 0 || dy != 0 {
-			pos := rl.GetWindowPosition()
-			rl.SetWindowPosition(int(pos.X+dx), int(pos.Y+dy))
+		d := &ch.drag
+		switch px, py, ok := platform.CursorPosition(); {
+		case !sh.in.Down:
+			d.on = false
+		case d.absolute && ok:
+			platform.SetWindowRect(sh.window, d.start.x+px-d.px, d.start.y+py-d.py, d.start.w, d.start.h)
+		case !d.absolute:
+			if dx, dy := sh.in.MouseX-d.ox, sh.in.MouseY-d.oy; dx != 0 || dy != 0 {
+				pos := rl.GetWindowPosition()
+				rl.SetWindowPosition(int(pos.X+dx), int(pos.Y+dy))
+			}
 		}
 	}
 	if frame == frameApp {
@@ -216,7 +280,7 @@ func (sh *Shell) syncFrame() {
 }
 
 func (sh *Shell) edgeAt(x, y float32) edge {
-	if rl.IsWindowMaximized() || rl.IsWindowFullscreen() {
+	if sh.isMaximized() || rl.IsWindowFullscreen() {
 		return 0
 	}
 	w, h := float32(sh.width), float32(sh.height)
@@ -266,6 +330,14 @@ func cursorFor(e edge) int32 {
 // resizeWindow lets the window be sized by its edges, which a window without a frame has no system way to do.
 func (sh *Shell) resizeWindow() {
 	r := &sh.chrome.resize
+	if r.on && r.absolute {
+		if px, py, ok := platform.CursorPosition(); ok && sh.in.Down {
+			sh.resizeAbsolute(r, px, py)
+			return
+		}
+		r.on = false
+		return
+	}
 	if r.on {
 		if !sh.in.Down {
 			r.on = false
@@ -286,8 +358,9 @@ func (sh *Shell) resizeWindow() {
 		if r.edge&edgeBottom != 0 {
 			h = r.h + dy
 		}
-		zoom := sh.context.Paint.Zoom
-		minW, minH := int(minWindowWidth*zoom), int(minWindowHeight*zoom)
+		least := sh.context.Paint.Zoom
+		lw, lh := sh.leastSize()
+		minW, minH := int(lw*least), int(lh*least)
 		if w < minW {
 			if r.edge&edgeLeft != 0 {
 				x -= minW - w
@@ -309,15 +382,57 @@ func (sh *Shell) resizeWindow() {
 	if e == 0 {
 		return
 	}
-	if sh.in.Pressed {
-		pos := rl.GetWindowPosition()
-		*r = resizeState{on: true, edge: e, mx: sh.in.MouseX + pos.X, my: sh.in.MouseY + pos.Y, x: int(pos.X), y: int(pos.Y), w: sh.width, h: sh.height}
+	if !sh.in.Pressed {
+		return
 	}
+	if px, py, ok := platform.CursorPosition(); ok {
+		if x, y, w, h, ok := platform.WindowRect(sh.window); ok {
+			*r = resizeState{on: true, edge: e, absolute: true, px: px, py: py, start: screenRect{x, y, w, h}, unit: float32(w) / float32(max(sh.width, 1))}
+			return
+		}
+	}
+	pos := rl.GetWindowPosition()
+	*r = resizeState{on: true, edge: e, mx: sh.in.MouseX + pos.X, my: sh.in.MouseY + pos.Y, x: int(pos.X), y: int(pos.Y), w: sh.width, h: sh.height}
+}
+
+// resizeAbsolute sizes the window from where the pointer is on the screen, and sets its place and size in one step: a window
+// moved and then sized shows the frame between the two, which on the top and left edges is a flicker with every step.
+func (sh *Shell) resizeAbsolute(r *resizeState, px, py int) {
+	dx, dy := px-r.px, py-r.py
+	x, y, w, h := r.start.x, r.start.y, r.start.w, r.start.h
+	if r.edge&edgeLeft != 0 {
+		x, w = x+dx, w-dx
+	}
+	if r.edge&edgeRight != 0 {
+		w += dx
+	}
+	if r.edge&edgeTop != 0 {
+		y, h = y+dy, h-dy
+	}
+	if r.edge&edgeBottom != 0 {
+		h += dy
+	}
+	zoom := sh.context.Paint.Zoom * r.unit
+	lw, lh := sh.leastSize()
+	minW, minH := int(lw*zoom), int(lh*zoom)
+	if w < minW {
+		if r.edge&edgeLeft != 0 {
+			x -= minW - w
+		}
+		w = minW
+	}
+	if h < minH {
+		if r.edge&edgeTop != 0 {
+			y -= minH - h
+		}
+		h = minH
+	}
+	platform.SetWindowRect(sh.window, x, y, w, h)
 }
 
 // drawOutline traces the edge of a window the program draws itself, which the system gives no border of its own.
 func (sh *Shell) drawOutline(c *widget.Context, bounds geom.Rect) {
-	if frame != frameApp || rl.IsWindowMaximized() || rl.IsWindowFullscreen() {
+	if frame != frameApp || sh.isMaximized() || rl.IsWindowFullscreen() {
 		return
 	}
 	c.Paint.Stroke(bounds, 0, c.Hairline(), theme.WithAlpha(c.Theme.Text, outlineAlpha))

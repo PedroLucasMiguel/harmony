@@ -45,6 +45,9 @@ var (
 	selRelease   = objc.RegisterName("release")
 	selRemoveAll = objc.RegisterName("removeAllItems")
 	selAutoEn    = objc.RegisterName("setAutoenablesItems:")
+	selAppearOf  = objc.RegisterName("appearanceNamed:")
+	selSetAppear = objc.RegisterName("setAppearance:")
+	selResponds  = objc.RegisterName("respondsToSelector:")
 )
 
 type macTray struct {
@@ -53,6 +56,7 @@ type macTray struct {
 	menu    objc.ID
 	target  objc.ID
 	actions []func()
+	colours func() Colours
 }
 
 var macActive *macTray
@@ -76,7 +80,7 @@ func start(opt Options) impl {
 	if err != nil {
 		return nil
 	}
-	t := &macTray{}
+	t := &macTray{colours: opt.Colours}
 	t.target = objc.ID(class).Send(selAlloc).Send(selInit)
 	bar := objc.ID(objc.GetClass("NSStatusBar")).Send(selStatusBar)
 	t.item = bar.Send(selStatusFor, statusLengthVariable)
@@ -134,11 +138,24 @@ func (t *macTray) setMenu(items []Item) {
 		menu.Send(selAddItem, mi)
 		mi.Send(selRelease)
 	}
+	t.appearance(menu)
 	t.item.Send(selSetMenu, menu)
 	if t.menu != 0 {
 		t.menu.Send(selRelease)
 	}
 	t.menu = menu
+}
+
+// appearance makes the menu light or dark as the program's palette is, where the system lets a menu choose (macOS 11 on).
+func (t *macTray) appearance(menu objc.ID) {
+	if t.colours == nil || !objc.Send[bool](menu, selResponds, selSetAppear) {
+		return
+	}
+	name := "NSAppearanceNameAqua"
+	if t.colours().Dark() {
+		name = "NSAppearanceNameDarkAqua"
+	}
+	menu.Send(selSetAppear, objc.ID(objc.GetClass("NSAppearance")).Send(selAppearOf, nsString(name)))
 }
 
 func (t *macTray) balloon(string, string, func()) {}

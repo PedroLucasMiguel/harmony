@@ -65,6 +65,19 @@ type callStage struct {
 	lastMove time.Time
 }
 
+// streamLabel is the caption of a stream: whose it is and what it is.
+func streamLabel(st app.Stream) string {
+	kind := "camera"
+	if st.Kind == kindScreen {
+		kind = "screen"
+	}
+	who := st.Nick
+	if st.Own {
+		who = "you"
+	}
+	return who + " · " + kind
+}
+
 func (cs *callStage) view(st app.Stream) (v *streamView, created bool) {
 	key := keyOf(st)
 	v = cs.views[key]
@@ -76,15 +89,7 @@ func (cs *callStage) view(st app.Stream) (v *streamView, created bool) {
 		cs.views[key] = v
 	}
 	if v.nick != st.Nick || v.label == "" {
-		kind := "camera"
-		if st.Kind == kindScreen {
-			kind = "screen"
-		}
-		who := st.Nick
-		if st.Own {
-			who = "you"
-		}
-		v.nick, v.label = st.Nick, who+" · "+kind
+		v.nick, v.label = st.Nick, streamLabel(st)
 	}
 	v.seen = cs.frame
 	return v, created

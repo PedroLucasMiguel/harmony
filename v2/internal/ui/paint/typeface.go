@@ -1,12 +1,15 @@
 package paint
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"runtime"
 
 	"github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/font/opentype"
+
+	"harmony/v2/assets"
 )
 
 type Weight int
@@ -139,7 +142,11 @@ func loadTypefaces() (typefaces, error) {
 			break
 		}
 		if out[weight] == nil {
-			return nil, fmt.Errorf("no system font for weight %d: %v", weight, last)
+			tf, err := openEmbedded(weight, byPath)
+			if err != nil {
+				return nil, fmt.Errorf("no system font for weight %d: %v, and the built-in one: %v", weight, last, err)
+			}
+			out[weight] = tf
 		}
 	}
 	return out, nil
@@ -150,6 +157,37 @@ func openTypeface(path string) (*typeface, error) {
 	if err != nil {
 		return nil, err
 	}
+	// the file stays open: the faces read parts of it when a glyph is first drawn
+	return parseTypeface(file)
+}
+
+// embeddedFaces is the font that is in the program for a system that has none of the ones above: Microsoft's Selawik, the
+// open-licence font made to stand in for Segoe UI with the same widths, so that the text breaks where the Electron
+// client's does. A system that has its own font never reads these.
+var embeddedFaces = map[Weight]string{
+	Regular:  "fonts/selawik.ttf",
+	Medium:   "fonts/selawik.ttf",
+	Semibold: "fonts/selawik-semibold.ttf",
+	Bold:     "fonts/selawik-bold.ttf",
+}
+
+func openEmbedded(weight Weight, byPath map[string]*typeface) (*typeface, error) {
+	name := embeddedFaces[weight]
+	if tf, ok := byPath[name]; ok {
+		return tf, nil
+	}
+	data, err := assets.FS.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	tf, err := parseTypeface(bytes.NewReader(data))
+	if err == nil {
+		byPath[name] = tf
+	}
+	return tf, err
+}
+
+func parseTypeface(file font.Resource) (*typeface, error) {
 	face, err := font.ParseTTF(file)
 	if err != nil {
 		return nil, err

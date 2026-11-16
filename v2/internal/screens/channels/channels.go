@@ -41,23 +41,26 @@ type Screen struct {
 	// ClipKeys lets the soundboard's clips have hotkeys; nil leaves them out.
 	ClipKeys soundboard.Hotkeys
 
-	membersSearch  widget.TextField
-	channelScroll  widget.Scroll
-	folded         map[int]bool
-	rosterScroll   widget.Scroll
-	memberScroll   widget.Scroll
-	sound          soundboard.Board
-	music          musicUI
-	joinedAt       time.Time
-	joinedID       int
-	mu             sync.Mutex
-	errText        string
-	isNote         bool
-	errSeq         int
-	chat           chatState
-	dm             dmState
-	forum          forumState
-	call           callStage
+	membersSearch widget.TextField
+	channelScroll widget.Scroll
+	folded        map[int]bool
+	rosterScroll  widget.Scroll
+	memberScroll  widget.Scroll
+	sound         soundboard.Board
+	music         musicUI
+	joinedAt      time.Time
+	joinedID      int
+	mu            sync.Mutex
+	errText       string
+	isNote        bool
+	errSeq        int
+	chat          chatState
+	dm            dmState
+	forum         forumState
+	call          callStage
+	pip           pipState
+	// Mini is how the picture in picture asks the shell to make the app that window.
+	Mini           MiniHooks
 	audio          audioControls
 	voice          voiceNotes
 	watch          speakingWatch
@@ -143,8 +146,10 @@ func (s *Screen) read() model {
 func (s *Screen) Draw(c *widget.Context, bounds geom.Rect) {
 	m := s.read()
 	s.navNote()
+	s.pipPrepare(m)
 	if s.dm.page {
 		s.drawDMPage(c, bounds, m)
+		s.drawPip(c, bounds, m)
 		return
 	}
 	l := s.layout(bounds)
@@ -153,6 +158,7 @@ func (s *Screen) Draw(c *widget.Context, bounds geom.Rect) {
 
 	if l.narrow {
 		s.drawNarrow(c, l, m)
+		s.drawPip(c, bounds, m)
 		s.dm.member.Show(c)
 		s.admin.menu.Show(c)
 		s.showPeerMenus(c)
@@ -170,6 +176,7 @@ func (s *Screen) Draw(c *widget.Context, bounds geom.Rect) {
 	s.drawVoicePanel(c, l, m)
 	s.drawSelfStrip(c, l, m)
 	s.drawColumnHandles(c, l)
+	s.drawPip(c, bounds, m)
 	s.dm.member.Show(c)
 	s.admin.menu.Show(c)
 	s.showPeerMenus(c)

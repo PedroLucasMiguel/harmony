@@ -26,13 +26,13 @@ const (
 
 func (s *Screen) drawMain(c *widget.Context, l layout, m model) {
 	if s.forumOpen() {
-		s.Session.SetViewersPaused(true)
+		s.Session.SetViewersPaused(!s.pip.on)
 		s.call.release()
 		s.drawForum(c, l.main, m)
 		return
 	}
 	if s.chat.channel != 0 {
-		s.Session.SetViewersPaused(true)
+		s.Session.SetViewersPaused(!s.pip.on)
 		s.call.release()
 		s.drawChat(c, l.main, m)
 		return
@@ -46,7 +46,7 @@ func (s *Screen) drawMain(c *widget.Context, l layout, m model) {
 		return
 	}
 	streaming := len(m.streams) > 0
-	s.Session.SetViewersPaused(!streaming || s.Settings.PauseHiddenCameras && raw.IsWindowMinimized())
+	s.Session.SetViewersPaused(!streaming || s.Settings.PauseHiddenCameras && raw.IsWindowMinimized() && !s.PipAuto())
 	if streaming {
 		s.drawStage(c, l.main, m)
 		return

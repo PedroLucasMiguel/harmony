@@ -23,6 +23,7 @@ import (
 	"harmony/v2/internal/screens/serveradmin"
 	"harmony/v2/internal/screens/settings"
 	"harmony/v2/internal/store"
+	"harmony/v2/internal/tray"
 	"harmony/v2/internal/ui/geom"
 	"harmony/v2/internal/ui/input"
 	"harmony/v2/internal/ui/paint"
@@ -85,6 +86,9 @@ type Shell struct {
 	quit     atomic.Bool
 	focused  atomic.Bool
 	chrome   chrome
+	mini     miniState
+	// trayColours is the palette of the tray's menu, which is drawn on a thread of its own.
+	trayColours atomic.Pointer[tray.Colours]
 }
 
 func Run(options Options) {
@@ -129,7 +133,7 @@ func Run(options Options) {
 	sh.window = rl.GetWindowHandle()
 	sh.startDesktop()
 	sh.startServers()
-	one.Serve(func() { sh.context.Post(showWindow) })
+	one.Serve(func() { sh.context.Post(sh.showMain) })
 	redraw.SetWaker(func() { platform.WakeEvents(sh.window) })
 	rl.PollInputEvents()
 	sh.in = input.Poll(input.State{})
@@ -141,6 +145,7 @@ func Run(options Options) {
 		}
 		sh.in = input.Poll(sh.in)
 		sh.chromeInput()
+		sh.syncMini()
 		sh.shortcuts()
 	}
 	sh.close()
@@ -190,7 +195,9 @@ func (sh *Shell) frame() {
 	raw.BeginDrawing()
 	raw.ClearBackground(c.Theme.Bg)
 	bounds := geom.Rect{W: c.Paint.ToCSS(float32(raw.GetScreenWidth())), H: c.Paint.ToCSS(float32(raw.GetScreenHeight()))}
-	if modal := c.Modal(); modal != nil {
+	if sh.mini.on {
+		sh.drawMini(c, bounds)
+	} else if modal := c.Modal(); modal != nil {
 		c.Frozen(func() { sh.drawLayout(c, bounds) })
 		if frame == frameApp {
 			modal.Draw(c, bounds.Inset(0, widget.TitleBarHeight, 0, 0))
@@ -336,6 +343,7 @@ func (sh *Shell) showSignedIn(session *app.Session, server string) {
 		OnSettings:     func() { sh.openSettings(session) },
 		OnServerDialog: func(t serveradmin.Target) { sh.context.OpenModal(serveradmin.New(session, t)) },
 		ClipKeys:       clipKeys{sh.desktop},
+		Mini:           sh.miniHooks(),
 		ShareHooks:     channels.ShareHooks{Start: func() error { return sh.startShare(session) }, StartCamera: func() error { return sh.startCamera(session) }, Change: func() { sh.openShareChoice(session, true) }},
 	}
 	sh.screen = sh.channels
@@ -365,10 +373,11 @@ func (sh *Shell) openSettings(session *app.Session) {
 func (sh *Shell) applySettings() {
 	c := sh.context
 	c.Theme = paletteOf(sh.settings)
+	sh.syncTrayColours()
 	c.Paint.TextScale = float32(sh.settings.TextScale) / 100
 	if zoom := float32(sh.settings.UIScale) / 100; zoom != c.Paint.Zoom {
 		c.Paint.Zoom = zoom
-		rl.SetWindowMinSize(int(minWindowWidth*zoom), int(minWindowHeight*zoom))
+		sh.applyMinSize()
 	}
 	if i18n.Resolve(sh.settings.Language, i18n.SystemLanguages()) != c.Strings.Code() {
 		sh.setLanguage(sh.settings.Language)

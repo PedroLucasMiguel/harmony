@@ -36,18 +36,15 @@ var (
 	closeHover    = color.RGBA{232, 17, 35, 255}
 )
 
-// TitleBar is the slim bar across the top of the window: back and forward through the places opened, the server's name
-// at the middle, about at the end, and where the window has no frame of its own the buttons that minimise, maximise and
-// close it. Pressing the bare bar drags the window and a double press maximises it.
+// TitleBar is the slim bar across the top of the window: the server's name at the middle, about at the end, and where the
+// window has no frame of its own the buttons that minimise, maximise and close it. Pressing the bare bar drags the window
+// and a double press maximises it.
 type TitleBar struct {
 	Title string
 	// Badged shows the server's initial beside the name.
-	Badged                bool
-	CanBack, CanForward   bool
-	OnBack, OnForward     func()
-	OnAbout               func()
-	BackHint, ForwardHint string
-	AboutHint             string
+	Badged    bool
+	OnAbout   func()
+	AboutHint string
 	// Left and Right are the room kept clear of the system's own window buttons.
 	Left, Right float32
 	// Controls draws minimise, maximise and close at the end; Maximized shows restore in place of maximise.
@@ -68,14 +65,7 @@ func (t *TitleBar) Draw(c *Context, r geom.Rect) {
 	c.Paint.Fill(geom.Rect{X: r.X, Y: r.Bottom() - edge, W: r.W, H: edge}, 0, c.Theme.Border)
 	inner := geom.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H - edge}
 
-	left := inner.X + t.Left
-	if t.Left == 0 {
-		left += barSidePad
-	}
 	top := inner.Y + (inner.H-barButtonH)/2
-	t.button(c, geom.Rect{X: left, Y: top, W: barButtonW, H: barButtonH}, "arrow-left", t.CanBack, t.OnBack)
-	t.button(c, geom.Rect{X: left + barButtonW + barButtonGap, Y: top, W: barButtonW, H: barButtonH}, "arrow-right", t.CanForward, t.OnForward)
-
 	right := inner.Right() - t.Right
 	if t.Right == 0 {
 		right -= barSidePad

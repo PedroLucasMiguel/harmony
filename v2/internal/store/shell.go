@@ -19,6 +19,16 @@ type Shell struct {
 	DMListWidth    int            `json:"dmListWidth,omitempty"`
 	// DMLinkPreviews is a card under a link in a private message, which tells the server the address.
 	DMLinkPreviews bool `json:"dmLinkPreviews"`
+	// PictureInPicture floats the streams of the call in one small window over the other pages; PipPopOut makes that window the whole app while it is minimised.
+	PictureInPicture bool `json:"pictureInPicture"`
+	PipPopOut        bool `json:"pipPopOut"`
+	// PipRect is where the window was left and how big it was made, in interface pixels from the page's corner; empty is the usual place.
+	PipRect Rect `json:"pipRect"`
 }
 
-func shellDefaults() Shell { return Shell{TextScale: 100, DMLinkPreviews: true} }
+// Rect is a place and a size.
+type Rect struct {
+	X, Y, W, H float32
+}
+
+func shellDefaults() Shell { return Shell{TextScale: 100, DMLinkPreviews: true, PipPopOut: true} }

@@ -39,6 +39,8 @@ type Options struct {
 	ToggleCamera func()
 	// Away is told, from the idle watch's goroutine, whether the computer is being left alone, so that servers other than the open one hear it.
 	Away func(away bool)
+	// TrayColours is the palette the tray's menu is drawn in; nil leaves it to the system.
+	TrayColours func() tray.Colours
 }
 
 type Desktop struct {

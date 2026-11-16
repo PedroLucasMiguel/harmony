@@ -47,6 +47,7 @@ type voice struct {
 	black                      widget.Button
 	blackNote                  feedback
 	autoWatch, pauseHidden     widget.Switch
+	pip, pipPopOut             widget.Switch
 	gpu                        widget.Switch
 
 	note            string
@@ -104,6 +105,9 @@ func newVoice(d *Dialog) *voice {
 		d.save()
 	}
 	v.pauseHidden.OnChange = func(on bool) { d.Settings.PauseHiddenCameras = on; d.save() }
+	v.pip.On, v.pipPopOut.On = d.Settings.PictureInPicture, d.Settings.PipPopOut
+	v.pip.OnChange = func(on bool) { d.Settings.PictureInPicture = on; d.save() }
+	v.pipPopOut.OnChange = func(on bool) { d.Settings.PipPopOut = on; d.save() }
 	v.gpu.OnChange = func(on bool) {
 		d.Settings.GPUEncoding = on
 		d.save()
@@ -265,6 +269,8 @@ func (v *voice) build(c *widget.Context) widget.Component {
 			widget.ToggleList{
 				{Title: c.T("settings.voice.auto_watch_streams"), Hint: c.T("settings.voice.auto_watch_streams_hint"), Switch: &v.autoWatch},
 				{Title: c.T("settings.voice.pause_hidden_cameras"), Hint: c.T("settings.voice.pause_hidden_cameras_hint"), Switch: &v.pauseHidden},
+				{Title: c.T("settings.voice.picture_in_picture"), Hint: c.T("settings.voice.picture_in_picture_hint"), Switch: &v.pip},
+				{Title: c.T("settings.voice.pip_pop_out"), Hint: c.T("settings.voice.pip_pop_out_hint"), Switch: &v.pipPopOut},
 			},
 		}},
 		&widget.SettingCard{Children: []widget.Component{

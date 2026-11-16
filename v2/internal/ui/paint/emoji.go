@@ -12,7 +12,7 @@ import (
 
 // lookupColor is lookup for colour glyphs: their pixels go in the same pages, with the glyph's own colours instead of white.
 func (a *atlas) lookupColor(f *emojitext.Font, id font.GID, physicalSize float32) *bitmap {
-	key := glyphKey{f.Face(), id, int32(math.Round(float64(physicalSize * sizeQuantum)))}
+	key := glyphKey{f.Face(), id, int32(math.Round(float64(physicalSize * sizeQuantum))), 0}
 	if b, ok := a.glyphs[key]; ok {
 		return b
 	}

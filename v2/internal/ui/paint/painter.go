@@ -30,7 +30,9 @@ func New(zoom float32) (*Painter, error) {
 		return nil, err
 	}
 	dpi := rl.GetWindowScaleDPI().X
-	return &Painter{shaper: newShaper(faces), atlas: newAtlas(), masks: newMasks(), pictures: newPictures(), Zoom: zoom, dpi: dpi, b: newBatch(dpi)}, nil
+	painter := &Painter{shaper: newShaper(faces), atlas: newAtlas(), masks: newMasks(), pictures: newPictures(), Zoom: zoom, dpi: dpi, b: newBatch(dpi)}
+	painter.b.prepare = painter.atlas.run
+	return painter, nil
 }
 
 // Flush draws what has been painted so far; the frame's last call, before the buffers are swapped.

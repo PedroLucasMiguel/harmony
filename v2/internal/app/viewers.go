@@ -92,6 +92,7 @@ type viewerSet struct {
 	list    map[streamKey]*viewer
 	closed  map[streamKey]bool
 	paused  bool
+	only    *streamKey
 	manualC bool
 	manualS bool
 	mid     int
@@ -134,7 +135,7 @@ func (s *Session) Watch(mid int, kind string) error {
 		return nil
 	}
 	v := vs.add(s, key, nick, mid == j.Mid)
-	if !vs.paused {
+	if vs.runs(key) {
 		v.start(0)
 	}
 	vs.mu.Unlock()
@@ -221,7 +222,43 @@ func (s *Session) SetViewersPaused(paused bool) {
 	}
 	if !paused {
 		for i, v := range vs.sorted() {
-			v.start(time.Duration(i) * stagger)
+			if vs.runs(v.key) {
+				v.start(time.Duration(i) * stagger)
+			}
+		}
+	}
+	vs.mu.Unlock()
+	for _, v := range idle {
+		v.stop()
+	}
+	s.changed()
+}
+
+// runs says whether a stream is decoded now: not while paused, and when one is picked, only that one.
+func (vs *viewerSet) runs(key streamKey) bool {
+	return !vs.paused && (vs.only == nil || *vs.only == key)
+}
+
+// SetViewersOnly decodes just the one stream and lets the others rest, for a window that shows one at a time; with on false
+// every watched stream runs again. It is cheap to call on every frame.
+func (s *Session) SetViewersOnly(mid int, kind string, on bool) {
+	vs := &s.viewers
+	key := streamKey{mid, kind}
+	vs.mu.Lock()
+	if on == (vs.only != nil) && (!on || *vs.only == key) {
+		vs.mu.Unlock()
+		return
+	}
+	vs.only = nil
+	if on {
+		vs.only = &key
+	}
+	var idle []*viewer
+	for _, v := range vs.sorted() {
+		if vs.runs(v.key) {
+			v.start(0)
+		} else {
+			idle = append(idle, v)
 		}
 	}
 	vs.mu.Unlock()
@@ -301,7 +338,7 @@ func (s *Session) syncViewers(roster []hclient.Member) {
 				continue
 			}
 			v := vs.add(s, key, m.Nickname, false)
-			if !vs.paused {
+			if vs.runs(key) {
 				v.start(time.Duration(len(fresh)) * stagger)
 			}
 			fresh = append(fresh, v)

@@ -82,6 +82,8 @@ type VideoTile struct {
 	Flat        bool
 	Controls    bool
 	HideCaption bool
+	// NoClose and NoFullscreen leave those two buttons out of the caption.
+	NoClose, NoFullscreen bool
 	// Volume is the slider for how loud a share is played; set it on somebody else's screen share to show the mute button,
 	// the slider and the level (Level, in percent). NoAudio marks a share with no sound.
 	Volume  *Slider
@@ -191,7 +193,7 @@ func (t VideoTile) drawCaption(c *Context, r geom.Rect, hovered bool) TileAction
 			icon   string
 			action TileAction
 			show   bool
-		}{{"x", TileClose, !t.Own}, {"corners-out", TileFullscreen, !t.Compact}} {
+		}{{"x", TileClose, !t.Own && !t.NoClose}, {"corners-out", TileFullscreen, !t.Compact && !t.NoFullscreen}} {
 			if !b.show {
 				continue
 			}

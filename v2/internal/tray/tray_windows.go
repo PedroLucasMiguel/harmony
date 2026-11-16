@@ -104,6 +104,8 @@ type winTray struct {
 	tip      string
 	onBubble func()
 	done     chan struct{}
+	// paint is set while the menu is up and drawn by the program.
+	paint *menuPaint
 }
 
 var winActive *winTray
@@ -184,6 +186,16 @@ func trayProc(window, message, wparam, lparam uintptr) uintptr {
 				}
 			}
 			return 0
+		case wmMeasureItem:
+			if t.paint != nil {
+				t.paint.measure(window, (*measureItem)(pointer(lparam)))
+				return 1
+			}
+		case wmDrawItem:
+			if t.paint != nil {
+				t.paint.draw((*drawItem)(pointer(lparam)))
+				return 1
+			}
 		case t.created:
 			t.mu.Lock()
 			notifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&t.data)))
@@ -202,28 +214,45 @@ func (t *winTray) popup() {
 	items := t.opt.Menu()
 	menu, _, _ := createPopup.Call()
 	defer destroyMenu.Call(menu)
+	if t.opt.Colours != nil {
+		t.paint = newMenuPaint(items, t.opt.Colours())
+		t.paint.background(menu)
+		defer func() { t.paint.release(); t.paint = nil }()
+	}
 	for i, it := range items {
 		flags := uintptr(mfString)
 		switch {
+		case t.paint != nil:
+			flags = mfOwnerDraw
+			if it.Separator || it.Disabled {
+				flags |= mfGrayed
+			}
 		case it.Separator:
 			flags = mfSeparator
 		case it.Disabled:
 			flags |= mfGrayed
 		}
-		if it.Checked {
+		if it.Checked && t.paint == nil {
 			flags |= mfChecked
 		}
-		appendMenu.Call(menu, flags, uintptr(i+1), uintptr(unsafe.Pointer(mustUTF16(it.Label))))
+		item := uintptr(unsafe.Pointer(mustUTF16(it.Label)))
+		if t.paint != nil {
+			item = uintptr(i + 1)
+		}
+		appendMenu.Call(menu, flags, uintptr(i+1), item)
 	}
 	var at point
 	getCursorPos.Call(uintptr(unsafe.Pointer(&at)))
 	setForeground.Call(t.window)
 	chosen, _, _ := trackPopup.Call(menu, tpmReturnCmd|tpmRightBtn, uintptr(at.x), uintptr(at.y), 0, t.window, 0)
 	postMessage.Call(t.window, wmNull, 0, 0)
-	if i := int(chosen) - 1; i >= 0 && i < len(items) && items[i].OnClick != nil {
+	if i := int(chosen) - 1; i >= 0 && i < len(items) && items[i].OnClick != nil && !items[i].Separator && !items[i].Disabled {
 		go items[i].OnClick()
 	}
 }
+
+// pointer is the address a window message carries in a parameter.
+func pointer(address uintptr) unsafe.Pointer { return *(*unsafe.Pointer)(unsafe.Pointer(&address)) }
 
 func (t *winTray) setIconLocked(png []byte) {
 	if len(png) == 0 {
