@@ -119,7 +119,7 @@ type Capture interface {
 // opened or the user has not allowed it. onEnd is called once, from another goroutine, if the capture stops by itself
 // (the camera was unplugged, the permission was taken away); it is not called after Close.
 func StartCapture(p CaptureParams, onAU func(au []byte), onEnd func(error)) (Capture, error) {
-	if kind, _ := ParseSourceID(p.SourceID); kind == KindWindow && runtime.GOOS != "darwin" {
+	if kind, _ := ParseSourceID(p.SourceID); kind == KindWindow && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		return nil, ErrUnsupported
 	}
 	if n, ok := parseSourceNumber(p.SourceID, KindScreen); ok && runtime.GOOS != "darwin" {

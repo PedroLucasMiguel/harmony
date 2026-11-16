@@ -16,6 +16,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
+	"harmony/v2/internal/memtrim"
 	"harmony/v2/internal/ui/geom"
 	"harmony/v2/internal/ui/redraw"
 )
@@ -46,19 +47,40 @@ type Picture struct {
 	live    bool
 	used    uint64
 	anim    *animation
+	cost    int
+	// sized is a GIF that moves, kept at its own size and cut to the box when it is drawn; round is a disc of it.
+	sized, round bool
+	// redirect is the picture this one stands for: a size of a moving GIF, which is the one animation drawn at every size.
+	redirect *Picture
+	// dead is a size nobody asks for any more; evicted is a picture whose texture was let go of.
+	dead, evicted bool
+	// seen is when a size was last asked for, in nanoseconds; only sized pictures keep it, under pictures.mu.
+	seen int64
+}
+
+// target is the picture that has the pixels: this one, or the one it stands for.
+func (pic *Picture) target() *Picture {
+	pic.mu.Lock()
+	defer pic.mu.Unlock()
+	if pic.redirect != nil {
+		return pic.redirect
+	}
+	return pic
 }
 
 // Size is the picture's natural size in pixels once it is known.
 func (pic *Picture) Size() (w, h int, ok bool) {
-	pic.mu.Lock()
-	defer pic.mu.Unlock()
-	return pic.w, pic.h, pic.state == PictureReady
+	t := pic.target()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.w, t.h, t.state == PictureReady
 }
 
 func (pic *Picture) State() PictureState {
-	pic.mu.Lock()
-	defer pic.mu.Unlock()
-	return pic.state
+	t := pic.target()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.state
 }
 
 type pictures struct {
@@ -66,6 +88,7 @@ type pictures struct {
 	items map[picKey]*Picture
 	slots chan struct{}
 	tick  uint64
+	swept int64
 	bytes int
 }
 
@@ -123,14 +146,21 @@ func (ps *pictures) load(pic *Picture, produce func() (*image.NRGBA, int, int, e
 	ps.slots <- struct{}{}
 	img, w, h, err := produce()
 	<-ps.slots
+	ps.finish(pic, img, w, h, err)
+}
+
+// finish says what a loaded picture is. No image and no error is a picture that stands for another one.
+func (ps *pictures) finish(pic *Picture, img *image.NRGBA, w, h int, err error) {
 	pic.mu.Lock()
-	if err != nil {
+	switch {
+	case err != nil:
 		pic.state = PictureFailed
-	} else {
+	case img != nil:
 		pic.pending, pic.w, pic.h, pic.state = img, w, h, PictureReady
 	}
 	pic.mu.Unlock()
 	redraw.Request()
+	memtrim.Soon()
 }
 
 func decodePicture(data []byte) (*image.NRGBA, int, int, error) {
@@ -170,12 +200,20 @@ func (ps *pictures) upload(pic *Picture) {
 	}
 	raw := rl.Image{Data: unsafe.Pointer(&img.Pix[0]), Width: int32(img.Rect.Dx()), Height: int32(img.Rect.Dy()), Mipmaps: 1, Format: rl.UncompressedR8g8b8a8}
 	tex := rl.LoadTextureFromImage(&raw)
-	rl.SetTextureFilter(tex, rl.FilterBilinear)
+	if pic.sized {
+		rl.GenTextureMipmaps(&tex)
+		rl.SetTextureFilter(tex, rl.FilterTrilinear)
+	} else {
+		rl.SetTextureFilter(tex, rl.FilterBilinear)
+	}
 	pic.mu.Lock()
-	pic.tex, pic.live = tex, true
+	pic.tex, pic.live, pic.cost = tex, true, len(img.Pix)
+	if pic.anim != nil {
+		pic.cost += pic.anim.bytes()
+	}
 	pic.mu.Unlock()
 	ps.mu.Lock()
-	ps.bytes += len(img.Pix)
+	ps.bytes += pic.cost
 	ps.mu.Unlock()
 	ps.evict(pic)
 }
@@ -197,7 +235,10 @@ func (ps *pictures) evict(keep *Picture) {
 			return
 		}
 		rl.UnloadTexture(oldest.tex)
-		ps.bytes -= int(oldest.tex.Width * oldest.tex.Height * 4)
+		ps.bytes -= oldest.cost
+		oldest.mu.Lock()
+		oldest.live, oldest.evicted = false, true
+		oldest.mu.Unlock()
 		delete(ps.items, oldestKey)
 	}
 }
@@ -228,24 +269,20 @@ func (p *Painter) texture(pic *Picture) (rl.Texture2D, bool) {
 }
 
 func (p *Painter) drawPicture(pic *Picture, r geom.Rect, radius float32, cover bool, corner, tint color.RGBA) {
+	pic = pic.target()
 	tex, live := p.texture(pic)
 	if !live {
 		return
 	}
-	src := rl.Rectangle{Width: float32(tex.Width), Height: float32(tex.Height)}
-	if cover {
-		want := r.W / r.H
-		have := src.Width / src.Height
-		if have > want {
-			src.Width = src.Height * want
-			src.X = (float32(tex.Width) - src.Width) / 2
-		} else {
-			src.Height = src.Width / want
-			src.Y = (float32(tex.Height) - src.Height) / 2
-		}
+	if pic.round {
+		p.drawRounded(tex, r, min(r.W, r.H)/2, tint)
+		return
 	}
-	width, height := float32(tex.Width), float32(tex.Height)
-	p.textureRect(tex.ID, p.rect(r), src.X/width, src.Y/height, (src.X+src.Width)/width, (src.Y+src.Height)/height, false, tint)
+	u0, v0, u1, v1 := float32(0), float32(0), float32(1), float32(1)
+	if cover || pic.sized {
+		u0, v0, u1, v1 = coverUV(float32(tex.Width), float32(tex.Height), r)
+	}
+	p.textureRect(tex.ID, p.rect(r), u0, v0, u1, v1, false, tint)
 	if radius > 0 {
 		p.Corners(r, radius, corner)
 	}

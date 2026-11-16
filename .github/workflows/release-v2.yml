@@ -110,7 +110,9 @@ jobs:
           VERSION: ${{ needs.version.outputs.number }}
         run: |
           mkdir -p ../dist
-          go build -trimpath -tags nocgo -ldflags "-s -w -X harmony/v2/internal/version.Number=$VERSION" -o "../dist/${{ matrix.file }}" ./cmd/harmony2
+          GUI=""
+          if [ "$GOOS" = windows ]; then GUI="-H=windowsgui"; fi
+          go build -trimpath -tags nocgo -ldflags "-s -w $GUI -X harmony/v2/internal/version.Number=$VERSION" -o "../dist/${{ matrix.file }}" ./cmd/harmony2
       - name: Sign ad hoc (macOS)
         if: matrix.os == 'darwin'
         run: codesign --force --sign - "../dist/${{ matrix.file }}"

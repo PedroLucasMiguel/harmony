@@ -22,13 +22,17 @@ func (s *Screen) serverStep(c *widget.Context) widget.Component {
 
 	children := []widget.Component{widget.Field(c.T("step_server.server_address"), &s.serverURL)}
 	s.mu.Lock()
-	needsPassword, busy := s.needsPassword, s.busy
+	needsPassword, asked, busy := s.needsPassword, s.passwordAsked, s.busy
 	s.mu.Unlock()
+	note := c.T("app.the_address_you_were_given")
 	if needsPassword {
 		children = append(children, widget.Field(c.T("password_field.server_password"), &s.serverPassword))
+		if asked {
+			note = c.T("app.this_server_asks_for_a")
+		}
 	}
 	children = append(children,
-		hint(c.T("app.the_address_you_were_given")),
+		hint(note),
 		&widget.Button{Label: c.T("app.continue"), Variant: widget.Primary, Disabled: busy, OnClick: s.probe},
 	)
 	if s.backTo != "" {
@@ -39,11 +43,14 @@ func (s *Screen) serverStep(c *widget.Context) widget.Component {
 	return widget.Col(cardGap, children...)
 }
 
+// probe asks the server about itself, with the password typed if there is one. The server answers its health to anybody, so
+// a password that is wanted shows in what it says and is checked there; the sign-in only goes on once the server accepts it.
 func (s *Screen) probe() {
 	address := strings.TrimSpace(s.serverURL.Value)
 	if address == "" || !s.begin() {
 		return
 	}
+	texts := s.Strings()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 		defer cancel()
@@ -66,12 +73,20 @@ func (s *Screen) probe() {
 		s.busy = false
 		var refused *hclient.APIError
 		switch {
-		case errors.As(err, &refused) && refused.Status == http.StatusUnauthorized:
-			s.needsPassword = true
+		case errors.As(err, &refused) && (refused.Status == http.StatusUnauthorized || refused.Status == http.StatusTooManyRequests):
+			s.needsPassword, s.passwordAsked = true, false
 			s.errText = refused.Message
 		case err != nil:
 			s.errText = err.Error()
+		case health.PasswordRequired && !health.Authenticated:
+			s.needsPassword = true
+			s.passwordAsked = client.Password == ""
+			if !s.passwordAsked {
+				s.errText = texts.T("connect.wrong_password")
+			}
+			s.serverPassword.RequestFocus()
 		default:
+			s.needsPassword, s.passwordAsked = health.PasswordRequired, false
 			s.address, s.serverName = client.Base, health.Name
 			s.needsOwner, s.registering = health.NeedsOwner, !health.HasAccounts
 			s.serverUp, s.step, s.errText = widget.ServerUp, stepAccount, s.saved.notice

@@ -66,7 +66,11 @@ func startCapture(p CaptureParams, onAU func([]byte), onEnd func(error)) (Captur
 	ready := make(chan error, 1)
 	switch p.Source {
 	case Screen:
-		go c.runScreen(p, guarded, ready)
+		if kind, _ := ParseSourceID(p.SourceID); kind == KindWindow {
+			go c.runWindow(p, guarded, ready)
+		} else {
+			go c.runScreen(p, guarded, ready)
+		}
 	case Webcam:
 		go c.runCamera(p, guarded, ready)
 	default:

@@ -10,6 +10,7 @@ import (
 	"harmony/v2/internal/platform"
 	"harmony/v2/internal/screens/about"
 	"harmony/v2/internal/ui/geom"
+	"harmony/v2/internal/ui/theme"
 	"harmony/v2/internal/ui/widget"
 )
 
@@ -31,6 +32,7 @@ const (
 	lightsTop    = 10
 	resizeEdge   = 6
 	resizeCorner = 12
+	outlineAlpha = 0.28
 )
 
 var frame = pickFrame()
@@ -311,4 +313,12 @@ func (sh *Shell) resizeWindow() {
 		pos := rl.GetWindowPosition()
 		*r = resizeState{on: true, edge: e, mx: sh.in.MouseX + pos.X, my: sh.in.MouseY + pos.Y, x: int(pos.X), y: int(pos.Y), w: sh.width, h: sh.height}
 	}
+}
+
+// drawOutline traces the edge of a window the program draws itself, which the system gives no border of its own.
+func (sh *Shell) drawOutline(c *widget.Context, bounds geom.Rect) {
+	if frame != frameApp || rl.IsWindowMaximized() || rl.IsWindowFullscreen() {
+		return
+	}
+	c.Paint.Stroke(bounds, 0, c.Hairline(), theme.WithAlpha(c.Theme.Text, outlineAlpha))
 }

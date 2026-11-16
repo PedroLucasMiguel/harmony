@@ -31,6 +31,7 @@ const (
 	loopbackBufferHNS     = 1000000
 	loopbackPoll          = 10 * time.Millisecond
 	waitObject0           = 0
+	waveFormatExSize      = 18 // WAVEFORMATEX is packed; Go pads the struct to 20
 )
 
 var (
@@ -127,7 +128,7 @@ func formatOf(p uintptr) (pcmFormat, error) {
 	f := pcmFormat{rate: int(w.samplesPerSec), channels: int(w.channels), bits: int(w.bitsPerSample)}
 	tag := w.tag
 	if tag == waveFormatExtensible {
-		tag = *(*uint16)(at(p + unsafe.Sizeof(*w) + 8)) // the first word of the sub-format GUID, after the valid bits and the channel mask
+		tag = *(*uint16)(at(p + waveFormatExSize + 6)) // the first word of the sub-format GUID, after the valid bits and the channel mask
 	}
 	switch tag {
 	case waveFormatFloat:
@@ -251,4 +252,8 @@ func audioSupport() AudioSupport {
 	return AudioSupport{System: true, Exclude: processLoopbackSupported(), App: processLoopbackSupported()}
 }
 
-func windowAudioPID(uint32) int { return 0 }
+func windowAudioPID(n uint32) int {
+	var pid uint32
+	sys(procGetWindowThreadProcessID, hwndOf(n), uintptr(unsafe.Pointer(&pid)))
+	return int(pid)
+}

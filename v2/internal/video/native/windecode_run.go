@@ -133,6 +133,10 @@ func (d *winDecoder) pullOutput() int {
 	}
 	m.out = mftOutputDataBuffer{}
 	if !m.provides {
+		if buf, err := m.outSample.buffer(); err == nil {
+			buf.setLength(0)
+			buf.release()
+		}
 		m.out.sample = uintptr(m.outSample.com)
 	}
 	m.status = 0

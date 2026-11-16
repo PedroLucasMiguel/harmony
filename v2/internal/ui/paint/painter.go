@@ -246,3 +246,9 @@ func roundRectPath(path [][2]float32, r geom.Rect, radius float32) [][2]float32 
 func lerp2(a, b [2]float32, t float32) [2]float32 {
 	return [2]float32{a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t}
 }
+
+// Clipped is whether the point is cut off by the clip in force: what is drawn there is not seen, so it must not be pressed.
+func (p *Painter) Clipped(x, y float32) bool {
+	n := len(p.clips)
+	return n > 0 && !p.clips[n-1].Contains(x, y)
+}

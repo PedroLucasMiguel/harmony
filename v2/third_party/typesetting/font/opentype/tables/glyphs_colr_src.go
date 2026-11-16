@@ -1,6 +1,7 @@
 package tables
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sort"
 )
@@ -98,17 +99,33 @@ type baseGlyphPaintRecord struct {
 	Paint   PaintTable `offsetSize:"Offset32" offsetRelativeTo:"Parent"` // Offset to a Paint table, from beginning of BaseGlyphList table.
 }
 
+// LayerList keeps the table's bytes and reads the paints of a glyph's layers when it is drawn: read up front they are tens of
+// megabytes in a colour emoji font.
 type LayerList struct {
-	paintTables []PaintTable `arrayCount:"FirstUint32" offsetsArray:"Offset32"` // Offsets to Paint tables, from beginning of LayerList table.
+	src    []byte // the table from its start, offsets to the paint tables are from here
+	length int
 }
 
 // Resolve returns an error for invalid (out of bounds) indices
 func (ll LayerList) Resolve(paint PaintColrLayers) ([]PaintTable, error) {
 	last := paint.FirstLayerIndex + uint32(paint.NumLayers)
-	if L := len(ll.paintTables); int(last) > L {
-		return nil, fmt.Errorf("out of bounds PaintColrLayers: expected %d, got %d", last, L)
+	if int(last) > ll.length {
+		return nil, fmt.Errorf("out of bounds PaintColrLayers: expected %d, got %d", last, ll.length)
 	}
-	return ll.paintTables[paint.FirstLayerIndex:last], nil
+	out := make([]PaintTable, 0, paint.NumLayers)
+	for i := int(paint.FirstLayerIndex); i < int(last); i++ {
+		offset := int(binary.BigEndian.Uint32(ll.src[4+i*4:]))
+		if offset == 0 || offset > len(ll.src) { // a null offset is a layer with nothing in it
+			out = append(out, nil)
+			continue
+		}
+		layer, _, err := ParsePaintTable(ll.src[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("reading LayerList: %s", err)
+		}
+		out = append(out, layer)
+	}
+	return out, nil
 }
 
 type ClipList struct {

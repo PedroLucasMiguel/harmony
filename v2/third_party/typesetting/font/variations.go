@@ -74,7 +74,7 @@ func loadGvar(ld *ot.Loader, glyf tables.Glyf) (*gvar, error) {
 }
 
 func newGvar(table tables.Gvar, glyf tables.Glyf) (*gvar, error) {
-	if table.GlyphCount() != len(glyf) {
+	if table.GlyphCount() != glyf.Len() {
 		return nil, fmt.Errorf("invalid 'gvar' table: mismatch in glyphs count")
 	}
 
@@ -125,7 +125,7 @@ func (gvar *gvar) glyphVariations(glyph gID) []tupleVariation {
 	for j, header := range vs.TupleVariationHeaders {
 		tvs[j].TupleVariationHeader = header
 	}
-	pointsNumberCountAll := pointNumbersCount(gvar.glyf[glyph]) + phantomCount
+	pointsNumberCountAll := pointNumbersCount(gvar.glyf.Glyph(int(glyph))) + phantomCount
 	if err := parseGlyphVariationSerializedData(vs.SerializedData, vs.HasSharedPointNumbers(), pointsNumberCountAll, false, tvs); err != nil {
 		return nil
 	}

@@ -201,6 +201,7 @@ func (sh *Shell) frame() {
 	} else {
 		sh.drawLayout(c, bounds)
 	}
+	sh.drawOutline(c, bounds)
 	c.EndFrame()
 	raw.EndDrawing()
 
@@ -308,7 +309,6 @@ func (sh *Shell) sessionOptions(address, serverPassword string) app.Options {
 
 // configure puts the saved settings into a session that has just come up.
 func (sh *Shell) configure(session *app.Session) {
-	video.ProbeBackends()
 	session.SetVideoDecoder(sh.settings.VideoDecoder)
 	session.ApplyAudioSettings(sh.settings)
 	session.SetAutoWatch(sh.settings.AutoWatchStreams, sh.settings.AutoWatchStreams)

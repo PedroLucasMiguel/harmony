@@ -13,6 +13,8 @@ import (
 	"github.com/go-text/typesetting/language"
 	"github.com/go-text/typesetting/shaping"
 	"golang.org/x/image/math/fixed"
+
+	"harmony/v2/internal/memtrim"
 )
 
 var systemFonts = map[string][]string{
@@ -55,6 +57,7 @@ type Glyph struct {
 
 // Load opens the first emoji font the system has, or returns nil when it has none.
 func Load() *Font {
+	defer memtrim.Soon()
 	for _, path := range systemFonts[runtime.GOOS] {
 		if f, err := open(path); err == nil {
 			return f

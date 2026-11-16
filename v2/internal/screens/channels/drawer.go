@@ -33,12 +33,14 @@ func (s *Screen) narrowLayout(l *layout) {
 	}
 	body := geom.Rect{X: b.X + layoutPadLeft, Y: b.Y + barHeight + layoutPadding, W: b.W - layoutPadLeft - layoutPadding, H: b.H - barHeight - 2*layoutPadding}
 	l.members = geom.Rect{}
+	l.banner = ""
 	l.main = body
 	width := min(drawerShare*b.W, drawerMax)
 	l.drawer = geom.Rect{X: b.X, Y: b.Y, W: width, H: b.H}
 	if s.drawer.open {
 		l.side = geom.Rect{X: body.X, Y: body.Y, W: width - layoutPadLeft, H: body.H}
 		l.head = geom.Rect{X: b.X, Y: b.Y, W: width - 1, H: barHeight}
+		s.reserveBanner(l)
 		l.strip = geom.Rect{X: b.X, Y: b.Bottom() - stripHeight, W: width, H: stripHeight}
 		return
 	}

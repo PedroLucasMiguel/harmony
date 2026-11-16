@@ -84,13 +84,7 @@ func (s *Store) Bytes(hash string) func() ([]byte, error) {
 	return func() ([]byte, error) { return s.Data(hash) }
 }
 
-// Sized implements paint.Sizer.
-func (s *Store) Sized(shape paint.Shape, hash string, w, h int) func() (*image.NRGBA, error) {
-	return func() (*image.NRGBA, error) {
-		data, err := s.Data(hash)
-		if err != nil {
-			return nil, err
-		}
-		return Render(data, w, h, shape == paint.Round)
-	}
+// Render implements paint.Sizer: the middle of a still picture, cut to w by h.
+func (s *Store) Render(data []byte, shape paint.Shape, w, h int) (*image.NRGBA, error) {
+	return Render(data, w, h, shape == paint.Round)
 }

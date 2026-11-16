@@ -106,6 +106,12 @@ type dxgiScreen struct {
 	scaler                 *bgraScaler
 	cpuPix                 []byte
 
+	// the pointer is not in the duplicated picture: it is read from the system and blended in before the picture is encoded
+	pointer          pointer
+	originX, originY int
+	moved            bool
+	overlay          []byte
+
 	stream  vpStream
 	mapped  d3dMappedSubresource
 	info    dxgiOutDuplFrameInfo
@@ -159,9 +165,13 @@ func (s *dxgiScreen) build() error {
 	if s.device, err = winD3DDevice(adapter); err != nil {
 		return err
 	}
-	if hr := s.device.call(40, uintptr(unsafe.Pointer(&s.ctx))); hr.failed() { // GetImmediateContext
-		return hr.err("GetImmediateContext")
+	s.device.raw(40, uintptr(unsafe.Pointer(&s.ctx))) // GetImmediateContext returns void
+	if s.ctx == 0 {
+		return errors.New("GetImmediateContext gave no context")
 	}
+	var desc0 dxgiOutputDesc
+	output.call(7, uintptr(unsafe.Pointer(&desc0))) // GetDesc
+	s.originX, s.originY = int(desc0.left), int(desc0.top)
 	out1, err := output.queryInterface(&iidIDXGIOutput1)
 	if err != nil {
 		return err
@@ -264,6 +274,7 @@ func (s *dxgiScreen) acquire(timeout time.Duration) (got bool, err error) {
 	defer s.dupl.call(14) // ReleaseFrame
 	defer res.release()
 	if s.info.lastPresentTime == 0 {
+		s.moved = s.info.lastMouseUpdateTime != 0
 		return false, nil // only the pointer moved
 	}
 	if hr := res.call(0, iidID3D11Texture2D.p(), uintptr(unsafe.Pointer(&s.tex))); hr.failed() {
@@ -296,9 +307,25 @@ func (s *dxgiScreen) encode() error {
 		rows = s.srcH
 	}
 	pix := unsafe.Slice((*byte)(at(s.mapped.data)), int(s.mapped.rowPitch)*rows)
+	scale := float64(s.w) / float64(s.srcW)
 	if s.scaler != nil {
 		s.scaler.scale(s.cpuPix, pix, int(s.mapped.rowPitch))
+		if shape, x, y, ok := s.pointer.visible(s.originX, s.originY, s.w, s.h, scale); ok {
+			shape.blend(s.cpuPix, s.w*4, s.w, s.h, x, y, scale)
+		}
 		return s.enc.EncodeBGRA(s.cpuPix, s.w*4)
+	}
+	w, h := s.srcW, s.srcH
+	if s.viaProcessor {
+		w, h = s.w, s.h
+	} else {
+		scale = 1
+	}
+	if shape, x, y, ok := s.pointer.visible(s.originX, s.originY, w, h, scale); ok {
+		// The mapped memory is the graphics card's to be read, so the picture is copied to be drawn on.
+		s.overlay = append(s.overlay[:0], pix...)
+		shape.blend(s.overlay, int(s.mapped.rowPitch), w, h, x, y, scale)
+		return s.enc.EncodeBGRA(s.overlay, int(s.mapped.rowPitch))
 	}
 	return s.enc.EncodeBGRA(pix, int(s.mapped.rowPitch))
 }
@@ -320,7 +347,8 @@ func (s *dxgiScreen) loop() error {
 			return err
 		}
 		have = have || got
-		dirty = dirty || got
+		dirty = dirty || got || (have && s.moved)
+		s.moved = false
 		now = time.Now()
 		due := dirty && !now.Before(next)
 		idle := !dirty && now.Sub(lastSent) >= screenIdleResend

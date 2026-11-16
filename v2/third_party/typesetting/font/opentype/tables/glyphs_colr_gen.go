@@ -453,24 +453,8 @@ func ParseLayerList(src []byte) (LayerList, int, error) {
 			return item, 0, fmt.Errorf("reading LayerList: "+"EOF: expected length: %d, got %d", 4+arrayLengthPaintTables*4, L)
 		}
 
-		item.paintTables = make([]PaintTable, arrayLengthPaintTables) // allocation guarded by the previous check
-		for i := range item.paintTables {
-			offset := int(binary.BigEndian.Uint32(src[4+i*4:]))
-			// ignore null offsets
-			if offset == 0 {
-				continue
-			}
-
-			if L := len(src); L < offset {
-				return item, 0, fmt.Errorf("reading LayerList: "+"EOF: expected length: %d, got %d", offset, L)
-			}
-
-			var err error
-			item.paintTables[i], _, err = ParsePaintTable(src[offset:])
-			if err != nil {
-				return item, 0, fmt.Errorf("reading LayerList: %s", err)
-			}
-		}
+		// Edited by hand: the paint tables are read by Resolve, when a glyph needs them.
+		item.src, item.length = src, arrayLengthPaintTables
 		n += arrayLengthPaintTables * 4
 	}
 	return item, n, nil

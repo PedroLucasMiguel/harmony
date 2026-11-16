@@ -99,7 +99,7 @@ func (s *Screen) addServer() {
 func (s *Screen) AddServer(back string) {
 	s.mu.Lock()
 	s.step, s.backTo, s.errText = stepServer, back, ""
-	s.needsPassword = false
+	s.needsPassword, s.passwordAsked = false, false
 	s.mu.Unlock()
 	s.serverURL.Value, s.serverPassword.Value = "", ""
 	s.serverURL.RequestFocus()

@@ -65,7 +65,6 @@ type Screen struct {
 	list           channelList
 	bar            barButtons
 	panel          voicePanel
-	shareBar       shareBar
 	shareMenuState shareMenu
 	shareLabels    [2]string
 	scope          string

@@ -4,5 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION="${VERSION:-$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' ../client/package.json | head -1)}"
-go build -tags nocgo -ldflags "-s -w -X harmony/v2/internal/version.Number=$VERSION" -o "${1:-harmony2}" ./cmd/harmony2
+GUI=""
+if [ "$(go env GOOS)" = windows ]; then GUI="-H=windowsgui"; fi
+go build -tags nocgo -ldflags "-s -w $GUI -X harmony/v2/internal/version.Number=$VERSION" -o "${1:-harmony2}" ./cmd/harmony2
 echo "built ${1:-harmony2} $VERSION"

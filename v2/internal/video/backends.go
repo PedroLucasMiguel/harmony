@@ -24,9 +24,6 @@ func probe() {
 	})
 }
 
-// ProbeBackends starts finding the codecs in the background, so that the first call that needs the list does not wait for it.
-func ProbeBackends() { go probe() }
-
 // Encoders lists the H.264 encoders this system has, the best first. The first call waits for the probe; do not make it on the UI thread.
 func Encoders() []Backend { probe(); return backends.enc }
 

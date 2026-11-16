@@ -135,7 +135,7 @@ func (c *Context) T(key string, vars ...string) string { return c.Strings.T(key,
 func (c *Context) Hairline() float32 { return 1 / c.Paint.Zoom }
 
 func (c *Context) Hovered(r geom.Rect) bool {
-	return r.Contains(c.In.MouseX, c.In.MouseY) && (c.inOverlay || !c.underPopup)
+	return r.Contains(c.In.MouseX, c.In.MouseY) && !c.Paint.Clipped(c.In.MouseX, c.In.MouseY) && (c.inOverlay || !c.underPopup)
 }
 
 // Popup marks an area drawn over the rest, so what is under it stops reacting to the mouse from the next frame on.

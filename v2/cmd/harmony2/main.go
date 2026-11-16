@@ -4,12 +4,17 @@ package main
 import (
 	"flag"
 	"runtime"
+	"runtime/debug"
 
 	"harmony/v2/internal/shell"
 )
 
+const gcPercent = 40
+
 func main() {
 	runtime.LockOSThread()
+	// The live heap is small and a frame allocates almost nothing, so the heap may grow only a little between collections.
+	debug.SetGCPercent(gcPercent)
 	var options shell.Options
 	flag.StringVar(&options.Server, "server", "", "server address to start with")
 	flag.IntVar(&options.Width, "width", 0, "window width in logical pixels")

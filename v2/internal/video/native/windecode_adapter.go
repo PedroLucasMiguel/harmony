@@ -132,10 +132,7 @@ func deviceDecodesH264(dev com) bool {
 		return false
 	}
 	defer vd.release()
-	var count uint32
-	if hr := vd.call(11, uintptr(unsafe.Pointer(&count))); hr.failed() {
-		return false
-	}
+	count := uint32(vd.raw(11)) // GetVideoDecoderProfileCount returns the number itself
 	for i := uint32(0); i < count; i++ {
 		var g guid
 		if hr := vd.call(12, uintptr(i), uintptr(unsafe.Pointer(&g))); hr >= 0 && g == guidDecoderProfileH264NF {

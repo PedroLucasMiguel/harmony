@@ -69,6 +69,8 @@ type Screen struct {
 	address       string
 	serverName    string
 	needsPassword bool
+	// passwordAsked is the server wanting a password that has not been given yet, which is a question and not an error.
+	passwordAsked bool
 	needsOwner    bool
 	serverUp      widget.ServerStatus
 	viewportH     float32
@@ -183,18 +185,18 @@ func (p page) Draw(c *widget.Context, r geom.Rect) {
 // cardKey is everything the card is built from; the card is built again only when it changes, since building it makes
 // dozens of small components.
 type cardKey struct {
-	strings                                                 *i18n.Bundle
-	step                                                    step
-	registering, busy, needsOwner, needsPassword, hide, gpu bool
-	canGoBack                                               bool
-	status                                                  widget.ServerStatus
-	err, name, address, signedAs                            string
+	strings                                                                *i18n.Bundle
+	step                                                                   step
+	registering, busy, needsOwner, needsPassword, passwordAsked, hide, gpu bool
+	canGoBack                                                              bool
+	status                                                                 widget.ServerStatus
+	err, name, address, signedAs                                           string
 }
 
 func (s *Screen) card(c *widget.Context) widget.Component {
 	s.mu.Lock()
 	key := cardKey{
-		strings: c.Strings, step: s.step, registering: s.registering, busy: s.busy, needsOwner: s.needsOwner, needsPassword: s.needsPassword,
+		strings: c.Strings, step: s.step, registering: s.registering, busy: s.busy, needsOwner: s.needsOwner, needsPassword: s.needsPassword, passwordAsked: s.passwordAsked,
 		hide: s.Settings.HideDetails, gpu: s.gpuEncoding.Checked, canGoBack: s.backTo != "", status: s.serverUp,
 		err: s.errText, name: s.serverName, address: s.address,
 	}

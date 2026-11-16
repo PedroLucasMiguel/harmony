@@ -48,7 +48,7 @@ func (s *Screen) drawMain(c *widget.Context, l layout, m model) {
 	streaming := len(m.streams) > 0
 	s.Session.SetViewersPaused(!streaming || s.Settings.PauseHiddenCameras && raw.IsWindowMinimized())
 	if streaming {
-		s.drawStage(c, s.drawShareBar(c, l.main, m), m)
+		s.drawStage(c, l.main, m)
 		return
 	}
 	s.call.release()

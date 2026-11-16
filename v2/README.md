@@ -11,7 +11,7 @@ dev/stack.sh &                          # a local server and MediaMTX; accounts 
 go run -tags nocgo ./cmd/harmony2 -server http://127.0.0.1:18280
 ```
 
-`-tags nocgo` is required: raylib is loaded from its embedded library so it does not clash with the sound card library's miniaudio. `-screenshot out.png` writes the window and exits; `-tone 440` sends a tone as the microphone; `-width`/`-height` size the window.
+`-tags nocgo` is required: raylib is loaded from its embedded library so it does not clash with the sound card library's miniaudio. On Windows the sound card is WASAPI called without cgo (`internal/audio/wasapi_windows.go`), so no C compiler is needed, and a build meant to be double clicked adds `-ldflags "-H=windowsgui"` so that no console window opens (`dev/build.sh` and the release do). `-screenshot out.png` writes the window and exits; `-tone 440` sends a tone as the microphone; `-width`/`-height` size the window.
 
 `cmd/h2probe` is the same client without a window, to try voice and screen share between two instances.
 

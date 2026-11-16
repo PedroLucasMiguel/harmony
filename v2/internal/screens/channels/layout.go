@@ -23,6 +23,8 @@ type layout struct {
 	strip   geom.Rect
 	drawer  geom.Rect
 	narrow  bool
+	// banner is the hash of the server picture behind the head, which then reaches headBannerExtra further down; empty for none.
+	banner string
 }
 
 func (s *Screen) layout(b geom.Rect) layout {
@@ -54,6 +56,7 @@ func (s *Screen) layout(b geom.Rect) layout {
 	}
 	l.main = geom.Rect{X: x, Y: body.Y, W: mainW, H: body.H}
 	l.head = geom.Rect{X: b.X, Y: b.Y, W: l.side.Right() - b.X - 1, H: barHeight}
+	s.reserveBanner(&l)
 	l.strip = geom.Rect{X: b.X - widget.RailWidth, Y: b.Bottom() - stripHeight, W: l.side.Right() - (b.X - widget.RailWidth), H: stripHeight}
 	s.narrowLayout(&l)
 	return l

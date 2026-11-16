@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sync/atomic"
 )
 
 // shared with gvar, sbix, eblc
@@ -34,25 +35,49 @@ func ParseLoca(src []byte, numGlyphs int, isLong bool) (out []uint32, err error)
 }
 
 // Glyph Data
-type Glyf []Glyph
+//
+// Glyf holds the table's bytes and reads a glyph when it is asked for: a colour emoji font has thousands of them, which parsed
+// up front take tens of megabytes of a font that is mostly drawn from a few.
+type Glyf struct {
+	src   []byte
+	loca  []uint32
+	cache []atomic.Pointer[Glyph]
+}
 
-// ParseGlyf parses the 'glyf' table.
-// locaOffsets has length numGlyphs + 1, and is returned by ParseLoca
-func ParseGlyf(src []byte, locaOffsets []uint32) (Glyf, error) {
-	out := make(Glyf, len(locaOffsets)-1)
-	var err error
-	for i := range out {
-		start, end := locaOffsets[i], locaOffsets[i+1]
-		// If a glyph has no outline, then loca[n] = loca [n+1].
-		if start == end {
-			continue
-		}
-		out[i], _, err = ParseGlyph(src[start:end])
-		if err != nil {
-			return nil, err
+// Len is the number of glyphs, 0 for a table that could not be read.
+func (g Glyf) Len() int {
+	if len(g.loca) == 0 {
+		return 0
+	}
+	return len(g.loca) - 1
+}
+
+// Glyph returns the glyph with that index: an empty one when it has no outline or its data cannot be read.
+func (g Glyf) Glyph(i int) Glyph {
+	if i < 0 || i >= g.Len() {
+		return Glyph{}
+	}
+	if p := g.cache[i].Load(); p != nil {
+		return *p
+	}
+	var out Glyph
+	// If a glyph has no outline, then loca[n] = loca [n+1].
+	if start, end := g.loca[i], g.loca[i+1]; start < end && int64(end) <= int64(len(g.src)) {
+		if parsed, _, err := ParseGlyph(g.src[start:end]); err == nil {
+			out = parsed
 		}
 	}
-	return out, nil
+	g.cache[i].Store(&out)
+	return out
+}
+
+// ParseGlyf prepares the 'glyf' table to be read glyph by glyph.
+// locaOffsets has length numGlyphs + 1, and is returned by ParseLoca
+func ParseGlyf(src []byte, locaOffsets []uint32) (Glyf, error) {
+	if len(locaOffsets) == 0 {
+		return Glyf{}, nil
+	}
+	return Glyf{src: src, loca: locaOffsets, cache: make([]atomic.Pointer[Glyph], len(locaOffsets)-1)}, nil
 }
 
 type Glyph struct {

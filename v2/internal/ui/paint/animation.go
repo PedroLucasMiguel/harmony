@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"image"
 	"image/color"
-	"image/draw"
 	"image/gif"
 	"time"
 	"unsafe"
@@ -22,13 +21,23 @@ const (
 )
 
 // animation is the frames of an animated GIF; it is stepped only while the picture is drawn, so one that is out of sight costs nothing.
+// Frames are painted straight into canvas through their palette, and only the rows a step changed go to the GPU.
 type animation struct {
 	g      *gif.GIF
-	canvas *image.NRGBA
-	saved  *image.NRGBA
+	w, h   int
+	canvas []color.RGBA
+	saved  []color.RGBA
 	cur    int
 	played int
 	next   time.Time
+
+	// dirtyTop and dirtyBottom are the rows of the canvas changed since the last upload; none when top is not above bottom.
+	dirtyTop, dirtyBottom int
+
+	palFirst *color.Color
+	palLen   int
+	lut      [256]color.RGBA
+	opaque   [256]bool
 }
 
 // decodeAnimation reads a GIF with more than one frame: the animation, and its first frame to show at once. Anything else, or a GIF too large to keep, is not animated.
@@ -44,45 +53,104 @@ func decodeAnimation(data []byte) (*animation, *image.NRGBA, int, int) {
 	if err != nil || len(g.Image) < 2 || len(g.Image)*cfg.Width*cfg.Height > animationMaxBytes {
 		return nil, nil, 0, 0
 	}
-	a := &animation{g: g, canvas: image.NewNRGBA(image.Rect(0, 0, cfg.Width, cfg.Height))}
+	a := &animation{g: g, w: cfg.Width, h: cfg.Height, canvas: make([]color.RGBA, cfg.Width*cfg.Height)}
 	a.paint(0)
-	first := image.NewNRGBA(a.canvas.Rect)
-	copy(first.Pix, a.canvas.Pix)
-	return a, first, cfg.Width, cfg.Height
+	a.dirtyTop, a.dirtyBottom = a.h, 0
+	// The first picture is the canvas itself: nothing steps the animation before its texture exists.
+	first := &image.NRGBA{Pix: unsafe.Slice((*byte)(unsafe.Pointer(&a.canvas[0])), len(a.canvas)*4), Stride: a.w * 4, Rect: image.Rect(0, 0, a.w, a.h)}
+	return a, first, a.w, a.h
+}
+
+// bytes is the memory the animation holds beyond its canvas: every frame's pixels.
+func (a *animation) bytes() int {
+	n := 0
+	for _, f := range a.g.Image {
+		n += len(f.Pix)
+	}
+	return n
+}
+
+func (a *animation) mark(top, bottom int) {
+	a.dirtyTop, a.dirtyBottom = min(a.dirtyTop, top), max(a.dirtyBottom, bottom)
+}
+
+func (a *animation) disposal(i int) byte {
+	if i < len(a.g.Disposal) {
+		return a.g.Disposal[i]
+	}
+	return gif.DisposalNone
+}
+
+func (a *animation) loadPalette(p color.Palette) {
+	if len(p) > 0 && &p[0] == a.palFirst && len(p) == a.palLen {
+		return
+	}
+	a.palFirst, a.palLen = nil, len(p)
+	if len(p) > 0 {
+		a.palFirst = &p[0]
+	}
+	a.opaque = [256]bool{}
+	for i, c := range p[:min(len(p), 256)] {
+		r, g, b, al := c.RGBA()
+		if al == 0 {
+			continue
+		}
+		a.opaque[i] = true
+		a.lut[i] = color.RGBA{R: uint8(r * 0xffff / al >> 8), G: uint8(g * 0xffff / al >> 8), B: uint8(b * 0xffff / al >> 8), A: uint8(al >> 8)}
+	}
 }
 
 func (a *animation) paint(i int) {
 	f := a.g.Image[i]
-	if a.g.Disposal != nil && a.g.Disposal[i] == gif.DisposalPrevious {
-		if a.saved == nil {
-			a.saved = image.NewNRGBA(a.canvas.Rect)
-		}
-		copy(a.saved.Pix, a.canvas.Pix)
+	if a.disposal(i) == gif.DisposalPrevious {
+		a.saved = append(a.saved[:0], a.canvas...)
 	}
-	draw.Draw(a.canvas, f.Bounds(), f, f.Bounds().Min, draw.Over)
-	a.cur = i
-}
-
-// advance shows the next frame: what the frame shown leaves behind is cleared first.
-func (a *animation) advance() {
-	last := a.cur
-	if a.g.Disposal != nil {
-		switch a.g.Disposal[last] {
-		case gif.DisposalBackground:
-			draw.Draw(a.canvas, a.g.Image[last].Bounds(), image.Transparent, image.Point{}, draw.Src)
-		case gif.DisposalPrevious:
-			if a.saved != nil {
-				copy(a.canvas.Pix, a.saved.Pix)
+	a.loadPalette(f.Palette)
+	b := f.Rect.Intersect(image.Rect(0, 0, a.w, a.h))
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		src := f.Pix[(y-f.Rect.Min.Y)*f.Stride+b.Min.X-f.Rect.Min.X:][:b.Dx()]
+		dst := a.canvas[y*a.w+b.Min.X:][:len(src)]
+		for x, index := range src {
+			if a.opaque[index] {
+				dst[x] = a.lut[index]
 			}
 		}
 	}
+	a.mark(b.Min.Y, b.Max.Y)
+	a.cur = i
+}
+
+// advance shows the next frame, after clearing what the frame shown leaves behind. It returns false when the animation has played its last loop: the last frame stays.
+func (a *animation) advance() bool {
+	last := a.cur
 	next := last + 1
 	if next == len(a.g.Image) {
 		a.played++
-		draw.Draw(a.canvas, a.canvas.Rect, image.Transparent, image.Point{}, draw.Src)
+		if a.finished() {
+			return false
+		}
+		clear(a.canvas)
+		a.mark(0, a.h)
 		next = 0
+	} else {
+		switch a.disposal(last) {
+		case gif.DisposalBackground:
+			a.clearRect(a.g.Image[last].Rect)
+		case gif.DisposalPrevious:
+			copy(a.canvas, a.saved)
+			a.mark(0, a.h)
+		}
 	}
 	a.paint(next)
+	return true
+}
+
+func (a *animation) clearRect(r image.Rectangle) {
+	b := r.Intersect(image.Rect(0, 0, a.w, a.h))
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		clear(a.canvas[y*a.w+b.Min.X : y*a.w+b.Max.X])
+	}
+	a.mark(b.Min.Y, b.Max.Y)
 }
 
 func (a *animation) finished() bool {
@@ -111,15 +179,25 @@ func (p *Painter) animate(pic *Picture) {
 		redraw.After(a.next.Sub(now))
 		return
 	}
-	for steps := 0; !now.Before(a.next) && !a.finished() && steps < animationCatchUp; steps++ {
-		a.advance()
+	for steps := 0; !now.Before(a.next) && steps < animationCatchUp; steps++ {
+		if !a.advance() {
+			break
+		}
 		a.next = a.next.Add(a.delay())
 	}
 	if now.After(a.next) {
 		a.next = now.Add(a.delay())
 	}
-	p.b.flush()
-	pix := a.canvas.Pix
-	rl.UpdateTexture(pic.tex, unsafe.Slice((*color.RGBA)(unsafe.Pointer(&pix[0])), len(pix)/4))
-	redraw.After(max(time.Until(a.next), time.Millisecond))
+	if a.dirtyTop < a.dirtyBottom {
+		p.b.flush()
+		rows := a.canvas[a.dirtyTop*a.w : a.dirtyBottom*a.w]
+		rl.UpdateTextureRec(pic.tex, rl.Rectangle{Y: float32(a.dirtyTop), Width: float32(a.w), Height: float32(a.dirtyBottom - a.dirtyTop)}, rows)
+		if pic.sized {
+			rl.GenTextureMipmaps(&pic.tex)
+		}
+		a.dirtyTop, a.dirtyBottom = a.h, 0
+	}
+	if !a.finished() {
+		redraw.After(max(time.Until(a.next), time.Millisecond))
+	}
 }
