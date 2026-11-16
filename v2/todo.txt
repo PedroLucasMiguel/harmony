@@ -1,0 +1,7 @@
+- Watching my on stream is using 4.5% of my cpu, i suspect that the frames are being stored on cpu than going to GPU, we need to try to make it not do that (wich also explains the ram usage);
+- Use an embeded font
+- Maximizing the window is setting the app as fullscreen instead of just Maximizing it
+- Remove the forward/backwards button on the topbar
+- Resizing the app from top to bottom and holding the resize makes the app freak out and starts to flicker a lot
+- No app icon on the build
+- Fix auto-updater to work with this client
