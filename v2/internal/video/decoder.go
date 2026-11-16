@@ -13,11 +13,14 @@ type Decoder struct {
 // NewDecoder starts making w by h pictures into frame from a stream coded as colour says (what the stream's own
 // parameter sets say wins), on the codec backend ("" is automatic, otherwise an ID from Decoders).
 func NewDecoder(w, h int, colour Colour, backend string, frame *Frame) (*Decoder, error) {
-	dec, err := native.NewDecoder(native.DecodeParams{Width: w, Height: h, Matrix: colour.Matrix, Full: colour.Full, Backend: backend},
-		func(rgba []byte, pw, ph int) {
-			copy(frame.target(pw, ph), rgba)
-			frame.publish()
-		})
+	params := native.DecodeParams{Width: w, Height: h, Matrix: colour.Matrix, Full: colour.Full, Backend: backend}
+	if frame.wantsGPU() {
+		params.OnTexture = frame.publishGPU
+	}
+	dec, err := native.NewDecoder(params, func(rgba []byte, pw, ph int) {
+		copy(frame.target(pw, ph), rgba)
+		frame.publish()
+	})
 	if err != nil {
 		return nil, err
 	}

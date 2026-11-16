@@ -60,7 +60,7 @@ type macDecoder struct {
 	// is only passed as a number may be assumed unchanged by the compiler.
 	scratch struct {
 		ptrs, sizes  [8]uintptr
-		keys, values [4]uintptr
+		keys, values [8]uintptr
 		number       int32
 		base, desc   uintptr
 		session      uintptr
@@ -271,8 +271,15 @@ func (d *macDecoder) open() bool {
 		w, h = d.pic.w, d.pic.h
 	}
 	nw, nh, nf := d.number(int32(w)), d.number(int32(h)), d.number(int32(d.pixelType))
-	keys := []uintptr{a.pixelFormatKey, a.pixelWidthKey, a.pixelHeightKey}
-	attrs := d.dict(keys, []uintptr{nf, nw, nh})
+	keys, values := []uintptr{a.pixelFormatKey, a.pixelWidthKey, a.pixelHeightKey}, []uintptr{nf, nw, nh}
+	var surface uintptr
+	if d.params.OnTexture != nil {
+		// pictures the window can bind as textures: backed by an IOSurface, which an empty dictionary asks for
+		surface = d.dict(nil, nil)
+		keys, values = append(keys, a.ioSurfaceKey, a.openGLKey), append(values, surface, a.boolTrue)
+	}
+	attrs := d.dict(keys, values)
+	a.release(surface)
 	a.release(nw)
 	a.release(nh)
 	a.release(nf)
@@ -383,6 +390,11 @@ func (d *macDecoder) serve() {
 func (d *macDecoder) deliver(buf uintptr) {
 	a := d.api
 	defer a.release(buf)
+	if d.params.OnTexture != nil {
+		mdecCall(a.cfRetain, buf)
+		d.params.OnTexture(&macPicture{api: a, buf: buf, w: int(mdecCall(a.cvWidth, buf)), h: int(mdecCall(a.cvHeight, buf))})
+		return
+	}
 	if mdecStatus(mdecCall(a.cvLock, buf, 1)) != 0 {
 		return
 	}

@@ -31,7 +31,7 @@ type mdecAPI struct {
 
 	cmFmtFromH264, cmFmtCreate, cmFmtExtensions, cmBlockCreate, cmBlockReplace, cmSbufReady uintptr
 
-	cvLock, cvUnlock, cvBase, cvBytesPerRow, cvWidth, cvHeight uintptr
+	cvLock, cvUnlock, cvBase, cvBytesPerRow, cvWidth, cvHeight, cvIOSurface uintptr
 
 	vtCreate, vtDecode, vtInvalidate, vtWait, vtCanAccept, vtSetProperty uintptr
 
@@ -39,6 +39,7 @@ type mdecAPI struct {
 
 	boolTrue, boolFalse, specHardware             uintptr
 	pixelFormatKey, pixelWidthKey, pixelHeightKey uintptr
+	ioSurfaceKey, openGLKey                       uintptr
 	extMatrix, extFull, extPrimaries, extTransfer uintptr
 	primaries709, transfer709                     uintptr
 	matrix709, matrix601, matrix2020, matrix240   uintptr
@@ -99,6 +100,8 @@ func (a *mdecAPI) load() error {
 	a.cvBase, a.cvBytesPerRow = fn(cv, "CVPixelBufferGetBaseAddress"), fn(cv, "CVPixelBufferGetBytesPerRow")
 	a.cvWidth, a.cvHeight = fn(cv, "CVPixelBufferGetWidth"), fn(cv, "CVPixelBufferGetHeight")
 	a.pixelFormatKey, a.pixelWidthKey, a.pixelHeightKey = val(cv, "kCVPixelBufferPixelFormatTypeKey"), val(cv, "kCVPixelBufferWidthKey"), val(cv, "kCVPixelBufferHeightKey")
+	a.cvIOSurface = fn(cv, "CVPixelBufferGetIOSurface")
+	a.ioSurfaceKey, a.openGLKey = val(cv, "kCVPixelBufferIOSurfacePropertiesKey"), val(cv, "kCVPixelBufferOpenGLCompatibilityKey")
 
 	a.vtCreate, a.vtDecode = fn(vt, "VTDecompressionSessionCreate"), fn(vt, "VTDecompressionSessionDecodeFrame")
 	a.vtInvalidate, a.vtWait = fn(vt, "VTDecompressionSessionInvalidate"), fn(vt, "VTDecompressionSessionWaitForAsynchronousFrames")

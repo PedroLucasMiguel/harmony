@@ -29,6 +29,21 @@ type DecodeParams struct {
 	// Backend picks the codec: "" (automatic: the graphics hardware, the software decoder only when there is none), or an
 	// ID from Decoders(): "videotoolbox", "nvidia", "amd", "intel" or "software".
 	Backend string
+	// OnTexture, when set, is given the pictures a decoder can keep in graphics memory instead of OnPicture's RGBA ones;
+	// the receiver releases each. A decoder that cannot keep them there ignores it and uses OnPicture.
+	OnTexture func(GPUPicture)
+}
+
+// GPUPicture is a decoded picture that is still in graphics memory, for a window that draws it from there.
+type GPUPicture interface {
+	// Size is the size of the picture in pixels.
+	Size() (w, h int)
+	// Handle names the picture to the code that draws it: on macOS the IOSurface of a BGRA picture, 0 when it has none.
+	Handle() uintptr
+	// Read copies the picture to dst as tightly packed RGBA (w*h*4 bytes), for a window that cannot use the handle.
+	Read(dst []byte) bool
+	// Release gives the picture back; it must not be used after.
+	Release()
 }
 
 // Decoder turns an H.264 stream into RGBA pictures.

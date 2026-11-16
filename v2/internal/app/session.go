@@ -42,6 +42,9 @@ type Options struct {
 	OnNotice func(Notice)
 	// OnFrame is called, from a decoder's goroutine, for every picture of every watched stream; make it no more than redraw.Request.
 	OnFrame func()
+	// GPUFrames lets watched streams keep their pictures in graphics memory, for a window that draws them as textures (a
+	// program without a window leaves it off and reads them with Frame.View).
+	GPUFrames bool
 	// OnEnded is called, from the connection's goroutine, when the server ended the session: the account was kicked or removed, or the session expired.
 	OnEnded func(Ended)
 	// Relogin is asked, from the connection's goroutine, for a new session when the server stops accepting the token; it signs in on the client again with what was remembered, and says whether it worked.

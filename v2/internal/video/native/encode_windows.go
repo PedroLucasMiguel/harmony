@@ -72,6 +72,13 @@ type mftEncoder struct {
 
 	fix streamFixer
 
+	// pictures given as Direct3D textures: the device they are on, the textures (one for each pool entry) and the
+	// manager that lets the transform read them. gpu is true when the transform took them.
+	gpuIn       *gpuInput
+	gpu         bool
+	gpuMgr      mfDXGIManager
+	candBackend string
+
 	credits  atomic.Int32
 	accepted int
 	outputs  atomic.Int64
@@ -95,6 +102,12 @@ func newEncoder(p EncodeParams, onAU func([]byte)) (Encoder, error) {
 
 // newMFTEncoder is newEncoder with a callback for an encoder that fails after it started (the capture uses it).
 func newMFTEncoder(p EncodeParams, onAU func([]byte), onFail func(error)) (*mftEncoder, error) {
+	return newMFTEncoderOn(p, onAU, onFail, nil)
+}
+
+// newMFTEncoderOn is newMFTEncoder for pictures that are in graphics memory: when the transform can read the textures in
+// gpu it does, and its gpu field says so; otherwise it takes BGRA pictures as usual.
+func newMFTEncoderOn(p EncodeParams, onAU func([]byte), onFail func(error), gpu *gpuInput) (*mftEncoder, error) {
 	if p.Width <= 0 || p.Height <= 0 || p.Width%2 != 0 || p.Height%2 != 0 {
 		return nil, fmt.Errorf("encoder size %dx%d must be even and not empty", p.Width, p.Height)
 	}
@@ -104,7 +117,7 @@ func newMFTEncoder(p EncodeParams, onAU func([]byte), onFail func(error)) (*mftE
 	e := &mftEncoder{
 		w: p.Width, h: p.Height, fps: p.FPS, bitrate: p.BitrateKbps, matrix: p.Matrix, backend: p.Backend,
 		size: nv12Size(p.Width, p.Height), onAU: onAU, onFail: onFail,
-		in: make(chan *encPoolEntry, 1), done: make(chan struct{}),
+		in: make(chan *encPoolEntry, 1), done: make(chan struct{}), gpuIn: gpu,
 	}
 	e.fix.matrix = p.Matrix
 	ready := make(chan error, 1)
@@ -218,13 +231,14 @@ func (e *mftEncoder) teardown() {
 	}
 	e.outSample.release()
 	e.outBuf.release()
+	e.gpuMgr.release()
 	e.codec.release()
 	e.events.release()
 	e.mft.release()
 	if e.act.com != 0 {
 		e.act.shutdownObject()
 	}
-	e.mft, e.act, e.codec, e.events = mfTransform{}, mfActivate{}, codecAPI{}, mfEventGenerator{}
+	e.mft, e.act, e.codec, e.events, e.gpuMgr, e.gpu = mfTransform{}, mfActivate{}, codecAPI{}, mfEventGenerator{}, mfDXGIManager{}, false
 	e.outSample, e.outBuf = mfSample{}, mfBuffer{}
 	e.pool = [encPoolSize]encPoolEntry{}
 }
@@ -232,39 +246,84 @@ func (e *mftEncoder) teardown() {
 func (e *mftEncoder) EncodeBGRA(pix []byte, stride int) error {
 	e.use.Lock()
 	defer e.use.Unlock()
-	if err := e.failure(); err != nil {
-		return err
-	}
-	if e.closed.Load() || e.mft.com == 0 {
-		return errEncoderClosed
-	}
 	if row := max(stride, -stride); row < e.w*4 || len(pix) < row*(e.h-1)+e.w*4 {
 		return fmt.Errorf("picture of %d bytes does not hold %dx%d at stride %d", len(pix), e.w, e.h, stride)
+	}
+	entry, err := e.reserve()
+	if entry == nil {
+		return err
+	}
+	if err := e.fill(entry, pix, stride); err != nil {
+		e.refund()
+		return err
+	}
+	return e.send(entry)
+}
+
+var errNoTextures = errors.New("the encoder does not take textures")
+
+// EncodeTexture is EncodeBGRA for a transform that reads pictures from graphics memory: render is called with one of the
+// textures the transform is done with, and draws the picture into it. It is not called when the encoder has no room.
+func (e *mftEncoder) EncodeTexture(render func(tex uintptr) error) error {
+	e.use.Lock()
+	defer e.use.Unlock()
+	if !e.gpu {
+		return errNoTextures
+	}
+	entry, err := e.reserve()
+	if entry == nil {
+		return err
+	}
+	i := 0
+	for ; i < len(e.pool) && &e.pool[i] != entry; i++ {
+	}
+	if err := render(uintptr(e.gpuIn.tex[i])); err != nil {
+		e.refund()
+		return err
+	}
+	if err := e.stamp(entry); err != nil {
+		e.refund()
+		return err
+	}
+	return e.send(entry)
+}
+
+// reserve takes a free input from the pool, or returns nil (and no error) when the encoder has no room and the picture is
+// to be dropped.
+func (e *mftEncoder) reserve() (*encPoolEntry, error) {
+	if err := e.failure(); err != nil {
+		return nil, err
+	}
+	if e.closed.Load() || e.mft.com == 0 {
+		return nil, errEncoderClosed
 	}
 	if e.accepted >= encStallPictures && e.outputs.Load() == 0 && time.Since(e.start) > encStallAfter {
 		err := errors.New("the encoder takes pictures and makes no stream")
 		e.fail(err)
-		return err
+		return nil, err
 	}
 	if e.async {
 		if e.credits.Add(-1) < 0 {
 			e.credits.Add(1)
-			return nil
+			return nil, nil
 		}
 	}
 	entry := e.freeEntry()
 	if entry == nil {
-		if e.async {
-			e.credits.Add(1)
-		}
-		return nil
+		e.refund()
 	}
-	if err := e.fill(entry, pix, stride); err != nil {
-		if e.async {
-			e.credits.Add(1)
-		}
-		return err
+	return entry, nil
+}
+
+// refund gives back the room reserve took, for a picture that was not sent.
+func (e *mftEncoder) refund() {
+	if e.async {
+		e.credits.Add(1)
 	}
+}
+
+// send puts a filled input into the transform, asking for a key frame when one is due.
+func (e *mftEncoder) send(entry *encPoolEntry) error {
 	if time.Since(e.lastKey) >= encKeyFrameEvery {
 		e.keyReq.Store(true)
 	}
@@ -314,6 +373,11 @@ func (e *mftEncoder) fill(p *encPoolEntry, pix []byte, stride int) error {
 	if err := p.buf.setLength(e.size); err != nil {
 		return err
 	}
+	return e.stamp(p)
+}
+
+// stamp gives an input its time and duration.
+func (e *mftEncoder) stamp(p *encPoolEntry) error {
 	ts := int64(time.Since(e.start)) / 100
 	if ts <= e.lastTS {
 		ts = e.lastTS + 1

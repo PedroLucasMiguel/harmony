@@ -247,6 +247,10 @@ func (d *winDecoder) picture(m *winMFT, s mfSample) {
 			d.fail(hrNotImpl, "picture")
 		}
 	}()
+	matrix, full := winColour(d.sps, d.haveSPS, d.p, m.vw&^1)
+	if d.pictureGPU(m, s, matrix, full) {
+		return
+	}
 	o := &m.o
 	if hr := s.call(41, uintptr(unsafe.Pointer(&o.buf))); hr.failed() { // ConvertToContiguousBuffer
 		d.fail(hr, "ConvertToContiguousBuffer")

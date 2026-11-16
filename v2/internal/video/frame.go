@@ -12,6 +12,7 @@ type Frame struct {
 	back      []byte
 	bw, bh    int
 	onPicture func()
+	gpu       gpuState
 }
 
 // NewFrame makes an empty frame; onPicture is called, from the decoder's goroutine, after each new picture.
@@ -80,5 +81,11 @@ func (f *Frame) publish() {
 func (f *Frame) Release() {
 	f.mu.Lock()
 	f.front, f.back, f.w, f.h, f.bw, f.bh = nil, nil, 0, 0, 0, 0
+	f.gpu.dead = true
+	pending := f.gpu.pending
+	f.gpu.pending = nil
 	f.mu.Unlock()
+	if pending != nil {
+		pending.Release()
+	}
 }

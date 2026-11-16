@@ -292,7 +292,7 @@ func (sh *Shell) showConnect(server string) *connect.Screen {
 
 func (sh *Shell) sessionOptions(address, serverPassword string) app.Options {
 	opt := app.Options{
-		Server: address, ServerPassword: serverPassword, Mixer: sh.mixer, OnChange: redraw.Request, OnFrame: redraw.Request, OnNotice: sh.desktop.Notice,
+		Server: address, ServerPassword: serverPassword, Mixer: sh.mixer, OnChange: redraw.Request, OnFrame: redraw.Request, GPUFrames: true, OnNotice: sh.desktop.Notice,
 		Relogin: sh.relogin(address),
 		OnEnded: func(end app.Ended) { sh.context.Post(func() { sh.sessionEnded(address, end) }) },
 	}

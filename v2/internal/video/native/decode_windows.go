@@ -47,6 +47,11 @@ type winDecoder struct {
 	rgba, sy  []byte
 	suv       []byte
 	lastError error
+
+	gpu      *winGPU
+	gpuOff   bool
+	gpuFails int
+	gpuUsed  atomic.Bool
 }
 
 func newDecoder(p DecodeParams, onPicture func([]byte, int, int)) (Decoder, error) {
@@ -70,7 +75,12 @@ func newDecoder(p DecodeParams, onPicture func([]byte, int, int)) (Decoder, erro
 	return d, nil
 }
 
-func (d *winDecoder) Mode() string { return "mediafoundation" }
+func (d *winDecoder) Mode() string {
+	if d.gpuUsed.Load() {
+		return "mediafoundation (gpu scaling)"
+	}
+	return "mediafoundation"
+}
 
 func (d *winDecoder) Write(au []byte) (needKeyframe bool) {
 	if d.closed.Load() {
@@ -135,6 +145,11 @@ func (d *winDecoder) run(ready chan<- error) {
 		return
 	}
 	defer end()
+	defer func() {
+		if d.gpu != nil {
+			d.gpu.drop()
+		}
+	}()
 	if d.cands, err = winCandidates(d.p.Backend); err != nil {
 		ready <- err
 		return

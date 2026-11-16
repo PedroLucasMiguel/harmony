@@ -101,6 +101,7 @@ type dxgiScreen struct {
 	vdev, vctx, venum      com
 	vproc, inView, outView com
 	enc                    *mftEncoder
+	gpu                    *screenGPU
 	srcW, srcH, w, h       int
 	viaProcessor           bool
 	scaler                 *bgraScaler
@@ -126,6 +127,10 @@ func (s *dxgiScreen) release() {
 	if s.enc != nil {
 		s.c.enc.Store(nil)
 		s.enc.Close()
+	}
+	if s.gpu != nil {
+		s.gpu.release()
+		s.gpu = nil
 	}
 	for _, c := range []com{s.outView, s.inView, s.vproc, s.venum, s.vctx, s.vdev, s.stg, s.outTex, s.frameTex, s.dupl, s.ctx, s.device} {
 		c.release()
@@ -204,10 +209,18 @@ func (s *dxgiScreen) build() error {
 	if s.stg, err = s.texture(stagingW, stagingH, d3dUsageStaging, 0, d3dCPUAccessRead); err != nil {
 		return err
 	}
-	s.enc, err = newMFTEncoder(EncodeParams{Width: s.w, Height: s.h, FPS: s.p.FPS, BitrateKbps: s.p.BitrateKbps,
-		Matrix: s.p.Matrix, Backend: s.p.Backend}, s.onAU, nil)
+	var in *gpuInput
+	if s.buildGPU() == nil {
+		in = &gpuInput{dev: s.device, vendor: adapterVendor(adapter), tex: s.gpu.nv12}
+	}
+	s.enc, err = newMFTEncoderOn(EncodeParams{Width: s.w, Height: s.h, FPS: s.p.FPS, BitrateKbps: s.p.BitrateKbps,
+		Matrix: s.p.Matrix, Backend: s.p.Backend}, s.onAU, nil, in)
 	if err == nil {
 		s.c.enc.Store(s.enc)
+		if s.gpu != nil && !s.enc.gpu {
+			s.gpu.release()
+			s.gpu = nil
+		}
 	}
 	return err
 }
@@ -216,7 +229,7 @@ func (s *dxgiScreen) build() error {
 // the capture to scale on the CPU instead.
 func (s *dxgiScreen) buildProcessor() error {
 	var err error
-	if s.outTex, err = s.texture(s.w, s.h, 0, d3dBindRenderTarget, 0); err != nil {
+	if s.outTex, err = s.texture(s.w, s.h, 0, d3dBindRenderTarget|d3dBindShaderRes, 0); err != nil {
 		return err
 	}
 	if s.vdev, err = s.device.queryInterface(&iidID3D11VideoDevice); err != nil {
@@ -287,6 +300,9 @@ func (s *dxgiScreen) acquire(timeout time.Duration) (got bool, err error) {
 
 // encode sends the picture in frameTex to the encoder.
 func (s *dxgiScreen) encode() error {
+	if s.gpu != nil {
+		return s.encodeGPU()
+	}
 	if s.viaProcessor {
 		if hr := s.vctx.call(53, uintptr(s.vproc), uintptr(s.outView), 0, 1, uintptr(unsafe.Pointer(&s.stream))); hr.failed() { // VideoProcessorBlt
 			return hr.err("VideoProcessorBlt")
@@ -380,6 +396,9 @@ func (c *winCapture) runScreen(p CaptureParams, onAU func([]byte), ready chan<- 
 		if err == nil {
 			if first {
 				c.mode = "dxgi desktop duplication, " + s.enc.Mode()
+				if s.gpu != nil {
+					c.mode += ", frames stay in graphics memory"
+				}
 				ready <- nil
 				first = false
 			}

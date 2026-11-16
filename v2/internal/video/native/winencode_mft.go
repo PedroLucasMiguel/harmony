@@ -126,6 +126,7 @@ func (e *mftEncoder) open(c encCandidate) error {
 	e.mft = mfTransform{obj}
 	e.act = c.activate
 	e.name = c.name
+	e.candBackend = c.backend
 	if err := e.configure(); err != nil {
 		return fmt.Errorf("%s: %w", c.name, err)
 	}
@@ -143,6 +144,9 @@ func (e *mftEncoder) configure() error {
 		}
 		attrs.setUINT32(&mfLowLatency, 1)
 		attrs.release()
+	}
+	if e.gpuIn != nil && e.async {
+		e.gpu = e.attachDevice() == nil
 	}
 	if e.async {
 		gen, err := t.queryInterface(&iidIMFMediaEventGen)
@@ -200,7 +204,12 @@ func (e *mftEncoder) configure() error {
 	}
 	for i := range e.pool {
 		p := &e.pool[i]
-		if p.buf, err = mfCreateMemoryBuffer(e.size); err != nil {
+		if e.gpu {
+			p.buf, err = mfCreateDXGISurfaceBuffer(e.gpuIn.tex[i])
+		} else {
+			p.buf, err = mfCreateMemoryBuffer(e.size)
+		}
+		if err != nil {
 			return err
 		}
 		if p.sample, err = mfCreateSample(); err != nil {

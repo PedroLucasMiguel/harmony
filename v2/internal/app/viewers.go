@@ -237,6 +237,9 @@ func (vs *viewerSet) add(s *Session, key streamKey, nick string, own bool) *view
 	}
 	box := defaultBox[key.kind]
 	v := &viewer{s: s, key: key, nick: nick, own: own, boxW: box[0], boxH: box[1], frame: video.NewFrame(s.opt.OnFrame)}
+	if s.opt.GPUFrames {
+		v.frame.EnableGPU()
+	}
 	vs.list[key] = v
 	return v
 }

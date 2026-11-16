@@ -67,6 +67,7 @@ type winMFT struct {
 	stride                 int
 
 	fed, shown, errs int
+	noTexture        bool // the pictures are in system memory, not Direct3D textures
 
 	// call scratch, on the heap so that addresses handed to Windows stay put
 	out    mftOutputDataBuffer
